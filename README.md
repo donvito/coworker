@@ -1,61 +1,78 @@
 # AI Coworker Desktop
 
-A local-first Electron application for running independent AI coworkers. Each coworker has a durable task queue, an isolated Pi worker runtime, a confined workspace, and policy-controlled tools.
+A local-first Electron app for running independent AI coworkers. Each coworker has its own durable task queue, an isolated worker runtime, a confined workspace, and policy-controlled tools — so it can do real work (documents, invoices, email drafts, scheduled reminders) without arbitrary code execution.
 
-## What is included
+## Quick start
 
-- React 19 desktop UI with CopilotKit React v2 headless hooks and typed tool rendering
-- Local AG-UI-to-Pi event bridge over restricted Electron IPC
-- One Node worker thread and one active task at a time per coworker
-- Main-process-owned SQLite state, checkpoints, history, artifacts, and crash recovery
-- Local image attachments sent to vision-capable models as multimodal context
-- Streaming, Markdown-rendered coworker replies with picker and drag-and-drop image input
-- Searchable live model catalogs, OpenRouter input/output pricing, and quick per-coworker model switching
-- Agent Skills-compatible global skill library with per-coworker enablement
-- Bundled web-search skill with Tavily, Exa, Firecrawl, and SerpAPI credential fallback
-- Confined file, invoice, PDF/Word export, email-draft, and email-send tools
-- Durable approval inbox with editable decisions and idempotent resume
-- Persistent cron and one-time schedules, with chat reminders routed to the approval-gated local scheduler instead of file exports
-- OS-backed encrypted model and integration credentials
-- Tray/background operation, launch-at-login controls, and electron-builder packaging
-
-The built-in demo coworkers use Pi's faux provider, so the complete Ava/Sarah milestone works without an API key. Open-ended coworkers can use Anthropic, OpenAI, Google, OpenRouter, Ollama, LM Studio, or a custom OpenAI-compatible endpoint after the provider is verified in Settings. Ollama defaults to `http://127.0.0.1:11434/v1`, LM Studio defaults to `http://127.0.0.1:1234/v1`, and both can be configured without an API key.
-
-## Development
-
-Requires Node.js 22 or newer and pnpm.
+Requires **Node.js 22+** and **pnpm**.
 
 ```sh
 pnpm install
 pnpm dev
 ```
 
-Useful checks:
+The app ships with two demo coworkers — **Ava** (accounting) and **Sarah** (sales) — that run on a built-in faux provider, so you can try the full flow without an API key.
 
-```sh
-pnpm typecheck
-pnpm build
-pnpm test
-pnpm package
-pnpm dist
-```
+To connect a real model, open **Settings → Providers**, add credentials, and verify the provider. Supported: Anthropic, OpenAI, Google, OpenRouter, Ollama, LM Studio, and any custom OpenAI-compatible endpoint. Ollama (`http://127.0.0.1:11434/v1`) and LM Studio (`http://127.0.0.1:1234/v1`) work without an API key.
 
-`pnpm test` builds the production worker first, then verifies queue isolation, real concurrent Pi workers, approval pause/resume, idempotency, scheduler recovery, and workspace confinement.
+### Scripts
+
+| Command | What it does |
+| --- | --- |
+| `pnpm dev` | Run the app in development |
+| `pnpm typecheck` | TypeScript check, no emit |
+| `pnpm build` | Typecheck + production build |
+| `pnpm test` | Build, then run the integration suite |
+| `pnpm eval` | Run the deterministic agent evals |
+| `pnpm package` | Build an unpacked app into `release/` |
+| `pnpm dist` | Build installers (dmg/zip, nsis, AppImage) |
+
+`pnpm test` builds the production worker first, then verifies queue isolation, concurrent workers, approval pause/resume, idempotency, scheduler recovery, and workspace confinement.
+
+## Features
+
+**Coworkers and chat**
+- Multiple coworkers, each with its own role, system prompt, tool set, and workspace
+- Multiple named conversations per coworker, persisted across restarts
+- Streaming, Markdown-rendered replies with typed tool call rendering
+- Image attachments via picker or drag-and-drop, sent to vision-capable models
+- Searchable live model catalogs with OpenRouter pricing and quick per-coworker model switching
+
+**Work execution**
+- One task at a time per coworker, on an isolated Node worker thread
+- Durable SQLite task queue with checkpoints, history, artifacts, and crash recovery
+- Approval inbox with editable decisions and idempotent resume
+- Persistent cron and one-time schedules; chat reminders route to the approval-gated scheduler
+
+**Tools**
+- Confined file read/list/write inside the coworker workspace
+- Invoice creation
+- Document export to PDF, Word DOCX, Excel XLSX, and CSV from semantic Markdown
+- Email drafts (`.eml` outbox by default) and approval-gated sending via Resend
+- Web search with Tavily, Exa, Firecrawl, and SerpAPI credential fallback
+
+**Skills**
+- Agent Skills-compatible global skill library with per-coworker enablement
+- Bundled `web-search` and `document-authoring` skills
+- Install by uploading a `SKILL.md`, from an HTTPS URL in Settings, or by pasting a skill URL into chat
+- Metadata is exposed to the model first; full instructions load on demand through a controlled skill reader
+
+**Platform**
+- Tray/background operation and launch-at-login controls
+- electron-builder packaging for macOS, Windows, and Linux
+- OS-backed encrypted model and integration credentials
 
 ## Agent evals
 
-The dedicated Vitest Evals suite exercises production worker threads and controlled tools, not mocked agent facades. Offline cases cover tool selection, response contracts, approval pause/approve/reject behavior, idempotent side effects, scheduler-first reminders, path confinement, malformed tool input, and multimodal validation.
+The Vitest Evals suite exercises production worker threads and controlled tools, not mocked agent facades. Offline cases cover tool selection, response contracts, approval behavior, idempotent side effects, scheduler-first reminders, path confinement, malformed tool input, and multimodal validation.
 
 ```sh
-# Deterministic, keyless suite used by CI
-pnpm eval
-
-# Also write eval-results/latest.json for the report UI or CI checks
-pnpm eval:report
-pnpm eval:ui
+pnpm eval          # deterministic, keyless suite used by CI
+pnpm eval:report   # also writes eval-results/latest.json
+pnpm eval:ui       # browse the report
 ```
 
-Live-provider quality cases are opt-in. They use the same harness and remain skipped unless all required variables are present:
+Live-provider quality cases are opt-in and stay skipped unless every required variable is set:
 
 ```sh
 EVAL_PROVIDER=openai \
@@ -64,16 +81,16 @@ EVAL_API_KEY=... \
 pnpm eval
 ```
 
-`EVAL_PROVIDER` supports `anthropic`, `openai`, `google`, and `openrouter`. The provider-specific `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY`, or `OPENROUTER_API_KEY` can be used instead of `EVAL_API_KEY`. Live evals may incur provider charges; the deterministic suite never makes remote model calls.
+`EVAL_PROVIDER` accepts `anthropic`, `openai`, `google`, or `openrouter`. A provider-specific key (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY`, `OPENROUTER_API_KEY`) can be used instead of `EVAL_API_KEY`. Live evals may incur provider charges; the deterministic suite never makes remote calls.
 
-## Local data and security
+## Data and security
 
-Application state is stored under Electron's user-data directory. Model and email API keys are encrypted with Electron `safeStorage`; plaintext keys are never written to SQLite or exposed back to the renderer.
+State lives under Electron's user-data directory. Model and email API keys are encrypted with Electron `safeStorage` — plaintext keys are never written to SQLite or returned to the renderer.
 
-Provider configuration, catalog, startup, inference, and runtime-exit failures are written as redacted JSON Lines to `logs/provider-errors.jsonl` under that directory. Records include provider/model and task/run identifiers, but exclude prompts and credentials; the file rotates at 5 MB. Recent entries can be reviewed in Settings → Data, where a redacted support report can be copied or exported for sharing.
+The renderer runs with context isolation, sandboxing, no Node integration, a restrictive CSP, and a narrow preload API. Workers cannot touch SQLite or credentials directly. File tools resolve paths against the coworker's workspace and reject traversal or escaping symlinks. Attached images are validated and capped at four images / 20 MB per message. Remote skill downloads reject credential-bearing, local, and private-network URLs, and bundled skills cannot be overwritten. There is deliberately no shell, Python, or code-execution tool.
 
-The renderer has context isolation, sandboxing, no Node integration, a restrictive CSP, and a narrow preload API. Workers cannot access SQLite or credentials directly. File tools resolve relative paths against the coworker's workspace and reject traversal or escaping symlinks. Attached images are validated, limited to four images and 20 MB total per message, and stored inside the coworker's workspace so queued work can recover after a restart. V1 intentionally has no arbitrary shell, Python, or code-execution tool.
+Provider, catalog, startup, inference, and runtime-exit failures are written as redacted JSON Lines to `logs/provider-errors.jsonl` in the same directory (provider/model and task/run IDs, no prompts or credentials; rotates at 5 MB). Recent entries are viewable in **Settings → Data**, where a redacted support report can be copied or exported.
 
-Email defaults to a local `.eml` outbox. Resend can be configured for real delivery, but `email.send` follows the coworker's durable approval policy and uses a stable idempotency key.
+## Contributing
 
-Skills can be uploaded as `SKILL.md` files or installed from an HTTPS URL in Settings. Pasting a compliant skill URL into coworker chat also installs it globally and enables it for that coworker. Skill metadata is exposed to the model first; full instructions are loaded on demand through the controlled skill reader. Remote skill downloads reject credential-bearing, local, and private-network URLs, and bundled skills cannot be replaced by downloaded content.
+New coworker capabilities are delivered as Agent Skills rather than hardcoded application logic. See [AGENTS.md](AGENTS.md) for the capability architecture and verification expectations.
