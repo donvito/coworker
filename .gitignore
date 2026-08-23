@@ -1,0 +1,14 @@
+node_modules/
+.pnpm-store/
+out/
+release/
+coverage/
+.DS_Store
+*.log
+*.db
+*.db-shm
+*.db-wal
+.env
+.env.*
+!.env.example
+.smoke-*/

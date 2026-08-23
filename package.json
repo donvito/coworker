@@ -1,0 +1,78 @@
+{
+  "name": "ai-coworker-desktop",
+  "version": "0.1.0",
+  "description": "A local-first desktop app for independent AI coworkers.",
+  "type": "module",
+  "main": "./out/main/index.js",
+  "author": "AI Coworker",
+  "license": "UNLICENSED",
+  "private": true,
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "pnpm typecheck && electron-vite build",
+    "preview": "electron-vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "pnpm build && vitest run",
+    "test:watch": "vitest",
+    "package": "pnpm build && electron-builder --dir",
+    "dist": "pnpm build && electron-builder"
+  },
+  "build": {
+    "appId": "com.localcoworker.desktop",
+    "productName": "AI Coworker",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "out/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "icon": "build/icon.svg",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.productivity"
+    },
+    "win": {
+      "icon": "build/icon.svg",
+      "target": "nsis"
+    },
+    "linux": {
+      "icon": "build/icon.svg",
+      "target": "AppImage",
+      "category": "Utility"
+    }
+  },
+  "dependencies": {
+    "@ag-ui/client": "^0.0.57",
+    "@ag-ui/core": "^0.0.57",
+    "@copilotkit/react-core": "^1.69.0",
+    "@earendil-works/pi-agent-core": "^0.84.2",
+    "@earendil-works/pi-ai": "^0.84.2",
+    "@sinclair/typebox": "^0.34.52",
+    "cron-parser": "^5.10.0",
+    "docx": "^9.7.1",
+    "pdf-lib": "^1.17.1",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "rxjs": "7.8.1",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.6",
+    "@types/node": "^26.2.0",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "@vitejs/plugin-react": "^5.2.0",
+    "electron": "^43.4.1",
+    "electron-builder": "^26.15.3",
+    "electron-vite": "^5.0.0",
+    "happy-dom": "^20.11.6",
+    "typescript": "^7.0.2",
+    "vite": "^7",
+    "vitest": "^4.1.11"
+  }
+}

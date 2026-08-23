@@ -1,0 +1,9 @@
+packages:
+  - '.'
+
+allowBuilds:
+  '@google/genai': false
+  '@scarf/scarf': false
+  electron-winstaller: false
+  esbuild: false
+  protobufjs: false
