@@ -4,7 +4,7 @@ A local-first Electron app for running independent AI coworkers. Each coworker h
 
 ## Quick start
 
-Requires **Node.js 22+** and **pnpm**.
+Requires **Node.js 22.12+** and **pnpm**.
 
 ```sh
 pnpm install
