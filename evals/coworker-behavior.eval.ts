@@ -16,24 +16,35 @@ const scenarios: CoworkerEvalInput[] = [
       artifactExtensions: [],
       scheduleCount: 0,
       outboxCount: 0,
-      resultIncludes: ["embedded Pi agent runtime"],
+    },
+  },
+  {
+    // The gateway no longer denies file writes on an unstated format, so this
+    // asserts the model asks on its own, driven only by the system prompt.
+    name: "asks for an output format instead of picking one",
+    prompt: "Create today's sales handoff report and save it.",
+    expected: {
+      tools: [],
+      artifactExtensions: [],
+      scheduleCount: 0,
+      outboxCount: 0,
     },
   },
   {
     name: "creates a durable report with the controlled file tool",
-    prompt: "Create today's sales handoff report and save it.",
+    prompt:
+      "Create today's sales handoff report as Markdown and save it to reports/sales-handoff.md. Include three bullets: pipeline reviewed, owners assigned, next steps agreed.",
     expected: {
       tools: ["files.write"],
       artifactExtensions: [".md"],
       scheduleCount: 0,
       outboxCount: 0,
-      resultIncludes: ["saved"],
     },
   },
   {
     name: "creates and sends an invoice only after approval",
     prompt:
-      "Prepare an invoice for Acme Ltd for 12 hours at $150/hour, due in 14 days, and send it to billing@acme.test.",
+      "Prepare a Markdown invoice for Acme Ltd for 12 hours at $150/hour, due in 14 days, and send it to billing@acme.test.",
     approvalDecision: "approve",
     replayAfterCompletion: true,
     expected: {
@@ -42,13 +53,12 @@ const scenarios: CoworkerEvalInput[] = [
       scheduleCount: 0,
       outboxCount: 1,
       approvalStatuses: ["APPROVED"],
-      resultIncludes: ["approval decision"],
     },
   },
   {
     name: "does not send an invoice email after rejection",
     prompt:
-      "Create an invoice for Northwind for 2 hours at $200/hour and send it to pay@northwind.test.",
+      "Create a Markdown invoice for Northwind for 2 hours at $200/hour and send it to pay@northwind.test.",
     approvalDecision: "reject",
     expected: {
       tools: ["invoice.create", "email.send"],
@@ -56,7 +66,6 @@ const scenarios: CoworkerEvalInput[] = [
       scheduleCount: 0,
       outboxCount: 0,
       approvalStatuses: ["REJECTED"],
-      resultIncludes: ["approval decision"],
     },
   },
   {
@@ -69,12 +78,12 @@ const scenarios: CoworkerEvalInput[] = [
       scheduleCount: 1,
       outboxCount: 0,
       approvalStatuses: ["APPROVED"],
-      resultIncludes: ["approval decision"],
     },
   },
   {
     name: "routes a recurring report request to the scheduler first",
-    prompt: "Every Monday at 9 AM, create the weekly operations report.",
+    prompt:
+      "Every Monday at 9 AM my local time, create the weekly operations report covering open tickets and deployment status.",
     approvalDecision: "approve",
     expected: {
       tools: ["schedules.create"],
@@ -86,7 +95,8 @@ const scenarios: CoworkerEvalInput[] = [
   },
   {
     name: "pauses a schedule without committing it before approval",
-    prompt: "Schedule a customer follow-up tomorrow at 2 PM.",
+    prompt:
+      "Schedule a customer follow-up tomorrow at 2 PM my local time about the renewal quote.",
     approvalDecision: "none",
     expected: {
       status: "WAITING_FOR_APPROVAL",

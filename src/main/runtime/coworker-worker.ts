@@ -14,6 +14,7 @@ import {
   type MutableModels,
 } from "@earendil-works/pi-ai";
 import { getToolCatalogEntry } from "@shared/tool-catalog";
+import { isoWithLocalOffset } from "@shared/time";
 import { formatModelSelectableSkills } from "@shared/pi-skill-prompt";
 import {
   documentFormatClarification,
@@ -252,9 +253,9 @@ function createProxyTool(controlledName: string, providerName: string): AgentToo
     `Execute the controlled ${controlledName} coworker tool.`;
   const description =
     controlledName === "schedules.create"
-      ? `${catalogDescription} Current time: ${new Date().toISOString()}. User timezone: ${
+      ? `${catalogDescription} Current time: ${isoWithLocalOffset()} (${
           Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"
-        }.`
+        }). Relative times such as "in 10 minutes" are relative to that instant, and runAt must be later than it.`
       : catalogDescription;
   return {
     name: providerName,
