@@ -58,7 +58,6 @@ export function QuickModelSwitcher({
     const nextProvider = coworker.modelProvider === "demo" ? "" : coworker.modelProvider;
     setSelectedProvider(nextProvider);
     setCatalogProvider(nextProvider);
-    setSelectedOption(null);
     setOpen(false);
     setQuery("");
   }, [coworker.modelName, coworker.modelProvider]);
@@ -114,11 +113,6 @@ export function QuickModelSwitcher({
       .then((availableModels) => {
         if (cancelled) return;
         setModels(availableModels);
-        if (catalogProvider === selectedProvider) {
-          setSelectedOption(
-            availableModels.find((model) => model.id === selectedModel) ?? null,
-          );
-        }
       })
       .catch((loadError) => {
         if (!cancelled) {
@@ -132,6 +126,13 @@ export function QuickModelSwitcher({
       cancelled = true;
     };
   }, [catalogProvider]);
+
+  // Keep the selected option (and its pricing) in sync with whichever model
+  // list is loaded, including after the coworker refreshes post-save.
+  useEffect(() => {
+    if (catalogProvider !== selectedProvider) return;
+    setSelectedOption(models.find((model) => model.id === selectedModel) ?? null);
+  }, [models, catalogProvider, selectedProvider, selectedModel]);
 
   async function changeModel(modelName: string) {
     const previousModel = selectedModel;
@@ -191,84 +192,86 @@ export function QuickModelSwitcher({
         <span>
           {selectedProvider ? (selectedOption?.name ?? selectedModel) : "Choose provider and model"}
         </span>
+        {selectedProvider ? <small>{modelProviderName(selectedProvider)}</small> : null}
         <b aria-hidden="true">⌄</b>
       </button>
       {open ? (
         <div className="quick-model-popover">
-          <label className="quick-model-provider">
-            <span>Provider</span>
-            <select
-              aria-label={`Model provider for ${coworker.name}`}
-              disabled={saving}
-              onChange={(event) => {
-                setCatalogProvider(event.target.value as RemoteModelProvider);
-                setQuery("");
-              }}
-              value={catalogProvider}
-            >
-              {remoteModelProviderDefinitions
-                .filter((provider) => configuredProviders.includes(provider.id))
-                .map((provider) => (
-                  <option key={provider.id} value={provider.id}>
-                    {provider.label}
-                  </option>
-                ))}
-            </select>
-          </label>
-          <div className="quick-model-search">
-            <input
-              aria-label={`Search models for ${coworker.name}`}
-              autoFocus
-              disabled={loading}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search by model name or ID…"
-              type="search"
-              value={query}
-            />
-            <small>
-              {loading
-                ? "Loading…"
-                : normalizedQuery
-                  ? `${matchingModels.length} of ${models.length}`
-                  : `${models.length} models`}
-            </small>
-          </div>
-          <div className="quick-model-options" id={listboxId} role="listbox">
-            {loading ? (
-              <span className="quick-model-empty">Loading model catalog…</span>
-            ) : visibleModels.length > 0 ? (
-              visibleModels.map((model) => {
-                const pricing = modelPricingLabel(model);
-                return (
-                  <button
-                    aria-selected={
-                      catalogProvider === selectedProvider && model.id === selectedModel
-                    }
-                    className={
-                      catalogProvider === selectedProvider && model.id === selectedModel
-                        ? "selected"
-                        : ""
-                    }
-                    key={model.id}
-                    onClick={() => void changeModel(model.id)}
-                    role="option"
-                    title={modelOptionLabel(model)}
-                    type="button"
-                  >
-                    <span className="quick-model-option-name">
-                      <strong>{model.name}</strong>
-                      {model.supportsImages ? <b>Images</b> : null}
-                    </span>
-                    <span className="quick-model-option-meta">
-                      <code>{model.id}</code>
-                      {pricing ? <small>{pricing}</small> : null}
-                    </span>
-                  </button>
-                );
-              })
-            ) : (
-              <span className="quick-model-empty">No models match this search.</span>
-            )}
+          <nav aria-label={`Model provider for ${coworker.name}`} className="quick-model-providers">
+            {remoteModelProviderDefinitions
+              .filter((provider) => configuredProviders.includes(provider.id))
+              .map((provider) => (
+                <button
+                  aria-pressed={provider.id === catalogProvider}
+                  className={provider.id === catalogProvider ? "selected" : ""}
+                  disabled={saving}
+                  key={provider.id}
+                  onClick={() => {
+                    setCatalogProvider(provider.id);
+                    setQuery("");
+                  }}
+                  type="button"
+                >
+                  {provider.label}
+                </button>
+              ))}
+          </nav>
+          <div className="quick-model-catalog">
+            <div className="quick-model-search">
+              <input
+                aria-label={`Search models for ${coworker.name}`}
+                autoFocus
+                disabled={loading}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Search by model name or ID…"
+                type="search"
+                value={query}
+              />
+              <small>
+                {loading
+                  ? "Loading…"
+                  : normalizedQuery
+                    ? `${matchingModels.length} of ${models.length}`
+                    : `${models.length} models`}
+              </small>
+            </div>
+            <div className="quick-model-options" id={listboxId} role="listbox">
+              {loading ? (
+                <span className="quick-model-empty">Loading model catalog…</span>
+              ) : visibleModels.length > 0 ? (
+                visibleModels.map((model) => {
+                  const pricing = modelPricingLabel(model);
+                  return (
+                    <button
+                      aria-selected={
+                        catalogProvider === selectedProvider && model.id === selectedModel
+                      }
+                      className={
+                        catalogProvider === selectedProvider && model.id === selectedModel
+                          ? "selected"
+                          : ""
+                      }
+                      key={model.id}
+                      onClick={() => void changeModel(model.id)}
+                      role="option"
+                      title={modelOptionLabel(model)}
+                      type="button"
+                    >
+                      <span className="quick-model-option-name">
+                        <strong>{model.name}</strong>
+                        {model.supportsImages ? <b>Images</b> : null}
+                      </span>
+                      <span className="quick-model-option-meta">
+                        <code>{model.id}</code>
+                        {pricing ? <small>{pricing}</small> : null}
+                      </span>
+                    </button>
+                  );
+                })
+              ) : (
+                <span className="quick-model-empty">No models match this search.</span>
+              )}
+            </div>
           </div>
         </div>
       ) : null}
@@ -282,9 +285,7 @@ export function QuickModelSwitcher({
               : disabled
                 ? "Available after this run"
                 : selectedProvider
-                  ? `${modelProviderName(selectedProvider)} · Auto-saves${
-                      selectedPricing ? ` · ${selectedPricing}` : ""
-                    }`
+                  ? selectedPricing
                   : "No configured provider"}
       </small>
     </span>

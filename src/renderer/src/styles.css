@@ -3249,17 +3249,20 @@ select:focus {
 .conversation-model-switcher {
   position: relative;
   display: flex;
-  width: 230px;
-  max-width: 100%;
-  flex-direction: column;
-  gap: 1px;
+  align-items: center;
+  gap: 10px;
   flex: 0 0 auto;
   margin-top: 3px;
 }
 
+.conversation-model-switcher .quick-model-trigger {
+  width: auto;
+  max-width: min(520px, 48vw);
+}
+
 .quick-model-trigger {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 8px;
   width: 100%;
@@ -3286,6 +3289,13 @@ select:focus {
   white-space: nowrap;
 }
 
+.quick-model-trigger > small {
+  color: var(--ink-soft);
+  font-size: 10px;
+  font-weight: 550;
+  white-space: nowrap;
+}
+
 .quick-model-trigger > b {
   color: currentColor;
   font-size: 13px;
@@ -3293,11 +3303,10 @@ select:focus {
 }
 
 .conversation-model-switcher > small {
-  min-height: 13px;
-  padding-left: 4px;
   color: var(--ink-soft);
   font-size: 10px;
   line-height: 1.25;
+  white-space: nowrap;
 }
 
 .conversation-model-switcher > small.error {
@@ -3307,40 +3316,62 @@ select:focus {
 .quick-model-popover {
   position: absolute;
   z-index: 40;
-  top: calc(100% - 12px);
+  top: calc(100% + 6px);
   left: 0;
-  display: flex;
-  width: min(520px, calc(100vw - 36px));
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  width: min(620px, calc(100vw - 36px));
   max-height: min(520px, calc(100vh - 150px));
   padding: 8px;
-  flex-direction: column;
-  gap: 7px;
+  gap: 10px;
   background: #fff;
   border: 1px solid var(--line-strong);
   border-radius: 12px;
   box-shadow: 0 22px 55px rgba(20, 34, 28, 0.22);
 }
 
-.quick-model-provider {
-  display: grid;
-  grid-template-columns: auto minmax(180px, 1fr);
-  align-items: center;
-  gap: 10px;
-  padding: 2px 2px 7px;
-  border-bottom: 1px solid var(--line);
+/* Configured providers listed as always-visible options in a left rail. */
+.quick-model-providers {
+  display: flex;
+  min-width: 110px;
+  padding-right: 10px;
+  overflow-y: auto;
+  flex-direction: column;
+  gap: 3px;
+  border-right: 1px solid var(--line);
+  scrollbar-width: thin;
 }
 
-.quick-model-provider > span {
+.quick-model-providers > button {
+  padding: 8px 10px;
   color: var(--ink-soft);
-  font-size: 11px;
-  font-weight: 680;
+  font-size: 12px;
+  font-weight: 650;
+  text-align: left;
+  white-space: nowrap;
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
 }
 
-.quick-model-provider select {
-  min-height: 38px;
-  padding: 7px 30px 7px 10px;
-  font-size: 12px;
-  background: var(--paper);
+.quick-model-providers > button:hover,
+.quick-model-providers > button:focus-visible {
+  background: var(--cloud);
+  outline: 0;
+}
+
+.quick-model-providers > button.selected {
+  color: var(--forest);
+  background: var(--forest-soft);
+}
+
+.quick-model-catalog {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  gap: 7px;
 }
 
 .quick-model-search {

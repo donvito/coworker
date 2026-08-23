@@ -993,9 +993,10 @@ function CoworkerSurface({
             <button
               className="conversation-icon-button"
               onClick={onManage}
-              aria-label={`Manage ${coworker.name}`}
+              aria-label={`Configure ${coworker.name}`}
+              title={`Configure ${coworker.name}`}
             >
-              <Icon name="more" />
+              <Icon name="settings" />
             </button>
           </div>
           {conversationError ? (
@@ -1284,8 +1285,7 @@ function CoworkerSurface({
                 </small>
               ) : supportsImageInput === false ? (
                 <small className="composer-capability-note">
-                  {coworker.modelName} does not accept images. Choose a model marked “image input”
-                  in coworker settings.
+                  This model doesn’t accept images.
                 </small>
               ) : (
                 <small>

@@ -104,8 +104,54 @@ describe("quick coworker model switcher", () => {
         modelName: "vendor/new-model",
       });
       expect(onChanged).toHaveBeenCalledOnce();
-      expect(screen.getByText(/OpenRouter · Auto-saves/)).toBeTruthy();
+      expect(screen.getByText(/^OpenRouter/)).toBeTruthy();
     });
+  });
+
+  it("keeps showing the selected model's pricing after the coworker refreshes", async () => {
+    const pricedModels = [
+      {
+        id: "vendor/old-model",
+        name: "Old model",
+        supportsImages: false,
+        pricing: { currency: "USD" as const, inputPerMillion: 0.375, outputPerMillion: 1.88 },
+      },
+      {
+        id: "vendor/new-model",
+        name: "New model",
+        supportsImages: false,
+        pricing: { currency: "USD" as const, inputPerMillion: 1, outputPerMillion: 2 },
+      },
+    ];
+    Object.defineProperty(window, "coworker", {
+      configurable: true,
+      value: {
+        integrations: {
+          credentialStatus: credentialStatus("openrouter"),
+          listModels: vi.fn().mockResolvedValue(pricedModels),
+        },
+        coworkers: {
+          update: vi.fn().mockResolvedValue({ ...coworker, modelName: "vendor/new-model" }),
+        },
+      },
+    });
+
+    const view = render(<QuickModelSwitcher coworker={coworker} onChanged={vi.fn()} />);
+    await screen.findByText("$0.375/M input · $1.88/M output");
+
+    const selector = screen.getByRole("combobox", { name: "Model used by Ava" });
+    await waitFor(() => expect((selector as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(selector);
+    fireEvent.click(screen.getByRole("option", { name: /New model/ }));
+
+    // Parent refreshes the coworker prop after the save lands.
+    view.rerender(
+      <QuickModelSwitcher
+        coworker={{ ...coworker, modelName: "vendor/new-model" }}
+        onChanged={vi.fn()}
+      />,
+    );
+    await screen.findByText("$1.00/M input · $2.00/M output");
   });
 
   it("restores the previous selection when persistence fails", async () => {
@@ -160,9 +206,7 @@ describe("quick coworker model switcher", () => {
     const selector = await screen.findByRole("combobox", { name: "Model used by Ava" });
     await waitFor(() => expect((selector as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(selector);
-    fireEvent.change(screen.getByRole("combobox", { name: "Model provider for Ava" }), {
-      target: { value: "openai" },
-    });
+    fireEvent.click(within(screen.getByRole("navigation")).getByRole("button", { name: "OpenAI" }));
     fireEvent.click(await screen.findByRole("option", { name: /GPT New/ }));
 
     await waitFor(() =>
