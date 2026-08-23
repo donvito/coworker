@@ -96,7 +96,7 @@ const scenarios: CoworkerEvalInput[] = [
   {
     name: "pauses a schedule without committing it before approval",
     prompt:
-      "Schedule a customer follow-up tomorrow at 2 PM my local time about the renewal quote.",
+      "Schedule a follow-up with Acme Ltd about the renewal quote tomorrow at 2 PM my local time.",
     approvalDecision: "none",
     expected: {
       status: "WAITING_FOR_APPROVAL",

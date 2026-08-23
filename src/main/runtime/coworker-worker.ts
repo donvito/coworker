@@ -58,13 +58,17 @@ interface ActiveRun {
 const modelTranscriptPath = process.env.COWORKER_MODEL_TRANSCRIPT || null;
 
 interface RecordedTurn {
+  /** Which pass over the task produced this turn. A resumed run continues the
+   * pass it resumed; re-running a completed task starts a new one. */
+  run: number;
   text: string;
-  toolCalls: Array<{ name: string; arguments: Record<string, unknown> }>;
+  toolCalls: Array<{ id: string; name: string; arguments: Record<string, unknown> }>;
   stopReason: string;
 }
 
 let recordedTurns: RecordedTurn[] = [];
 let recordedTaskId: string | null = null;
+let recordedRunIndex = 0;
 
 let config: WorkerCoworkerConfig | null = null;
 let agent: Agent | null = null;
@@ -547,16 +551,25 @@ function recordAssistantTurn(message: { content: unknown; stopReason?: unknown }
   if (!modelTranscriptPath || !config || config.coworker.modelProvider === "demo") return;
   const blocks = Array.isArray(message.content) ? message.content : [];
   const turn: RecordedTurn = {
+    run: recordedRunIndex,
     text: blocks
       .filter((block): block is { type: "text"; text: string } => block?.type === "text")
       .map((block) => block.text)
       .join(""),
     toolCalls: blocks
       .filter(
-        (block): block is { type: "toolCall"; name: string; arguments: Record<string, unknown> } =>
-          block?.type === "toolCall",
+        (block): block is {
+          type: "toolCall";
+          id: string;
+          name: string;
+          arguments: Record<string, unknown>;
+        } => block?.type === "toolCall",
       )
       .map((block) => ({
+        // Downstream tools derive identifiers from the tool-call id -- an
+        // invoice number, for one -- and a later turn may reference the file
+        // that produced. Replaying the original id keeps those agreeing.
+        id: block.id,
         // Recordings are replayed through the controlled tool surface, so store
         // the portable name the gateway will receive rather than the provider's.
         name: controlledToolNamesByProviderName.get(block.name) ?? block.name,
@@ -595,13 +608,21 @@ function replayRecordedTurns(resume: boolean): boolean {
     return false;
   }
   if (turns.length === 0) return false;
+  const passTurns = turns.filter((turn) => (turn.run ?? 0) === recordedRunIndex);
+  if (passTurns.length === 0) {
+    // The recording ended before this pass produced anything -- the live run
+    // was torn down while it was still working. Complete without acting so the
+    // state the recording captured is left intact.
+    demo.setResponses([fauxAssistantMessage("Nothing further was required.")]);
+    return true;
+  }
   demo.setResponses(
-    turns.map((turn, index) =>
+    passTurns.map((turn, index) =>
       turn.toolCalls.length > 0
         ? fauxAssistantMessage(
             turn.toolCalls.map((call) =>
               fauxToolCall(call.name, call.arguments, {
-                id: `${activeRun!.taskId}:replay:${index}:${call.name}`,
+                id: call.id || `${activeRun!.taskId}:replay:${index}:${call.name}`,
               }),
             ),
             { stopReason: "toolUse" },
@@ -823,6 +844,9 @@ async function runTask(message: Extract<MainToWorkerMessage, { type: "run" }>): 
     if (message.taskId !== recordedTaskId) {
       recordedTaskId = message.taskId;
       recordedTurns = [];
+      recordedRunIndex = 0;
+    } else if (!message.resume) {
+      recordedRunIndex += 1;
     }
     configureDemoResponses(message.input, Boolean(message.resume));
     emit({
