@@ -57,6 +57,44 @@ describe("artifact file access", () => {
     }
   });
 
+  it("resolves files recorded under a differently cased workspace root", async () => {
+    const root = await mkdtemp(join(tmpdir(), "coworker-artifacts-"));
+    temporaryPaths.push(root);
+    const workspace = join(root, "Workspace");
+    const filePath = join(workspace, "seedance_profiles.csv");
+    await mkdir(workspace, { recursive: true });
+    await writeFile(filePath, "a,b\n1,2\n");
+
+    const database = new CoworkerDatabase(join(root, "coworker.db"));
+    try {
+      const coworker = database.createCoworker(
+        {
+          name: "Song",
+          role: "Social Media Expert",
+          systemPrompt: "Research profiles.",
+          modelProvider: "demo",
+          modelName: "faux-1",
+          enabledTools: ["documents.export"],
+        },
+        workspace,
+      );
+      const artifact = database.createArtifact({
+        taskId: null,
+        coworkerId: coworker.id,
+        name: "seedance_profiles.csv",
+        mimeType: "text/csv",
+        // The same directory, spelled the way the app resolved it when writing.
+        filePath: join(root, "workspace", "seedance_profiles.csv"),
+      });
+
+      await expect(resolveArtifactFile(database, artifact.id)).resolves.toMatchObject({
+        artifact: { id: artifact.id },
+      });
+    } finally {
+      database.close();
+    }
+  });
+
   it("rejects artifact records that point outside the coworker workspace", async () => {
     const root = await mkdtemp(join(tmpdir(), "coworker-artifacts-"));
     temporaryPaths.push(root);

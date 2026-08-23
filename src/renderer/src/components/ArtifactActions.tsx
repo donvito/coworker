@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { Artifact } from "@shared/contracts";
+import { readableError } from "../lib/errors";
 import { Icon } from "./Icon";
 
 export interface ArtifactTarget {
@@ -35,10 +36,7 @@ export function ArtifactActions({
         setFeedback({ message: "Deleted", error: false });
       }
     } catch (error) {
-      setFeedback({
-        message: error instanceof Error ? error.message : String(error),
-        error: true,
-      });
+      setFeedback({ message: readableError(error), error: true });
     } finally {
       if (action === "delete") setConfirmingDelete(false);
       setPendingAction(null);

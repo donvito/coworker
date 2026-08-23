@@ -19,6 +19,7 @@ import {
 import { Icon } from "../components/Icon";
 import { ModelSelector } from "../components/ModelSelector";
 import { PageHeader } from "../components/Primitives";
+import { readableError } from "../lib/errors";
 
 type SettingsTab = "general" | "models" | "skills" | "integrations" | "data";
 
@@ -29,14 +30,6 @@ function bytesToBase64(buffer: ArrayBuffer): string {
     binary += String.fromCharCode(...bytes.subarray(offset, offset + 32_768));
   }
   return btoa(binary);
-}
-
-function readableError(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error);
-  return message.replace(
-    /^Error invoking remote method '[^']+':\s*(?:Error:\s*)?/,
-    "",
-  );
 }
 
 export function SettingsPage({

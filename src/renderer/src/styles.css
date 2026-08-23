@@ -3629,6 +3629,25 @@ select:focus {
   font-style: italic;
 }
 
+.chat-markdown-artifact-link {
+  background: none;
+  border: 0;
+  color: var(--blue);
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.chat-markdown-artifact-status {
+  color: var(--ink-soft);
+}
+
+.chat-markdown-dead-link {
+  color: var(--ink-soft);
+}
+
 .workroom-message-meta {
   color: #87948e;
   font-family: var(--mono);

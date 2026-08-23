@@ -1102,7 +1102,7 @@ function CoworkerSurface({
                         {content ? (
                           <span className="workroom-message-text">
                             {message.role === "assistant" ? (
-                              <ChatMarkdown>{content}</ChatMarkdown>
+                              <ChatMarkdown artifacts={artifacts}>{content}</ChatMarkdown>
                             ) : (
                               content
                             )}
