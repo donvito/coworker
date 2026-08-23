@@ -7,10 +7,10 @@ import {
 } from "../components/ArtifactActions";
 import { Icon } from "../components/Icon";
 import {
+  CoworkerAvatar,
   EmptyState,
   PageHeader,
   formatRelativeTime,
-  initials,
 } from "../components/Primitives";
 
 export function FilesPage({
@@ -121,7 +121,7 @@ export function FilesPage({
             <section className="file-owner-group" key={coworker.id}>
               <header>
                 <button onClick={() => onOpenCoworker(coworker)} type="button">
-                  <span className="file-owner-avatar">{initials(coworker.name)}</span>
+                  <CoworkerAvatar className="file-owner-avatar" coworker={coworker} />
                   <span>
                     <strong>{coworker.name}</strong>
                     <small>{coworker.role}</small>

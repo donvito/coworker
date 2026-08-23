@@ -1,7 +1,63 @@
 import type { ReactNode } from "react";
 import type { Coworker, RuntimeStatus, TaskStatus } from "@shared/contracts";
 import { modelProviderName } from "@shared/model-providers";
+import avatar1 from "../assets/coworker-avatars/avatar-1.png";
+import avatar2 from "../assets/coworker-avatars/avatar-2.png";
+import avatar3 from "../assets/coworker-avatars/avatar-3.png";
+import avatar4 from "../assets/coworker-avatars/avatar-4.png";
+import avatar5 from "../assets/coworker-avatars/avatar-5.png";
+import avatar6 from "../assets/coworker-avatars/avatar-6.png";
+import avatar7 from "../assets/coworker-avatars/avatar-7.png";
+import avatar8 from "../assets/coworker-avatars/avatar-8.png";
+import avatar9 from "../assets/coworker-avatars/avatar-9.png";
 import { Icon, type IconName } from "./Icon";
+
+const coworkerAvatars = [
+  avatar1,
+  avatar2,
+  avatar3,
+  avatar4,
+  avatar5,
+  avatar6,
+  avatar7,
+  avatar8,
+  avatar9,
+] as const;
+
+const coworkerAvatarColors = [
+  "#315e4e",
+  "#4962a9",
+  "#a85e43",
+  "#8a6a2f",
+  "#5e568f",
+  "#39727a",
+] as const;
+
+function avatarIndex(id: string): number {
+  let hash = 0;
+  for (const character of id) hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
+  return hash;
+}
+
+export function CoworkerAvatar({
+  coworker,
+  className = "",
+}: {
+  coworker: Pick<Coworker, "id" | "name">;
+  className?: string;
+}) {
+  const index = avatarIndex(coworker.id);
+  return (
+    <span
+      aria-label={`${coworker.name} avatar`}
+      className={`coworker-avatar ${className}`.trim()}
+      role="img"
+      style={{ backgroundColor: coworkerAvatarColors[index % coworkerAvatarColors.length] }}
+    >
+      <img alt="" src={coworkerAvatars[index % coworkerAvatars.length]} />
+    </span>
+  );
+}
 
 export function PageHeader({
   eyebrow,
@@ -63,6 +119,8 @@ export function CoworkerModelBadge({
   }
   const provider = modelProviderName(coworker.modelProvider);
   const label = `${provider} · ${coworker.modelName}`;
+  // OpenRouter ids are "org/model"; the segment after the slash is the model.
+  const displayName = coworker.modelName.split("/").at(-1) || coworker.modelName;
   return (
     <span
       aria-label={`Configured model: ${label}`}
@@ -70,7 +128,7 @@ export function CoworkerModelBadge({
       title={`Configured model: ${label}`}
     >
       <span>{provider}</span>
-      <code>{coworker.modelName}</code>
+      <code>{displayName}</code>
     </span>
   );
 }

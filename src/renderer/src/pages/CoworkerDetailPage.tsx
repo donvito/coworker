@@ -31,10 +31,10 @@ import { ChatMarkdown } from "../components/ChatMarkdown";
 import { QuickModelSwitcher } from "../components/QuickModelSwitcher";
 import { Icon } from "../components/Icon";
 import {
+  CoworkerAvatar,
   CoworkerModelBadge,
   StatusLabel,
   formatRelativeTime,
-  initials,
 } from "../components/Primitives";
 import { CreateCoworkerModal } from "./CoworkersPage";
 
@@ -850,7 +850,7 @@ function CoworkerSurface({
                 key={item.id}
                 onClick={() => onSelectCoworker(item)}
               >
-                <span className="conversation-avatar">{initials(item.name)}</span>
+                <CoworkerAvatar className="conversation-avatar" coworker={item} />
                 <span className="conversation-roster-copy">
                   <span>
                     <strong>{item.name}</strong>
@@ -903,7 +903,7 @@ function CoworkerSurface({
       >
         <header className="conversation-main-head">
           <div className="conversation-head-profile">
-            <span className="conversation-avatar active">{initials(coworker.name)}</span>
+            <CoworkerAvatar className="conversation-avatar active" coworker={coworker} />
             <span className="conversation-identity">
               <span className="conversation-identity-title">
                 <strong>{coworker.name}</strong>
