@@ -45,6 +45,8 @@ export interface CoworkerEvalInput {
    * model decisions rather than a scripted stand-in.
    */
   transcriptPath?: string;
+  /** Runs only against a live provider; see recordingPath's note on replay. */
+  liveOnly?: boolean;
   model?: {
     provider: ModelProvider;
     id: string;

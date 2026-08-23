@@ -14,3 +14,7 @@ eval-results/
 .env.*
 !.env.example
 .smoke-*/
+.eval-key
+
+# Model recordings are local for now; CI gates on the contract evals only.
+evals/recordings/

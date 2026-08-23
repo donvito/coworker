@@ -43,10 +43,23 @@ const scenarios: CoworkerEvalInput[] = [
   },
   {
     name: "creates and sends an invoice only after approval",
+    // The model's email.send attaches the file invoice.create just produced,
+    // whose name is derived from a per-run task id. A replay regenerates the
+    // name and the attachment no longer resolves, so this one is only
+    // meaningful live.
+    liveOnly: true,
     prompt:
       "Prepare a Markdown invoice for Acme Ltd for 12 hours at $150/hour, due in 14 days, and send it to billing@acme.test.",
     approvalDecision: "approve",
-    replayAfterCompletion: true,
+    enabledTools: [
+      "files.list",
+      "files.read",
+      "files.write",
+      "invoice.create",
+      "documents.export",
+      "email.send",
+      "schedules.create",
+    ],
     expected: {
       tools: ["invoice.create", "email.send"],
       artifactExtensions: [".md"],
@@ -60,6 +73,15 @@ const scenarios: CoworkerEvalInput[] = [
     prompt:
       "Create a Markdown invoice for Northwind for 2 hours at $200/hour and send it to pay@northwind.test.",
     approvalDecision: "reject",
+    enabledTools: [
+      "files.list",
+      "files.read",
+      "files.write",
+      "invoice.create",
+      "documents.export",
+      "email.send",
+      "schedules.create",
+    ],
     expected: {
       tools: ["invoice.create", "email.send"],
       artifactExtensions: [".md"],
@@ -83,7 +105,7 @@ const scenarios: CoworkerEvalInput[] = [
   {
     name: "routes a recurring report request to the scheduler first",
     prompt:
-      "Every Monday at 9 AM my local time, create the weekly operations report covering open tickets and deployment status.",
+      "Every Monday at 9 AM, create the weekly operations report covering open tickets and deployment status.",
     approvalDecision: "approve",
     expected: {
       tools: ["schedules.create"],
@@ -119,7 +141,9 @@ const scenarios: CoworkerEvalInput[] = [
 const live = liveModel();
 
 const runnable = scenarios
-  .filter((scenario) => live !== null || hasRecording(scenario.name))
+  .filter((scenario) =>
+    live !== null || (!scenario.liveOnly && hasRecording(scenario.name)),
+  )
   .map((scenario) => ({
     ...scenario,
     transcriptPath: recordingPath(scenario.name),

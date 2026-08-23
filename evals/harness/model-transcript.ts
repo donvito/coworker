@@ -47,6 +47,15 @@ export function liveModel(): LiveModelConfig | null {
   return { provider, id, apiKey };
 }
 
+/**
+ * Some scenarios cannot be replayed at all.
+ *
+ * A recorded turn may reference an identifier the app generated during
+ * recording -- an invoice number is derived from the tool-call id, which is
+ * derived from a per-run task id. Replaying regenerates it, so the recorded
+ * argument points at a file that does not exist. Those scenarios are honest
+ * only against a live provider; replaying them would assert nothing.
+ */
 export function recordingPath(scenarioName: string): string {
   const slug = scenarioName
     .toLowerCase()

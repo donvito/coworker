@@ -14,7 +14,7 @@ import {
   type MutableModels,
 } from "@earendil-works/pi-ai";
 import { getToolCatalogEntry } from "@shared/tool-catalog";
-import { isoWithLocalOffset } from "@shared/time";
+import { isoWithLocalOffset, shiftTimestampsDeep } from "@shared/time";
 import { formatModelSelectableSkills } from "@shared/pi-skill-prompt";
 import {
   documentFormatClarification,
@@ -224,7 +224,8 @@ const parameterSchemas: Record<string, ReturnType<typeof Type.Object>> = {
     ),
     timezone: Type.Optional(
       Type.String({
-        description: "IANA timezone such as America/New_York; omit to use the user's local timezone",
+        description:
+          "IANA timezone such as America/New_York. Omit it to use the user's own timezone, which is the default and needs no confirmation.",
       }),
     ),
     taskTemplate: Type.Object({
@@ -252,14 +253,13 @@ const parameterSchemas: Record<string, ReturnType<typeof Type.Object>> = {
 };
 
 function createProxyTool(controlledName: string, providerName: string): AgentTool<any> {
+  const scheduleTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
   const catalogDescription =
     getToolCatalogEntry(controlledName)?.description ??
     `Execute the controlled ${controlledName} coworker tool.`;
   const description =
     controlledName === "schedules.create"
-      ? `${catalogDescription} Current time: ${isoWithLocalOffset()} (${
-          Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"
-        }). Relative times such as "in 10 minutes" are relative to that instant, and runAt must be later than it.`
+      ? `${catalogDescription} Current time: ${isoWithLocalOffset()} (${scheduleTimezone}). Relative times such as "in 10 minutes" are relative to that instant, and runAt must be later than it. The user is in ${scheduleTimezone}; when they name a time without a timezone, use ${scheduleTimezone} rather than asking which one they meant.`
       : catalogDescription;
   return {
     name: providerName,
@@ -412,8 +412,15 @@ async function initialize(workerConfig: WorkerCoworkerConfig): Promise<void> {
     controlledToolNamesByProviderName.set(providerName, controlledName);
     return createProxyTool(controlledName, providerName);
   });
+  // The user's timezone belongs in the system prompt, not only on the tool.
+  // A tool description informs how to call a tool; whether to ask a clarifying
+  // question first is decided before any tool is reached, so a model that does
+  // not know the timezone up front interrupts to ask for something the app has
+  // known all along.
   const schedulingRule = workerConfig.coworker.enabledTools.includes("schedules.create")
-    ? "Scheduling rule: For requests to schedule work, set a reminder, follow up later, or run something at a date or time, use schedules.create by default. Do not create an ICS, Markdown, or other file instead unless the user explicitly asks for a file export."
+    ? `Scheduling rule: For requests to schedule work, set a reminder, follow up later, or run something at a date or time, use schedules.create by default. Do not create an ICS, Markdown, or other file instead unless the user explicitly asks for a file export. The user's timezone is ${
+        Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"
+      }; treat any time they give without a timezone as being in it, and never ask them which timezone they meant.`
     : "";
   const skillsRule = formatModelSelectableSkills(workerConfig.skills);
   const recentSkillUses = workerConfig.recentSkillUses.length
@@ -602,8 +609,14 @@ function replayRecordedTurns(resume: boolean): boolean {
   // provider when nothing is left over from the run that hit the approval.
   if (resume && demo.getPendingResponseCount() > 0) return true;
   let turns: RecordedTurn[];
+  let shiftMs = 0;
   try {
-    turns = JSON.parse(readFileSync(modelTranscriptPath, "utf8")).turns ?? [];
+    const recording = JSON.parse(readFileSync(modelTranscriptPath, "utf8"));
+    turns = recording.turns ?? [];
+    // Absolute times in the recording were relative when the model wrote them.
+    // Age the recording forward so they keep the distance it intended.
+    const recordedAt = Date.parse(recording.recordedAt ?? "");
+    if (!Number.isNaN(recordedAt)) shiftMs = Date.now() - recordedAt;
   } catch {
     return false;
   }
@@ -621,7 +634,7 @@ function replayRecordedTurns(resume: boolean): boolean {
       turn.toolCalls.length > 0
         ? fauxAssistantMessage(
             turn.toolCalls.map((call) =>
-              fauxToolCall(call.name, call.arguments, {
+              fauxToolCall(call.name, shiftTimestampsDeep(call.arguments, shiftMs), {
                 id: call.id || `${activeRun!.taskId}:replay:${index}:${call.name}`,
               }),
             ),
