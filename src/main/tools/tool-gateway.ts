@@ -10,6 +10,7 @@ import type {
   Task,
   ToolCall,
   ToolPolicy,
+  WebSearchProvider,
 } from "@shared/contracts";
 import { getToolCatalogEntry } from "@shared/tool-catalog";
 import type { CoworkerDatabase } from "@main/db/database";
@@ -20,10 +21,17 @@ import {
 import type { CredentialStore } from "@main/security/credential-store";
 import { createEmailDraft, sendEmail, type EmailPayload } from "@main/integrations/email";
 import { resolveWorkspacePath } from "./workspace-path";
+import { searchWeb } from "@main/integrations/web-search";
 
 const localTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 
 const schemas = {
+  "skills.read": z.object({ name: z.string().trim().min(1).max(64) }),
+  "web.search": z.object({
+    query: z.string().trim().min(1).max(2_000),
+    limit: z.number().int().min(1).max(10).default(5),
+    provider: z.enum(["tavily", "exa", "firecrawl", "serpapi"]).optional(),
+  }),
   "files.list": z.object({ path: z.string().min(1).max(2_000).default(".") }),
   "files.read": z.object({ path: z.string().min(1).max(2_000) }),
   "files.write": z.object({
@@ -197,7 +205,13 @@ export class ToolGateway {
       idempotencyKey,
     });
 
-    if (!metadata || !input.coworker.enabledTools.includes(input.toolName)) {
+    const skillNames = new Set(
+      this.database.listCoworkerSkills(input.coworker.id).map((skill) => skill.name),
+    );
+    const enabledBySkill =
+      (input.toolName === "skills.read" && skillNames.size > 0) ||
+      (input.toolName === "web.search" && skillNames.has("web-search"));
+    if (!metadata || (!enabledBySkill && !input.coworker.enabledTools.includes(input.toolName))) {
       const reason = `${input.toolName} is not enabled for ${input.coworker.name}`;
       return {
         kind: "denied",
@@ -304,6 +318,28 @@ export class ToolGateway {
     rawArgs: unknown,
   ): Promise<unknown> {
     switch (toolCall.toolName) {
+      case "skills.read": {
+        const args = schemas["skills.read"].parse(rawArgs);
+        const skill = this.database
+          .listCoworkerSkills(coworker.id)
+          .find((candidate) => candidate.name === args.name);
+        if (!skill) throw new Error(`${args.name} is not enabled for ${coworker.name}`);
+        return {
+          name: skill.name,
+          description: skill.description,
+          content: skill.content,
+          sourceUrl: skill.sourceUrl,
+        };
+      }
+      case "web.search": {
+        const args = schemas["web.search"].parse(rawArgs);
+        return searchWeb({
+          credentials: this.credentials,
+          query: args.query,
+          limit: args.limit,
+          preferredProvider: args.provider as WebSearchProvider | undefined,
+        });
+      }
       case "files.list": {
         const args = schemas["files.list"].parse(rawArgs);
         const path = await resolveWorkspacePath(coworker.workspacePath, args.path);

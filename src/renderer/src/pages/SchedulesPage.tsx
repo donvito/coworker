@@ -21,6 +21,7 @@ export function SchedulesPage({
   const [scheduleType, setScheduleType] = useState<"cron" | "once">("cron");
   const [working, setWorking] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   async function create(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -65,9 +66,14 @@ export function SchedulesPage({
 
   async function runNow(schedule: Schedule) {
     setWorking(schedule.id);
+    setError(null);
+    setNotice(null);
     try {
-      await window.coworker.schedules.runNow(schedule.id);
+      const task = await window.coworker.schedules.runNow(schedule.id);
       await onChanged();
+      setNotice(`“${task.title}” is now in the task queue.`);
+    } catch (runError) {
+      setError(runError instanceof Error ? runError.message : String(runError));
     } finally {
       setWorking(null);
     }
@@ -104,6 +110,9 @@ export function SchedulesPage({
           <small>Missed runs execute once when this computer wakes or the app starts again.</small>
         </span>
       </div>
+
+      {notice ? <div className="settings-notice" role="status">{notice}</div> : null}
+      {error && !creating ? <div className="settings-notice error" role="alert">{error}</div> : null}
 
       {schedules.length === 0 ? (
         <EmptyState

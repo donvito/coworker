@@ -12,6 +12,7 @@ import type {
   WorkerCoworkerConfig,
   WorkerToMainMessage,
 } from "./protocol";
+import type { ProviderErrorSink } from "./provider-error-logger";
 
 interface RuntimeRecord {
   worker: Worker;
@@ -23,6 +24,8 @@ interface RuntimeRecord {
   currentRunId: string | null;
   stopping: boolean;
   idleTimer: NodeJS.Timeout | null;
+  modelProvider: WorkerCoworkerConfig["coworker"]["modelProvider"];
+  modelName: string;
 }
 
 export interface CoworkerRuntimeManagerOptions {
@@ -32,6 +35,7 @@ export interface CoworkerRuntimeManagerOptions {
   emit: (event: DesktopEvent) => void;
   idleTimeoutMs?: number;
   workerFactory?: () => Worker;
+  providerErrors?: ProviderErrorSink;
 }
 
 export class CoworkerRuntimeManager {
@@ -75,6 +79,8 @@ export class CoworkerRuntimeManager {
       currentRunId: null,
       stopping: false,
       idleTimer: null,
+      modelProvider: coworker.modelProvider,
+      modelName: coworker.modelName,
     };
     this.runtimes.set(coworkerId, record);
     worker.on("message", (message: WorkerToMainMessage) => {
@@ -112,6 +118,10 @@ export class CoworkerRuntimeManager {
           .listMessages(coworkerId)
           .filter((message) => message.taskId !== excludeTaskId)
           .slice(-100),
+        skills: this.options.database.listCoworkerSkills(coworkerId).map((skill) => ({
+          name: skill.name,
+          description: skill.description,
+        })),
       };
       this.send(record, { type: "initialize", config });
       await Promise.race([
@@ -238,8 +248,8 @@ export class CoworkerRuntimeManager {
     } catch (error) {
       const runtime = this.runtimes.get(coworkerId);
       const taskId = runtime?.currentTaskId ?? claimedTask?.id;
+      const message = error instanceof Error ? error.message : String(error);
       if (taskId) {
-        const message = error instanceof Error ? error.message : String(error);
         this.options.database.setTaskStatus(taskId, "FAILED", { error: message });
         if (runtime) {
           runtime.currentTaskId = null;
@@ -247,6 +257,34 @@ export class CoworkerRuntimeManager {
         }
         this.options.emit({ type: "entity.changed", entity: "tasks", id: taskId });
       }
+      // Startup failures happen before the worker can emit AG-UI events. Close the
+      // renderer's active run explicitly so it never remains on "is working".
+      if (claimedTask) {
+        this.options.emit({
+          type: "agent.event",
+          coworkerId,
+          taskId: claimedTask.id,
+          runId: claimedTask.runId,
+          event: {
+            type: EventType.RUN_ERROR,
+            message,
+            code: "RUNTIME_START_ERROR",
+            timestamp: Date.now(),
+          },
+        });
+      }
+      const failedCoworker = this.options.database.getCoworker(coworkerId);
+      await this.options.providerErrors?.log(
+        {
+          phase: "runtime_start",
+          provider: failedCoworker.modelProvider,
+          model: failedCoworker.modelName,
+          coworkerId,
+          taskId: claimedTask?.id,
+          runId: claimedTask?.runId,
+        },
+        error,
+      );
       this.setStatus(coworkerId, "ERROR", taskId ?? undefined);
     } finally {
       this.dispatching.delete(coworkerId);
@@ -366,6 +404,17 @@ export class CoworkerRuntimeManager {
       } else if (task.status === "CANCELLED") {
         this.setStatus(message.coworkerId, "IDLE");
       }
+      await this.options.providerErrors?.log(
+        {
+          phase: "inference",
+          provider: runtime.modelProvider,
+          model: runtime.modelName,
+          coworkerId: message.coworkerId,
+          taskId: message.taskId,
+          runId: message.runId,
+        },
+        message.error,
+      );
       this.options.emit({ type: "entity.changed", entity: "tasks", id: message.taskId });
       this.enqueueTask(message.coworkerId);
     }
@@ -423,6 +472,17 @@ export class CoworkerRuntimeManager {
       type: "runtime.crashed",
       summary: `Coworker runtime exited unexpectedly (code ${code})`,
     });
+    await this.options.providerErrors?.log(
+      {
+        phase: "runtime_exit",
+        provider: runtime.modelProvider,
+        model: runtime.modelName,
+        coworkerId,
+        taskId: runtime.currentTaskId ?? undefined,
+        runId: runtime.currentRunId ?? undefined,
+      },
+      new Error(`Coworker runtime exited unexpectedly (code ${code})`),
+    );
     this.setStatus(coworkerId, "ERROR", runtime.currentTaskId ?? undefined);
     setTimeout(() => this.enqueueTask(coworkerId), 1_000).unref();
   }

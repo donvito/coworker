@@ -62,6 +62,33 @@ afterEach(async () => {
 });
 
 describe("durable state and queue invariants", () => {
+  it("persists the global default model without coercing string settings", async () => {
+    const root = await temporaryDirectory("coworker-settings-");
+    const path = join(root, "coworker.db");
+    const first = new CoworkerDatabase(path);
+    expect(first.getSettings()).toMatchObject({
+      defaultModelProvider: null,
+      defaultModelName: null,
+    });
+    first.updateSettings({
+      defaultModelProvider: "openrouter",
+      defaultModelName: "google/gemini-flash",
+    });
+    first.close();
+
+    const reopened = new CoworkerDatabase(path);
+    try {
+      expect(reopened.getSettings()).toMatchObject({
+        runInBackground: true,
+        launchAtLogin: false,
+        defaultModelProvider: "openrouter",
+        defaultModelName: "google/gemini-flash",
+      });
+    } finally {
+      reopened.close();
+    }
+  });
+
   it("seeds demo coworkers only once and preserves intentional deletion across restarts", async () => {
     const root = await temporaryDirectory("coworker-service-");
     const credentials = memoryCredentials();

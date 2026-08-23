@@ -36,10 +36,10 @@ let runInBackground = true;
 
 function createMainWindow(): BrowserWindow {
   const window = new BrowserWindow({
-    width: 1440,
-    height: 900,
-    minWidth: 1040,
-    minHeight: 680,
+    width: 1560,
+    height: 980,
+    minWidth: 1180,
+    minHeight: 760,
     show: false,
     title: "AI Coworker",
     backgroundColor: "#f2efe8",

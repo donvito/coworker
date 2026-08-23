@@ -4,6 +4,7 @@ import {
   modelProviders,
   remoteModelProviders,
   toolPolicies,
+  webSearchProviders,
 } from "./contracts";
 
 const identifier = z.string().min(1).max(128);
@@ -25,6 +26,7 @@ export const createCoworkerSchema = z.object({
   modelProvider: modelProviderSchema,
   modelName: z.string().trim().min(1).max(160),
   enabledTools: z.array(z.string().min(1).max(128)).max(50),
+  enabledSkillIds: z.array(identifier).max(100).optional(),
   policies: policyRecord.optional(),
 });
 
@@ -183,6 +185,8 @@ export const settingsPatchSchema = z
     runInBackground: z.boolean().optional(),
     launchAtLogin: z.boolean().optional(),
     demoMode: z.boolean().optional(),
+    defaultModelProvider: z.enum(remoteModelProviders).nullable().optional(),
+    defaultModelName: z.string().trim().min(1).max(160).nullable().optional(),
   })
   .refine((value) => Object.keys(value).length > 0, "At least one setting is required");
 
@@ -227,6 +231,21 @@ export const configureModelSchema = z
     }
   });
 
+export const configureWebSearchSchema = z.object({
+  provider: z.enum(webSearchProviders),
+  apiKey: z.string().trim().min(1).max(2_000),
+});
+
+export const installSkillUrlSchema = z.object({
+  url: z.string().trim().url().max(2_048),
+  coworkerId: identifier.optional(),
+});
+
+export const installSkillContentSchema = z.object({
+  content: z.string().min(1).max(1_000_000),
+  coworkerId: identifier.optional(),
+});
+
 export const credentialKeySchema = z.enum([
   "model:anthropic",
   "model:openai",
@@ -236,6 +255,10 @@ export const credentialKeySchema = z.enum([
   "model:lmstudio",
   "model:openai-compatible",
   "integration:email:resend",
+  "web-search:tavily",
+  "web-search:exa",
+  "web-search:firecrawl",
+  "web-search:serpapi",
 ]);
 
 export const approvalStatusSchema = z.enum(approvalStatuses);

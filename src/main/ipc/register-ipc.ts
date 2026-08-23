@@ -1,7 +1,9 @@
-import { copyFile } from "node:fs/promises";
+import { copyFile, writeFile } from "node:fs/promises";
 import { basename, extname, resolve } from "node:path";
 import {
   BrowserWindow,
+  app,
+  clipboard,
   dialog,
   ipcMain,
   shell,
@@ -15,11 +17,14 @@ import {
   approvalStatusSchema,
   configureEmailSchema,
   configureModelSchema,
+  configureWebSearchSchema,
   credentialKeySchema,
   createCoworkerSchema,
   createScheduleSchema,
   createTaskSchema,
   idSchema,
+  installSkillUrlSchema,
+  installSkillContentSchema,
   listLimitSchema,
   modelProviderSchema,
   settingsPatchSchema,
@@ -170,6 +175,42 @@ export function registerIpc(input: {
       limit === undefined ? undefined : listLimitSchema.parse(limit),
     ),
   );
+  handle(ipcChannels.diagnosticsProviderErrorsList, (_event, limit) =>
+    input.service.providerErrors.list(
+      limit === undefined ? undefined : listLimitSchema.parse(limit),
+    ),
+  );
+  handle(ipcChannels.diagnosticsProviderReportCopy, async () => {
+    const report = await input.service.providerErrors.report({
+      "App version": app.getVersion(),
+      Platform: `${process.platform} ${process.arch}`,
+      Electron: process.versions.electron,
+    });
+    clipboard.writeText(report.text);
+    return { count: report.count };
+  });
+  handle(ipcChannels.diagnosticsProviderReportExport, async () => {
+    const report = await input.service.providerErrors.report({
+      "App version": app.getVersion(),
+      Platform: `${process.platform} ${process.arch}`,
+      Electron: process.versions.electron,
+    });
+    const window = input.getMainWindow();
+    const result = window
+      ? await dialog.showSaveDialog(window, {
+          title: "Export provider error report",
+          defaultPath: `AI-Coworker-Provider-Report-${new Date().toISOString().slice(0, 10)}.txt`,
+          filters: [{ name: "Text report", extensions: ["txt"] }],
+        })
+      : await dialog.showSaveDialog({
+          title: "Export provider error report",
+          defaultPath: `AI-Coworker-Provider-Report-${new Date().toISOString().slice(0, 10)}.txt`,
+          filters: [{ name: "Text report", extensions: ["txt"] }],
+        });
+    if (result.canceled || !result.filePath) return null;
+    await writeFile(result.filePath, report.text, { encoding: "utf8", mode: 0o600 });
+    return result.filePath;
+  });
   handle(ipcChannels.integrationsList, () => input.service.database.listIntegrations());
   handle(ipcChannels.integrationsConfigureEmail, (_event, value) =>
     input.service.configureEmail(configureEmailSchema.parse(value)),
@@ -193,6 +234,22 @@ export function registerIpc(input: {
   handle(ipcChannels.integrationsRemoveCredential, async (_event, key) => {
     await input.credentials.delete(credentialKeySchema.parse(key));
   });
+  handle(ipcChannels.integrationsConfigureWebSearch, (_event, value) =>
+    input.service.configureWebSearch(configureWebSearchSchema.parse(value)),
+  );
+
+  handle(ipcChannels.skillsList, () => input.service.database.listSkills());
+  handle(ipcChannels.skillsInstallFromUrl, (_event, value) => {
+    const parsed = installSkillUrlSchema.parse(value);
+    return input.service.installSkillFromUrl(parsed.url, parsed.coworkerId);
+  });
+  handle(ipcChannels.skillsInstallFromContent, (_event, value) => {
+    const parsed = installSkillContentSchema.parse(value);
+    return input.service.installSkillFromContent(parsed.content, parsed.coworkerId);
+  });
+  handle(ipcChannels.skillsRemove, (_event, id) =>
+    input.service.removeSkill(idSchema.parse(id)),
+  );
 
   handle(ipcChannels.agentsRun, (_event, value) =>
     input.service.runAgent(agentRunRequestSchema.parse(value) as unknown as AgentRunRequest),

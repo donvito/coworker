@@ -125,10 +125,19 @@ describe("provider model catalog", () => {
       const url = new URL(String(input));
       expect(`${url.origin}${url.pathname}`).toBe("https://openrouter.ai/api/v1/models");
       expect(url.searchParams.get("limit")).toBe("1000");
+      expect(url.searchParams.get("supported_parameters")).toBe("tools");
       expect(new Headers(init?.headers).get("authorization")).toBe("Bearer test-router-key");
       return jsonResponse({
         data: [
-          { id: catalogModel.id, name: catalogModel.name },
+          {
+            id: catalogModel.id,
+            name: catalogModel.name,
+            pricing: {
+              prompt: "0.0000005",
+              completion: "0.0000015",
+              request: "0",
+            },
+          },
           { id: "unavailable/not-in-runtime-catalog" },
         ],
       });
@@ -141,6 +150,12 @@ describe("provider model catalog", () => {
         id: catalogModel.id,
         name: catalogModel.name,
         supportsImages: catalogModel.input.includes("image"),
+        pricing: {
+          currency: "USD",
+          inputPerMillion: 0.5,
+          outputPerMillion: 1.5,
+          request: 0,
+        },
       },
     ]);
   });

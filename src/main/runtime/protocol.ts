@@ -18,6 +18,7 @@ export interface WorkerCoworkerConfig {
   modelSupportsImages?: boolean;
   modelContextWindow?: number;
   recentMessages: unknown[];
+  skills: Array<{ name: string; description: string }>;
 }
 
 export type MainToWorkerMessage =

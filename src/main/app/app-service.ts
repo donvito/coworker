@@ -16,6 +16,7 @@ import type {
   Integration,
   ModelProvider,
   RemoteModelProvider,
+  WebSearchProvider,
   UpdateCoworkerInput,
   UpdateScheduleInput,
 } from "@shared/contracts";
@@ -43,6 +44,14 @@ import type { CredentialStore } from "@main/security/credential-store";
 import { SchedulerService } from "@main/scheduler/scheduler-service";
 import { ToolGateway } from "@main/tools/tool-gateway";
 import { CoworkerRuntimeManager } from "@main/runtime/runtime-manager";
+import { ProviderErrorLogger } from "@main/runtime/provider-error-logger";
+import {
+  bundledWebSearchSkill,
+  installSkillFromUrl,
+  parseSkillMarkdown,
+  skillUrlFromPrompt,
+} from "@main/integrations/skills";
+import { webSearchCredentialKey } from "@main/integrations/web-search";
 
 export interface DesktopAppServiceOptions {
   dataPath: string;
@@ -71,11 +80,15 @@ export class DesktopAppService {
   readonly runtime: CoworkerRuntimeManager;
   readonly scheduler: SchedulerService;
   readonly tools: ToolGateway;
+  readonly providerErrors: ProviderErrorLogger;
   private readonly listeners = new Set<(event: DesktopEvent) => void>();
   private initialized = false;
 
   constructor(private readonly options: DesktopAppServiceOptions) {
     this.database = options.database ?? new CoworkerDatabase(join(options.dataPath, "coworker.db"));
+    this.providerErrors = new ProviderErrorLogger(
+      join(options.dataPath, "logs", "provider-errors.jsonl"),
+    );
     this.tools = new ToolGateway(
       this.database,
       options.credentials,
@@ -89,6 +102,7 @@ export class DesktopAppService {
       tools: this.tools,
       credentials: options.credentials,
       emit: (event) => this.emit(event),
+      providerErrors: this.providerErrors,
     });
     this.scheduler = new SchedulerService(this.database, async (task) => {
       this.emit({ type: "entity.changed", entity: "tasks", id: task.id });
@@ -116,7 +130,9 @@ export class DesktopAppService {
         fromAddress: "coworker@localhost",
       });
     }
+    this.seedSkills();
     await this.seedCoworkers();
+    this.enableBundledSkills();
     this.enableDocumentExports();
     this.enableScheduleCreation();
     await this.options.onSettingsChanged?.(this.database.getSettings());
@@ -162,6 +178,7 @@ export class DesktopAppService {
       artifacts: this.database.listArtifacts(),
       activity: this.database.listActivity(),
       integrations: this.database.listIntegrations(),
+      skills: this.database.listSkills(),
       settings: this.database.getSettings(),
       dataPath: this.options.dataPath,
     };
@@ -174,7 +191,15 @@ export class DesktopAppService {
       `${safeDirectoryName(input.name)}-${Date.now().toString(36)}`,
     );
     await mkdir(provisionalPath, { recursive: true });
-    const coworker = this.database.createCoworker(input, provisionalPath);
+    const coworker = this.database.createCoworker(
+      {
+        ...input,
+        enabledSkillIds:
+          input.enabledSkillIds ??
+          this.database.listSkills().filter((skill) => skill.bundled).map((skill) => skill.id),
+      },
+      provisionalPath,
+    );
     this.emit({ type: "entity.changed", entity: "coworkers", id: coworker.id });
     this.emit({ type: "entity.changed", entity: "activity" });
     return coworker;
@@ -256,7 +281,14 @@ export class DesktopAppService {
   }
 
   async runScheduleNow(id: string) {
-    return this.scheduler.runNow(id);
+    const task = await this.scheduler.runNow(id);
+    const coworker = this.database.getCoworker(task.coworkerId);
+    this.emit({
+      type: "notification",
+      title: "Scheduled task started",
+      body: `${coworker.name} is working on “${task.title}”.`,
+    });
+    return task;
   }
 
   async runAgent(request: AgentRunRequest): Promise<AgentRunReceipt> {
@@ -264,6 +296,10 @@ export class DesktopAppService {
     if (existing) return { runId: existing.runId, taskId: existing.id };
     const coworker = this.database.getCoworker(request.coworkerId);
     const prompt = parseAgentPrompt(request.input);
+    const skillUrl = skillUrlFromPrompt(prompt.text);
+    const installedSkill = skillUrl
+      ? await this.installSkillFromUrl(skillUrl, coworker.id)
+      : null;
     const capabilities = await getModelCapabilities(
       coworker.modelProvider,
       coworker.modelName,
@@ -291,7 +327,9 @@ export class DesktopAppService {
           {
             coworkerId: request.coworkerId,
             title: taskTitle(prompt.text),
-            input: prompt.text,
+            input: installedSkill
+              ? `${prompt.text}\n\n[Workroom installed and enabled the Agent Skill “${installedSkill.name}” for this coworker. Confirm the installation and briefly explain when you will use it.]`
+              : prompt.text,
             source: "manual",
             runId: request.input.runId,
             threadId: request.input.threadId,
@@ -348,44 +386,117 @@ export class DesktopAppService {
     apiKey?: string;
     baseUrl?: string;
   }) {
-    const definition = getModelProviderDefinition(input.provider);
-    const key = modelProviderCredentialKey(input.provider);
-    const storedApiKey = await this.options.credentials.get(key);
-    const submittedApiKey = input.apiKey?.trim();
-    const apiKey =
-      submittedApiKey ||
-      storedApiKey ||
-      (definition.apiKeyRequired ? "" : localModelCredentialMarker);
-    if (!apiKey) {
-      throw new Error(`A ${modelProviderName(input.provider)} API key is required`);
-    }
-    const storedBaseUrl =
-      definition.baseUrlMode === "none"
-        ? undefined
-        : await this.options.credentials.get(modelProviderBaseUrlKey(input.provider));
-    const baseUrl = input.baseUrl?.trim() || storedBaseUrl || definition.defaultBaseUrl;
-    if (definition.baseUrlMode === "required" && !baseUrl) {
-      throw new Error(`A base URL is required for ${modelProviderName(input.provider)}`);
-    }
-    const availableModels = await queryProviderModels(input.provider, apiKey, fetch, { baseUrl });
-    if (availableModels.length === 0) {
-      throw new Error(
-        `${modelProviderName(input.provider)} returned no compatible chat models`,
+    try {
+      const definition = getModelProviderDefinition(input.provider);
+      const key = modelProviderCredentialKey(input.provider);
+      const storedApiKey = await this.options.credentials.get(key);
+      const submittedApiKey = input.apiKey?.trim();
+      const apiKey =
+        submittedApiKey ||
+        storedApiKey ||
+        (definition.apiKeyRequired ? "" : localModelCredentialMarker);
+      if (!apiKey) {
+        throw new Error(`A ${modelProviderName(input.provider)} API key is required`);
+      }
+      const storedBaseUrl =
+        definition.baseUrlMode === "none"
+          ? undefined
+          : await this.options.credentials.get(modelProviderBaseUrlKey(input.provider));
+      const baseUrl = input.baseUrl?.trim() || storedBaseUrl || definition.defaultBaseUrl;
+      if (definition.baseUrlMode === "required" && !baseUrl) {
+        throw new Error(`A base URL is required for ${modelProviderName(input.provider)}`);
+      }
+      const availableModels = await queryProviderModels(input.provider, apiKey, fetch, { baseUrl });
+      if (availableModels.length === 0) {
+        throw new Error(
+          `${modelProviderName(input.provider)} returned no compatible chat models`,
+        );
+      }
+      await this.options.credentials.set(key, apiKey);
+      if (definition.baseUrlMode !== "none" && baseUrl) {
+        await this.options.credentials.set(modelProviderBaseUrlKey(input.provider), baseUrl);
+      }
+      return { key, configured: true };
+    } catch (error) {
+      await this.providerErrors.log(
+        { phase: "configuration", provider: input.provider },
+        error,
       );
+      throw error;
     }
-    await this.options.credentials.set(key, apiKey);
-    if (definition.baseUrlMode !== "none" && baseUrl) {
-      await this.options.credentials.set(modelProviderBaseUrlKey(input.provider), baseUrl);
-    }
+  }
+
+  async configureWebSearch(input: {
+    provider: WebSearchProvider;
+    apiKey: string;
+  }) {
+    const key = webSearchCredentialKey(input.provider);
+    await this.options.credentials.set(key, input.apiKey.trim());
+    this.database.addActivity({
+      type: "web-search.configured",
+      summary: `${input.provider} web search was configured`,
+      metadata: { provider: input.provider },
+    });
+    this.emit({ type: "entity.changed", entity: "integrations" });
+    this.emit({ type: "entity.changed", entity: "activity" });
     return { key, configured: true };
   }
 
-  listModels(provider: ModelProvider) {
-    return listAvailableModels(provider, this.options.credentials);
+  async installSkillFromUrl(url: string, coworkerId?: string) {
+    const skill = await installSkillFromUrl(this.database, url, coworkerId);
+    if (coworkerId) await this.runtime.stop(coworkerId);
+    this.emit({ type: "entity.changed", entity: "skills", id: skill.id });
+    this.emit({ type: "entity.changed", entity: "coworkers", id: coworkerId });
+    this.emit({ type: "entity.changed", entity: "activity" });
+    return skill;
   }
 
-  modelCapabilities(provider: ModelProvider, modelId: string) {
-    return getModelCapabilities(provider, modelId, this.options.credentials);
+  async installSkillFromContent(content: string, coworkerId?: string) {
+    const parsed = parseSkillMarkdown(content);
+    const existing = this.database.getSkillByName(parsed.name);
+    if (existing?.bundled) throw new Error(`The bundled skill “${parsed.name}” cannot be replaced`);
+    const skill = this.database.upsertSkill({ ...parsed, bundled: false });
+    if (coworkerId) {
+      const coworker = this.database.getCoworker(coworkerId);
+      this.database.setCoworkerSkills(coworkerId, [...coworker.enabledSkillIds, skill.id]);
+      await this.runtime.stop(coworkerId);
+    }
+    this.emit({ type: "entity.changed", entity: "skills", id: skill.id });
+    this.emit({ type: "entity.changed", entity: "coworkers", id: coworkerId });
+    this.emit({ type: "entity.changed", entity: "activity" });
+    return skill;
+  }
+
+  async removeSkill(id: string): Promise<void> {
+    const affected = this.database
+      .listCoworkers()
+      .filter((coworker) => coworker.enabledSkillIds.includes(id));
+    await Promise.all(affected.map((coworker) => this.runtime.stop(coworker.id)));
+    this.database.removeSkill(id);
+    this.emit({ type: "entity.changed", entity: "skills", id });
+    this.emit({ type: "entity.changed", entity: "coworkers" });
+    this.emit({ type: "entity.changed", entity: "activity" });
+  }
+
+  async listModels(provider: ModelProvider) {
+    try {
+      return await listAvailableModels(provider, this.options.credentials);
+    } catch (error) {
+      await this.providerErrors.log({ phase: "model_catalog", provider }, error);
+      throw error;
+    }
+  }
+
+  async modelCapabilities(provider: ModelProvider, modelId: string) {
+    try {
+      return await getModelCapabilities(provider, modelId, this.options.credentials);
+    } catch (error) {
+      await this.providerErrors.log(
+        { phase: "capabilities", provider, model: modelId },
+        error,
+      );
+      throw error;
+    }
   }
 
   async updateSettings(input: Partial<AppSettings>): Promise<AppSettings> {
@@ -457,6 +568,33 @@ export class DesktopAppService {
           "schedules.create": coworker.policies["schedules.create"] ?? "approval",
         },
       });
+    }
+    this.database.setMetadata(migrationKey, "true");
+  }
+
+  private seedSkills(): void {
+    const existing = this.database.getSkillByName(bundledWebSearchSkill.name);
+    if (
+      !existing ||
+      existing.content !== bundledWebSearchSkill.content ||
+      existing.description !== bundledWebSearchSkill.description
+    ) {
+      this.database.upsertSkill(bundledWebSearchSkill);
+    }
+  }
+
+  private enableBundledSkills(): void {
+    const migrationKey = "bundled-skills-enabled-v1";
+    if (this.database.getMetadata(migrationKey) === "true") return;
+    const bundledIds = this.database
+      .listSkills()
+      .filter((skill) => skill.bundled)
+      .map((skill) => skill.id);
+    for (const coworker of this.database.listCoworkers()) {
+      this.database.setCoworkerSkills(coworker.id, [
+        ...coworker.enabledSkillIds,
+        ...bundledIds,
+      ]);
     }
     this.database.setMetadata(migrationKey, "true");
   }

@@ -40,6 +40,13 @@ const openAiResponseSchema = z.object({
         .object({ input_modalities: z.array(z.string()).optional() })
         .optional(),
       capabilities: z.array(z.string()).optional(),
+      pricing: z
+        .object({
+          prompt: z.union([z.string(), z.number()]).optional(),
+          completion: z.union([z.string(), z.number()]).optional(),
+          request: z.union([z.string(), z.number()]).optional(),
+        })
+        .optional(),
     }),
   ),
 });
@@ -288,6 +295,10 @@ async function queryOpenRouterModels(
 ): Promise<ModelOption[]> {
   const url = new URL("https://openrouter.ai/api/v1/models");
   url.searchParams.set("limit", "1000");
+  // Coworkers always expose controlled tools to their model. OpenRouter's catalog
+  // changes independently of Pi's generated catalog, so require current tool
+  // support as well as a matching Pi runtime definition.
+  url.searchParams.set("supported_parameters", "tools");
   const body = await requestJson(
     "openrouter",
     url,
@@ -295,8 +306,42 @@ async function queryOpenRouterModels(
     fetcher,
   );
   const parsed = parseResponse("openrouter", openAiResponseSchema, body);
-  const available = new Set(parsed.data.map((model) => model.id));
-  return supportedModels("openrouter").filter((model) => available.has(model.id));
+  const available = new Map(parsed.data.map((model) => [model.id, model]));
+  return supportedModels("openrouter").flatMap((model) => {
+    const liveModel = available.get(model.id);
+    if (!liveModel) return [];
+    const inputPerMillion = pricePerMillion(liveModel.pricing?.prompt);
+    const outputPerMillion = pricePerMillion(liveModel.pricing?.completion);
+    const request = price(liveModel.pricing?.request);
+    const hasPricing =
+      inputPerMillion !== undefined || outputPerMillion !== undefined || request !== undefined;
+    return [
+      {
+        ...model,
+        ...(hasPricing
+          ? {
+              pricing: {
+                currency: "USD" as const,
+                ...(inputPerMillion === undefined ? {} : { inputPerMillion }),
+                ...(outputPerMillion === undefined ? {} : { outputPerMillion }),
+                ...(request === undefined ? {} : { request }),
+              },
+            }
+          : {}),
+      },
+    ];
+  });
+}
+
+function price(value: string | number | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
+function pricePerMillion(value: string | number | undefined): number | undefined {
+  const parsed = price(value);
+  return parsed === undefined ? undefined : parsed * 1_000_000;
 }
 
 async function queryOllamaModels(

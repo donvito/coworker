@@ -101,6 +101,10 @@ export class SchedulerService {
 
   async runNow(id: string): Promise<Task> {
     const schedule = this.database.getSchedule(id);
+    const coworker = this.database.getCoworker(schedule.coworkerId);
+    if (coworker.status !== "active") {
+      throw new Error(`${coworker.name} is paused. Resume the coworker before running this schedule.`);
+    }
     const task = this.database.createTask({
       coworkerId: schedule.coworkerId,
       scheduleId: schedule.id,
@@ -108,6 +112,13 @@ export class SchedulerService {
       input: schedule.taskTemplate.input,
       priority: schedule.taskTemplate.priority,
       source: "schedule",
+    });
+    this.database.addActivity({
+      coworkerId: schedule.coworkerId,
+      taskId: task.id,
+      type: "schedule.run-now",
+      summary: `${schedule.name} was run manually`,
+      metadata: { scheduleId: schedule.id },
     });
     await this.onTaskCreated(task);
     return task;

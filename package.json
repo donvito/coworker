@@ -61,6 +61,8 @@
     "pdf-lib": "^1.17.1",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
+    "react-markdown": "10.1.0",
+    "remark-gfm": "4.0.1",
     "rxjs": "7.8.1",
     "zod": "^4.4.3"
   },

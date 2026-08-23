@@ -1,27 +1,38 @@
 import { useState, type FormEvent } from "react";
-import type { Coworker, ModelProvider } from "@shared/contracts";
-import { modelProviderDefinitions } from "@shared/model-providers";
+import type { Coworker, RemoteModelProvider, Skill } from "@shared/contracts";
+import { remoteModelProviderDefinitions } from "@shared/model-providers";
 import { ModelSelector } from "./ModelSelector";
 
 export function CoworkerSettingsModal({
   coworker,
+  skills,
   onClose,
   onChanged,
   onRemoved,
 }: {
   coworker: Coworker;
+  skills: Skill[];
   onClose: () => void;
   onChanged: () => Promise<void>;
   onRemoved: () => void;
 }) {
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [provider, setProvider] = useState<ModelProvider>(coworker.modelProvider);
-  const [modelName, setModelName] = useState(coworker.modelName);
+  const [provider, setProvider] = useState<RemoteModelProvider | "">(
+    coworker.modelProvider === "demo" ? "" : coworker.modelProvider,
+  );
+  const [modelName, setModelName] = useState(
+    coworker.modelProvider === "demo" ? "" : coworker.modelName,
+  );
+  const [enabledSkillIds, setEnabledSkillIds] = useState(coworker.enabledSkillIds);
 
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
+    if (!provider || !modelName) {
+      setError("No model configured. Add an API key and choose a default model in Settings.");
+      return;
+    }
     setWorking(true);
     setError(null);
     try {
@@ -33,6 +44,7 @@ export function CoworkerSettingsModal({
         modelProvider: provider,
         modelName,
         status: String(data.get("status")) as Coworker["status"],
+        enabledSkillIds,
       });
       await onChanged();
       onClose();
@@ -84,6 +96,30 @@ export function CoworkerSettingsModal({
             <span>Description</span>
             <textarea defaultValue={coworker.description ?? ""} maxLength={10_000} name="description" rows={2} />
           </label>
+          <fieldset className="skill-picker">
+            <legend>Skills</legend>
+            <small>Installed skills are global; choose which ones this coworker can use.</small>
+            {skills.map((skill) => (
+              <label key={skill.id}>
+                <input
+                  checked={enabledSkillIds.includes(skill.id)}
+                  disabled={working}
+                  onChange={(event) =>
+                    setEnabledSkillIds((current) =>
+                      event.target.checked
+                        ? [...current, skill.id]
+                        : current.filter((id) => id !== skill.id),
+                    )
+                  }
+                  type="checkbox"
+                />
+                <span>
+                  <strong>{skill.name}</strong>
+                  <small>{skill.description}</small>
+                </span>
+              </label>
+            ))}
+          </fieldset>
           <label>
             <span>Operating instructions</span>
             <textarea defaultValue={coworker.systemPrompt} name="systemPrompt" required rows={5} />
@@ -95,25 +131,32 @@ export function CoworkerSettingsModal({
                 disabled={working}
                 name="modelProvider"
                 onChange={(event) => {
-                  const nextProvider = event.target.value as ModelProvider;
-                  setProvider(nextProvider);
-                  setModelName(nextProvider === "demo" ? "faux-1" : "");
+                  setProvider(event.target.value as RemoteModelProvider | "");
+                  setModelName("");
                 }}
                 value={provider}
               >
-                {modelProviderDefinitions.map((definition) => (
+                <option value="">No model configured</option>
+                {remoteModelProviderDefinitions.map((definition) => (
                   <option key={definition.id} value={definition.id}>
                     {definition.label}
                   </option>
                 ))}
               </select>
             </label>
-            <ModelSelector
-              disabled={working}
-              onChange={setModelName}
-              provider={provider}
-              value={modelName}
-            />
+            {provider ? (
+              <ModelSelector
+                disabled={working}
+                onChange={setModelName}
+                provider={provider}
+                value={modelName}
+              />
+            ) : (
+              <div className="model-not-configured">
+                <strong>No model configured</strong>
+                <small>Add an API key in Settings, then choose its provider here.</small>
+              </div>
+            )}
           </div>
           <label>
             <span>Availability</span>

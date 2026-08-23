@@ -50,6 +50,17 @@ export function CoworkerModelBadge({
   coworker: Pick<Coworker, "modelProvider" | "modelName">;
   compact?: boolean;
 }) {
+  if (coworker.modelProvider === "demo") {
+    return (
+      <span
+        aria-label="No model configured"
+        className={compact ? "coworker-model-badge compact" : "coworker-model-badge"}
+        title="No model configured"
+      >
+        <span>No model configured</span>
+      </span>
+    );
+  }
   const provider = modelProviderName(coworker.modelProvider);
   const label = `${provider} · ${coworker.modelName}`;
   return (

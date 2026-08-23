@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { remoteModelProviders } from "@shared/contracts";
 import type {
   ActivityItem,
   AppSettings,
@@ -17,6 +18,7 @@ import type {
   Message,
   RuntimeStatus,
   Schedule,
+  Skill,
   Task,
   TaskImageAttachment,
   TaskStatus,
@@ -33,6 +35,8 @@ const defaultSettings: AppSettings = {
   runInBackground: true,
   launchAtLogin: false,
   demoMode: true,
+  defaultModelProvider: null,
+  defaultModelName: null,
 };
 
 function now(): string {
@@ -65,7 +69,21 @@ function coworkerFromRow(row: Row): Coworker {
     runtimeStatus: row.runtime_status as RuntimeStatus,
     workspacePath: String(row.workspace_path),
     enabledTools: parseJson<string[]>(row.enabled_tools_json, []),
+    enabledSkillIds: [],
     policies: parseJson<Coworker["policies"]>(row.policies_json, {}),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at),
+  };
+}
+
+function skillFromRow(row: Row): Skill {
+  return {
+    id: String(row.id),
+    name: String(row.name),
+    description: String(row.description),
+    content: String(row.content),
+    sourceUrl: row.source_url === null ? null : String(row.source_url),
+    bundled: Number(row.bundled) === 1,
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
   };
@@ -257,11 +275,29 @@ export class CoworkerDatabase {
 
   getSettings(): AppSettings {
     const rows = this.database.prepare("SELECT key, value_json FROM settings").all() as Row[];
-    const settings = { ...defaultSettings };
-    for (const row of rows) {
-      const key = String(row.key) as keyof AppSettings;
-      if (key in settings) settings[key] = Boolean(parseJson(row.value_json, settings[key]));
-    }
+    const stored = new Map(
+      rows.map((row) => [String(row.key), parseJson<unknown>(row.value_json, undefined)]),
+    );
+    const provider = stored.get("defaultModelProvider");
+    const modelName = stored.get("defaultModelName");
+    const configuredProvider =
+      typeof provider === "string" &&
+      remoteModelProviders.some((candidate) => candidate === provider)
+        ? (provider as AppSettings["defaultModelProvider"])
+        : null;
+    const configuredModelName =
+      configuredProvider && typeof modelName === "string" && modelName.length > 0
+        ? modelName
+        : null;
+    const settings: AppSettings = {
+      runInBackground: Boolean(
+        stored.get("runInBackground") ?? defaultSettings.runInBackground,
+      ),
+      launchAtLogin: Boolean(stored.get("launchAtLogin") ?? defaultSettings.launchAtLogin),
+      demoMode: Boolean(stored.get("demoMode") ?? defaultSettings.demoMode),
+      defaultModelProvider: configuredProvider,
+      defaultModelName: configuredModelName,
+    };
     return settings;
   }
 
@@ -297,7 +333,7 @@ export class CoworkerDatabase {
   listCoworkers(): Coworker[] {
     return (
       this.database.prepare("SELECT * FROM coworkers ORDER BY created_at ASC").all() as Row[]
-    ).map(coworkerFromRow);
+    ).map((row) => this.withCoworkerSkills(coworkerFromRow(row)));
   }
 
   getCoworker(id: string): Coworker {
@@ -305,7 +341,7 @@ export class CoworkerDatabase {
       | Row
       | undefined;
     if (!row) throw new Error(`Coworker ${id} was not found`);
-    return coworkerFromRow(row);
+    return this.withCoworkerSkills(coworkerFromRow(row));
   }
 
   createCoworker(input: CreateCoworkerInput, workspacePath: string, id = randomUUID()): Coworker {
@@ -332,6 +368,7 @@ export class CoworkerDatabase {
         timestamp,
         timestamp,
       );
+    this.setCoworkerSkills(id, input.enabledSkillIds ?? []);
     this.addActivity({
       coworkerId: id,
       type: "coworker.created",
@@ -365,6 +402,9 @@ export class CoworkerDatabase {
     columns.push("updated_at = ?");
     values.push(now(), id);
     this.database.prepare(`UPDATE coworkers SET ${columns.join(", ")} WHERE id = ?`).run(...values);
+    if (input.enabledSkillIds !== undefined) {
+      this.setCoworkerSkills(id, input.enabledSkillIds);
+    }
     const coworker = this.getCoworker(id);
     this.addActivity({
       coworkerId: id,
@@ -390,6 +430,121 @@ export class CoworkerDatabase {
       .prepare("UPDATE coworkers SET runtime_status = ?, updated_at = ? WHERE id = ?")
       .run(status, now(), id);
     return this.getCoworker(id);
+  }
+
+  listSkills(): Skill[] {
+    return (
+      this.database.prepare("SELECT * FROM skills ORDER BY bundled DESC, name ASC").all() as Row[]
+    ).map(skillFromRow);
+  }
+
+  getSkill(id: string): Skill {
+    const row = this.database.prepare("SELECT * FROM skills WHERE id = ?").get(id) as
+      | Row
+      | undefined;
+    if (!row) throw new Error(`Skill ${id} was not found`);
+    return skillFromRow(row);
+  }
+
+  getSkillByName(name: string): Skill | null {
+    const row = this.database.prepare("SELECT * FROM skills WHERE name = ?").get(name) as
+      | Row
+      | undefined;
+    return row ? skillFromRow(row) : null;
+  }
+
+  upsertSkill(
+    input: Pick<Skill, "name" | "description" | "content"> & {
+      id?: string;
+      sourceUrl?: string | null;
+      bundled?: boolean;
+    },
+  ): Skill {
+    const existing = this.getSkillByName(input.name);
+    const id = existing?.id ?? input.id ?? randomUUID();
+    const timestamp = now();
+    this.database
+      .prepare(
+        `INSERT INTO skills(
+          id, name, description, content, source_url, bundled, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(name) DO UPDATE SET
+          description = excluded.description,
+          content = excluded.content,
+          source_url = excluded.source_url,
+          bundled = MAX(skills.bundled, excluded.bundled),
+          updated_at = excluded.updated_at`,
+      )
+      .run(
+        id,
+        input.name,
+        input.description,
+        input.content,
+        input.sourceUrl ?? null,
+        input.bundled ? 1 : 0,
+        existing?.createdAt ?? timestamp,
+        timestamp,
+      );
+    const skill = this.getSkill(existing?.id ?? id);
+    this.addActivity({
+      type: existing ? "skill.updated" : "skill.installed",
+      summary: `${skill.name} ${existing ? "was updated" : "was installed"}`,
+      metadata: { skillId: skill.id, sourceUrl: skill.sourceUrl },
+    });
+    return skill;
+  }
+
+  removeSkill(id: string): void {
+    const skill = this.getSkill(id);
+    if (skill.bundled) throw new Error("Bundled skills cannot be removed");
+    this.database.prepare("DELETE FROM skills WHERE id = ?").run(id);
+    this.addActivity({
+      type: "skill.removed",
+      summary: `${skill.name} was removed`,
+      metadata: { skillId: id },
+    });
+  }
+
+  listCoworkerSkillIds(coworkerId: string): string[] {
+    return (
+      this.database
+        .prepare(
+          `SELECT skill_id FROM coworker_skills
+           WHERE coworker_id = ? ORDER BY created_at ASC, skill_id ASC`,
+        )
+        .all(coworkerId) as Row[]
+    ).map((row) => String(row.skill_id));
+  }
+
+  listCoworkerSkills(coworkerId: string): Skill[] {
+    return (
+      this.database
+        .prepare(
+          `SELECT skills.* FROM skills
+           INNER JOIN coworker_skills ON coworker_skills.skill_id = skills.id
+           WHERE coworker_skills.coworker_id = ?
+           ORDER BY skills.bundled DESC, skills.name ASC`,
+        )
+        .all(coworkerId) as Row[]
+    ).map(skillFromRow);
+  }
+
+  setCoworkerSkills(coworkerId: string, skillIds: string[]): void {
+    const uniqueIds = [...new Set(skillIds)];
+    this.transaction(() => {
+      this.database.prepare("DELETE FROM coworker_skills WHERE coworker_id = ?").run(coworkerId);
+      const statement = this.database.prepare(
+        "INSERT INTO coworker_skills(coworker_id, skill_id, created_at) VALUES (?, ?, ?)",
+      );
+      for (const skillId of uniqueIds) {
+        this.getSkill(skillId);
+        statement.run(coworkerId, skillId, now());
+      }
+    });
+  }
+
+  private withCoworkerSkills(coworker: Coworker): Coworker {
+    return { ...coworker, enabledSkillIds: this.listCoworkerSkillIds(coworker.id) };
   }
 
   createTask(input: CreateTaskInput, id = randomUUID()): Task {

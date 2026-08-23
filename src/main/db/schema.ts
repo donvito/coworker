@@ -229,6 +229,27 @@ CREATE TABLE IF NOT EXISTS app_metadata (
   updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS skills (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  description TEXT NOT NULL,
+  content TEXT NOT NULL,
+  source_url TEXT,
+  bundled INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  CHECK (bundled IN (0, 1))
+);
+
+CREATE TABLE IF NOT EXISTS coworker_skills (
+  coworker_id TEXT NOT NULL,
+  skill_id TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (coworker_id, skill_id),
+  FOREIGN KEY (coworker_id) REFERENCES coworkers(id) ON DELETE CASCADE,
+  FOREIGN KEY (skill_id) REFERENCES skills(id) ON DELETE CASCADE
+);
+
 INSERT OR IGNORE INTO schema_migrations(version, applied_at)
 VALUES (1, datetime('now'));
 `;

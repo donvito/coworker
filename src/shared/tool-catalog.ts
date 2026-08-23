@@ -10,6 +10,21 @@ export interface ToolCatalogEntry {
 
 export const toolCatalog = [
   {
+    name: "skills.read",
+    label: "Read enabled skill",
+    description: "Load the full instructions for a skill enabled for this coworker.",
+    risk: "low",
+    defaultPolicy: "automatic",
+  },
+  {
+    name: "web.search",
+    label: "Search the web",
+    description:
+      "Search the live web through an available configured Firecrawl, Tavily, Exa, or SerpAPI credential.",
+    risk: "low",
+    defaultPolicy: "automatic",
+  },
+  {
     name: "files.list",
     label: "List workspace files",
     description: "List files and folders inside this coworker's approved workspace.",

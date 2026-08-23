@@ -141,4 +141,39 @@ describe("local scheduler", () => {
       database.close();
     }
   });
+
+  it("run now queues and dispatches an immediate task without changing the next scheduled run", async () => {
+    const { database, coworker } = await fixture();
+    const dispatched: string[] = [];
+    const scheduler = new SchedulerService(database, (task) => {
+      dispatched.push(task.id);
+    });
+    try {
+      const schedule = scheduler.create({
+        coworkerId: coworker.id,
+        name: "Tomorrow's report",
+        scheduleType: "once",
+        runAt: new Date(Date.now() + 86_400_000).toISOString(),
+        timezone: "UTC",
+        taskTemplate: { title: "Run the report", input: "Create the report now." },
+      });
+      const task = await scheduler.runNow(schedule.id);
+
+      expect(task).toMatchObject({
+        coworkerId: coworker.id,
+        scheduleId: schedule.id,
+        source: "schedule",
+        status: "QUEUED",
+      });
+      expect(dispatched).toEqual([task.id]);
+      expect(database.getSchedule(schedule.id)).toMatchObject({
+        enabled: true,
+        nextRunAt: schedule.nextRunAt,
+      });
+      expect(database.listActivity().some((item) => item.type === "schedule.run-now")).toBe(true);
+    } finally {
+      scheduler.stop();
+      database.close();
+    }
+  });
 });

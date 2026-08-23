@@ -98,6 +98,21 @@ function toolResultText(result: unknown): string {
 }
 
 const parameterSchemas: Record<string, ReturnType<typeof Type.Object>> = {
+  "skills.read": Type.Object({
+    name: Type.String({ description: "Exact name of an enabled skill" }),
+  }),
+  "web.search": Type.Object({
+    query: Type.String({ description: "Focused web search query" }),
+    limit: Type.Optional(Type.Number({ minimum: 1, maximum: 10 })),
+    provider: Type.Optional(
+      Type.Union([
+        Type.Literal("tavily"),
+        Type.Literal("exa"),
+        Type.Literal("firecrawl"),
+        Type.Literal("serpapi"),
+      ]),
+    ),
+  }),
   "files.list": Type.Object({
     path: Type.Optional(Type.String({ description: "Relative directory path; use . for the root" })),
   }),
@@ -273,7 +288,8 @@ async function initialize(workerConfig: WorkerCoworkerConfig): Promise<void> {
       key: workerConfig.modelApiKey,
     }));
   }
-  models = createModels({ credentials });
+  const runtimeModels = createModels({ credentials });
+  models = runtimeModels;
 
   let model;
   if (workerConfig.coworker.modelProvider === "demo") {
@@ -321,7 +337,12 @@ async function initialize(workerConfig: WorkerCoworkerConfig): Promise<void> {
   const history = durableHistory(workerConfig.recentMessages);
   controlledToolNamesByProviderName.clear();
   const usePortableToolNames = workerConfig.coworker.modelProvider !== "demo";
-  const tools = workerConfig.coworker.enabledTools.map((controlledName) => {
+  const skillToolNames = workerConfig.skills.length > 0 ? ["skills.read"] : [];
+  if (workerConfig.skills.some((skill) => skill.name === "web-search")) {
+    skillToolNames.push("web.search");
+  }
+  const enabledToolNames = [...new Set([...workerConfig.coworker.enabledTools, ...skillToolNames])];
+  const tools = enabledToolNames.map((controlledName) => {
     const providerName = usePortableToolNames
       ? toProviderToolName(controlledName)
       : controlledName;
@@ -337,11 +358,20 @@ async function initialize(workerConfig: WorkerCoworkerConfig): Promise<void> {
   const schedulingRule = workerConfig.coworker.enabledTools.includes("schedules.create")
     ? "Scheduling rule: For requests to schedule work, set a reminder, follow up later, or run something at a date or time, use schedules.create by default. Do not create an ICS, Markdown, or other file instead unless the user explicitly asks for a file export."
     : "";
+  const skillsRule = workerConfig.skills.length
+    ? `<available_skills>\n${workerConfig.skills
+        .map(
+          (skill) =>
+            `<skill>\n<name>${skill.name}</name>\n<description>${skill.description}</description>\n<location>skill://${skill.name}/SKILL.md</location>\n</skill>`,
+        )
+        .join("\n")}\n</available_skills>\n\nSkills are capability packages enabled for this coworker. When a task matches a skill, call skills.read with its exact name before following it. Never claim to have loaded a skill until that tool succeeds.`
+    : "";
   agent = new Agent({
     initialState: {
       systemPrompt: [
         workerConfig.coworker.systemPrompt,
         schedulingRule,
+        skillsRule,
         history ? `Recent durable conversation history:\n${history}` : "",
       ]
         .filter(Boolean)
@@ -350,7 +380,15 @@ async function initialize(workerConfig: WorkerCoworkerConfig): Promise<void> {
       tools,
       messages: [],
     },
-    streamFn: models.streamSimple.bind(models),
+    streamFn: (activeModel, context, options) =>
+      runtimeModels.streamSimple(activeModel, context, {
+        ...options,
+        // Pi's provider default can wait up to ten minutes. A bounded timeout and
+        // retry delay make an unavailable/rate-limited OpenRouter route fail visibly.
+        timeoutMs: 90_000,
+        maxRetries: 2,
+        maxRetryDelayMs: 10_000,
+      }),
     sessionId: workerConfig.coworker.id,
     toolExecution: "sequential",
   });
@@ -664,6 +702,11 @@ async function runTask(message: Extract<MainToWorkerMessage, { type: "run" }>): 
     await agent.prompt(prompt, images);
     if (agent.state.errorMessage) throw new Error(agent.state.errorMessage);
     const finishedRun = activeRun;
+    if (!finishedRun.approval && !finishedRun.resultText.trim()) {
+      throw new Error(
+        `${config.coworker.modelName} completed without returning a text response. Try the request again or choose another model.`,
+      );
+    }
     post({
       type: "checkpoint",
       coworkerId: config.coworker.id,

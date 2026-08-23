@@ -9,6 +9,10 @@ A local-first Electron application for running independent AI coworkers. Each co
 - One Node worker thread and one active task at a time per coworker
 - Main-process-owned SQLite state, checkpoints, history, artifacts, and crash recovery
 - Local image attachments sent to vision-capable models as multimodal context
+- Streaming, Markdown-rendered coworker replies with picker and drag-and-drop image input
+- Searchable live model catalogs, OpenRouter input/output pricing, and quick per-coworker model switching
+- Agent Skills-compatible global skill library with per-coworker enablement
+- Bundled web-search skill with Tavily, Exa, Firecrawl, and SerpAPI credential fallback
 - Confined file, invoice, PDF/Word export, email-draft, and email-send tools
 - Durable approval inbox with editable decisions and idempotent resume
 - Persistent cron and one-time schedules, with chat reminders routed to the approval-gated local scheduler instead of file exports
@@ -66,6 +70,10 @@ pnpm eval
 
 Application state is stored under Electron's user-data directory. Model and email API keys are encrypted with Electron `safeStorage`; plaintext keys are never written to SQLite or exposed back to the renderer.
 
+Provider configuration, catalog, startup, inference, and runtime-exit failures are written as redacted JSON Lines to `logs/provider-errors.jsonl` under that directory. Records include provider/model and task/run identifiers, but exclude prompts and credentials; the file rotates at 5 MB. Recent entries can be reviewed in Settings → Data, where a redacted support report can be copied or exported for sharing.
+
 The renderer has context isolation, sandboxing, no Node integration, a restrictive CSP, and a narrow preload API. Workers cannot access SQLite or credentials directly. File tools resolve relative paths against the coworker's workspace and reject traversal or escaping symlinks. Attached images are validated, limited to four images and 20 MB total per message, and stored inside the coworker's workspace so queued work can recover after a restart. V1 intentionally has no arbitrary shell, Python, or code-execution tool.
 
 Email defaults to a local `.eml` outbox. Resend can be configured for real delivery, but `email.send` follows the coworker's durable approval policy and uses a stable idempotency key.
+
+Skills can be uploaded as `SKILL.md` files or installed from an HTTPS URL in Settings. Pasting a compliant skill URL into coworker chat also installs it globally and enables it for that coworker. Skill metadata is exposed to the model first; full instructions are loaded on demand through the controlled skill reader. Remote skill downloads reject credential-bearing, local, and private-network URLs, and bundled skills cannot be replaced by downloaded content.

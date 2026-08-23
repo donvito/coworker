@@ -47,6 +47,12 @@ const api: DesktopApi = {
   activity: {
     list: (limit) => ipcRenderer.invoke(ipcChannels.activityList, limit),
   },
+  diagnostics: {
+    listProviderErrors: (limit) =>
+      ipcRenderer.invoke(ipcChannels.diagnosticsProviderErrorsList, limit),
+    copyProviderReport: () => ipcRenderer.invoke(ipcChannels.diagnosticsProviderReportCopy),
+    exportProviderReport: () => ipcRenderer.invoke(ipcChannels.diagnosticsProviderReportExport),
+  },
   integrations: {
     list: () => ipcRenderer.invoke(ipcChannels.integrationsList),
     configureEmail: (input) =>
@@ -61,6 +67,16 @@ const api: DesktopApi = {
       ipcRenderer.invoke(ipcChannels.integrationsCredentialStatus, key),
     removeCredential: (key) =>
       ipcRenderer.invoke(ipcChannels.integrationsRemoveCredential, key),
+    configureWebSearch: (input) =>
+      ipcRenderer.invoke(ipcChannels.integrationsConfigureWebSearch, input),
+  },
+  skills: {
+    list: () => ipcRenderer.invoke(ipcChannels.skillsList),
+    installFromUrl: (url, coworkerId) =>
+      ipcRenderer.invoke(ipcChannels.skillsInstallFromUrl, { url, coworkerId }),
+    installFromContent: (content, coworkerId) =>
+      ipcRenderer.invoke(ipcChannels.skillsInstallFromContent, { content, coworkerId }),
+    remove: (id) => ipcRenderer.invoke(ipcChannels.skillsRemove, id),
   },
   agents: {
     run: (request) => ipcRenderer.invoke(ipcChannels.agentsRun, request),

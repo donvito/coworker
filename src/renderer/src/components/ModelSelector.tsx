@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { ModelOption, ModelProvider } from "@shared/contracts";
+import { modelOptionLabel, modelPricingLabel } from "../lib/model-pricing";
 
 export function ModelSelector({
   disabled = false,
@@ -16,12 +17,35 @@ export function ModelSelector({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshVersion, setRefreshVersion] = useState(0);
+  const [query, setQuery] = useState("");
+  const [open, setOpen] = useState(false);
+  const labelId = useId();
+  const listboxId = useId();
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function closeOnOutsideClick(event: MouseEvent) {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    }
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("mousedown", closeOnOutsideClick);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("mousedown", closeOnOutsideClick);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [open]);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setError(null);
     setModels([]);
+    setQuery("");
+    setOpen(false);
 
     void window.coworker.integrations
       .listModels(provider)
@@ -50,6 +74,13 @@ export function ModelSelector({
   }, [provider, refreshVersion]);
 
   const includesValue = models.some((model) => model.id === value);
+  const selectedModel = models.find((model) => model.id === value);
+  const normalizedQuery = query.trim().toLowerCase();
+  const visibleModels = normalizedQuery
+    ? models.filter((model) =>
+        `${model.name} ${model.id}`.toLowerCase().includes(normalizedQuery),
+      )
+    : models;
   const placeholder = loading
     ? "Loading models…"
     : error
@@ -57,32 +88,91 @@ export function ModelSelector({
       : "No compatible models";
 
   return (
-    <label className="model-selector">
-      <span>Model</span>
+    <div className="model-selector" ref={rootRef}>
+      <span id={labelId}>Model</span>
+      {models.length > 8 || provider === "openrouter" ? (
+        <span className="model-selector-search">
+          <input
+            aria-label={`Search ${provider} models`}
+            disabled={disabled || loading}
+            onChange={(event) => {
+              setQuery(event.target.value);
+              setOpen(true);
+            }}
+            onFocus={() => setOpen(true)}
+            placeholder="Search models by name or ID…"
+            type="search"
+            value={query}
+          />
+        </span>
+      ) : null}
       <div className="model-selector-control">
-        <select
-          aria-busy={loading}
-          disabled={disabled || loading}
-          name="modelName"
-          onChange={(event) => onChange(event.target.value)}
-          required
-          value={value}
-        >
-          {!value ? (
-            <option value="">{placeholder}</option>
-          ) : !includesValue ? (
-            <option value={value}>
-              {value} {loading ? "(checking availability…)" : "(last selected)"}
-            </option>
+        <div className="model-selector-picker">
+          <button
+            aria-busy={loading}
+            aria-controls={listboxId}
+            aria-expanded={open}
+            aria-haspopup="listbox"
+            aria-labelledby={labelId}
+            className="model-selector-trigger"
+            disabled={disabled || loading || models.length === 0}
+            onClick={() => setOpen((current) => !current)}
+            role="combobox"
+            title={selectedModel ? modelOptionLabel(selectedModel) : value}
+            type="button"
+          >
+            <span>
+              <strong>{selectedModel?.name ?? (value || placeholder)}</strong>
+              <small>
+                {selectedModel ? (
+                  <>
+                    <code>{selectedModel.id}</code>
+                    {modelPricingLabel(selectedModel) ? (
+                      <span>{modelPricingLabel(selectedModel)}</span>
+                    ) : null}
+                  </>
+                ) : value && !includesValue ? (
+                  loading ? "Checking availability…" : "Last selected model"
+                ) : null}
+              </small>
+            </span>
+            <span aria-hidden="true" className="model-selector-chevron">⌄</span>
+          </button>
+          {open ? (
+            <div className="model-selector-options" id={listboxId} role="listbox">
+              {visibleModels.length > 0 ? (
+                visibleModels.map((model) => {
+                  const pricing = modelPricingLabel(model);
+                  return (
+                    <button
+                      aria-selected={model.id === value}
+                      className={model.id === value ? "selected" : ""}
+                      key={model.id}
+                      onClick={() => {
+                        onChange(model.id);
+                        setOpen(false);
+                      }}
+                      role="option"
+                      title={modelOptionLabel(model)}
+                      type="button"
+                    >
+                      <span className="model-selector-option-main">
+                        <strong>{model.name}</strong>
+                        {model.supportsImages ? <b>Images</b> : null}
+                      </span>
+                      <span className="model-selector-option-meta">
+                        <code>{model.id}</code>
+                        {pricing ? <small>{pricing}</small> : null}
+                      </span>
+                    </button>
+                  );
+                })
+              ) : (
+                <span className="model-selector-empty">No models match this search.</span>
+              )}
+            </div>
           ) : null}
-          {models.map((model) => (
-            <option key={model.id} value={model.id}>
-              {`${model.name === model.id ? model.id : `${model.name} — ${model.id}`}${
-                model.supportsImages ? " · image input" : ""
-              }`}
-            </option>
-          ))}
-        </select>
+        </div>
         {provider !== "demo" ? (
           <button
             aria-label={`Refresh ${provider} models`}
@@ -99,8 +189,12 @@ export function ModelSelector({
         {error ??
           (loading
             ? `Querying ${provider === "demo" ? "the built-in runtime" : provider}…`
-            : `${models.length} compatible model${models.length === 1 ? "" : "s"} available`)}
+            : normalizedQuery
+              ? `${visibleModels.length} of ${models.length} models match`
+              : `${models.length} compatible model${models.length === 1 ? "" : "s"} available${
+                  provider === "openrouter" ? " · live USD catalog pricing per 1M tokens" : ""
+                }`)}
       </small>
-    </label>
+    </div>
   );
 }

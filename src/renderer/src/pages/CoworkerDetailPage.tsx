@@ -9,11 +9,13 @@ import {
 import { z } from "zod";
 import type {
   Approval,
+  AppSettings,
   Artifact,
   Coworker,
   Message as StoredMessage,
   Task,
   TaskImageAttachmentSummary,
+  Skill,
 } from "@shared/contracts";
 import { IpcCoworkerAgent } from "../copilot/IpcCoworkerAgent";
 import { LocalCopilotProvider } from "../copilot/LocalCopilotProvider";
@@ -24,6 +26,8 @@ import {
   type ArtifactTarget,
 } from "../components/ArtifactActions";
 import { CoworkerSettingsModal } from "../components/CoworkerSettingsModal";
+import { ChatMarkdown } from "../components/ChatMarkdown";
+import { QuickModelSwitcher } from "../components/QuickModelSwitcher";
 import { Icon } from "../components/Icon";
 import {
   CoworkerModelBadge,
@@ -219,6 +223,8 @@ export function CoworkerDetailPage({
   artifacts,
   messages,
   imageAttachments,
+  skills,
+  settings,
   onBack,
   onChanged,
   onOpenApprovals,
@@ -232,6 +238,8 @@ export function CoworkerDetailPage({
   artifacts: Artifact[];
   messages: StoredMessage[];
   imageAttachments: TaskImageAttachmentSummary[];
+  skills: Skill[];
+  settings: AppSettings;
   onBack: () => void;
   onChanged: () => Promise<void>;
   onOpenApprovals: () => void;
@@ -279,6 +287,7 @@ export function CoworkerDetailPage({
       {managing ? (
         <CoworkerSettingsModal
           coworker={coworker}
+          skills={skills}
           onChanged={onChanged}
           onClose={() => setManaging(false)}
           onRemoved={onRemoved}
@@ -286,6 +295,7 @@ export function CoworkerDetailPage({
       ) : null}
       {creating ? (
         <CreateCoworkerModal
+          settings={settings}
           onChanged={onChanged}
           onClose={() => setCreating(false)}
           onCreated={onSelectCoworker}
@@ -334,8 +344,9 @@ function CoworkerSurface({
     throttleMs: 24,
   });
   const coworkerTasks = tasks.filter((task) => task.coworkerId === coworker.id);
-  const activeTask = coworkerTasks.find((task) =>
-    ["RUNNING", "WAITING_FOR_APPROVAL"].includes(task.status),
+  const latestTask = coworkerTasks.reduce<Task | null>(
+    (latest, task) => (!latest || task.createdAt > latest.createdAt ? task : latest),
+    null,
   );
   const pending = approvals.filter((approval) => approval.status === "PENDING");
   const renderToolCall = useRenderToolCall();
@@ -343,6 +354,7 @@ function CoworkerSurface({
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
   const [imageError, setImageError] = useState<string | null>(null);
   const [readingImages, setReadingImages] = useState(false);
+  const [draggingImages, setDraggingImages] = useState(false);
   const [supportsImageInput, setSupportsImageInput] = useState<boolean | null>(null);
   const [search, setSearch] = useState("");
   const [approvalInFlight, setApprovalInFlight] = useState<string | null>(null);
@@ -352,6 +364,7 @@ function CoworkerSurface({
   );
   const transcriptRef = useRef<HTMLDivElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
+  const imageDragDepth = useRef(0);
   const messageTimes = useMemo(
     () => new Map(storedMessages.map((message) => [message.id, message.createdAt])),
     [storedMessages],
@@ -576,7 +589,7 @@ function CoworkerSurface({
     },
   });
 
-  async function attachImages(files: FileList | null) {
+  async function attachImages(files: FileList | File[] | null) {
     if (!files?.length) return;
     setImageError(null);
     setReadingImages(true);
@@ -737,41 +750,55 @@ function CoworkerSurface({
         </button>
       </aside>
 
-      <section className="conversation-main">
+      <section
+        className="conversation-main"
+        onDragEnter={(event) => {
+          event.preventDefault();
+          imageDragDepth.current += 1;
+          if (supportsImageInput !== false && !agent.isRunning) setDraggingImages(true);
+        }}
+        onDragLeave={(event) => {
+          event.preventDefault();
+          imageDragDepth.current = Math.max(0, imageDragDepth.current - 1);
+          if (imageDragDepth.current === 0) setDraggingImages(false);
+        }}
+        onDragOver={(event) => {
+          event.preventDefault();
+          imageDragDepth.current = 0;
+          event.dataTransfer.dropEffect = "copy";
+        }}
+        onDrop={(event) => {
+          event.preventDefault();
+          setDraggingImages(false);
+          if (supportsImageInput === false || agent.isRunning) return;
+          void attachImages(event.dataTransfer.files);
+        }}
+      >
         <header className="conversation-main-head">
-          <span className="conversation-avatar active">{initials(coworker.name)}</span>
-          <span className="conversation-identity">
-            <span>
-              <strong>{coworker.name}</strong>
+          <div className="conversation-head-profile">
+            <span className="conversation-avatar active">{initials(coworker.name)}</span>
+            <span className="conversation-identity">
+              <span className="conversation-identity-title">
+                <strong>{coworker.name}</strong>
+                <StatusLabel status={coworker.runtimeStatus} />
+              </span>
               <small>{coworker.role}</small>
-              <CoworkerModelBadge compact coworker={coworker} />
             </span>
-            <StatusLabel status={coworker.runtimeStatus} />
-          </span>
-          {activeTask ? (
-            <div className="conversation-task-chip">
-              <Icon name={activeTask.status === "WAITING_FOR_APPROVAL" ? "shield" : "activity"} />
-              <span>
-                <strong>{activeTask.title}</strong>
-                <small>{activeTask.status.replaceAll("_", " ").toLowerCase()}</small>
-              </span>
-            </div>
-          ) : coworkerTasks[0] ? (
-            <div className="conversation-task-chip quiet">
-              <Icon name="check" />
-              <span>
-                <strong>{coworkerTasks[0].title}</strong>
-                <small>{formatRelativeTime(coworkerTasks[0].createdAt)}</small>
-              </span>
-            </div>
-          ) : null}
-          <button
-            className="conversation-icon-button"
-            onClick={onManage}
-            aria-label={`Manage ${coworker.name}`}
-          >
-            <Icon name="more" />
-          </button>
+          </div>
+          <div className="conversation-head-controls">
+            <QuickModelSwitcher
+              coworker={coworker}
+              disabled={agent.isRunning}
+              onChanged={onChanged}
+            />
+            <button
+              className="conversation-icon-button"
+              onClick={onManage}
+              aria-label={`Manage ${coworker.name}`}
+            >
+              <Icon name="more" />
+            </button>
+          </div>
         </header>
 
         <div className="conversation-thread">
@@ -870,7 +897,15 @@ function CoworkerSurface({
                         {persistedImages.length > 0 ? (
                           <PersistedMessageImages attachments={persistedImages} />
                         ) : null}
-                        {content ? <span className="workroom-message-text">{content}</span> : null}
+                        {content ? (
+                          <span className="workroom-message-text">
+                            {message.role === "assistant" ? (
+                              <ChatMarkdown>{content}</ChatMarkdown>
+                            ) : (
+                              content
+                            )}
+                          </span>
+                        ) : null}
                       </div>
                     ) : null}
                     {toolCalls.map((toolCall) => {
@@ -903,6 +938,15 @@ function CoworkerSurface({
                   </div>
                 );
               })}
+              {latestTask?.status === "FAILED" && latestTask.error ? (
+                <div className="workroom-run-error" role="alert">
+                  <Icon name="shield" />
+                  <span>
+                    <strong>Request could not complete</strong>
+                    <small>{latestTask.error}</small>
+                  </span>
+                </div>
+              ) : null}
               {agent.isRunning ? (
                 <div className="workroom-running" aria-live="polite">
                   <span />
@@ -914,12 +958,17 @@ function CoworkerSurface({
             </div>
 
             <form
-              className="workroom-composer"
+              className={`workroom-composer${draggingImages ? " dragging-images" : ""}`}
               onSubmit={(event) => {
                 event.preventDefault();
                 void submitMessage(draft);
               }}
             >
+              {draggingImages ? (
+                <div className="composer-drop-prompt">
+                  <Icon name="plus" /> Drop images to attach
+                </div>
+              ) : null}
               {pendingImages.length > 0 ? (
                 <div className="composer-image-tray" aria-label="Images ready to attach">
                   {pendingImages.map((image) => (

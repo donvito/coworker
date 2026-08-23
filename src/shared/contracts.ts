@@ -46,11 +46,57 @@ export const modelProviders = ["demo", ...remoteModelProviders] as const;
 export type ModelProvider = (typeof modelProviders)[number];
 export type RemoteModelProvider = (typeof remoteModelProviders)[number];
 
+export const providerErrorPhases = [
+  "configuration",
+  "model_catalog",
+  "capabilities",
+  "runtime_start",
+  "inference",
+  "runtime_exit",
+] as const;
+export type ProviderErrorPhase = (typeof providerErrorPhases)[number];
+
+export interface ProviderErrorDiagnostic {
+  timestamp: string;
+  level: "error";
+  category: "model_provider";
+  phase: ProviderErrorPhase;
+  provider: ModelProvider;
+  model?: string;
+  coworkerId?: string;
+  taskId?: string;
+  runId?: string;
+  message: string;
+  stack?: string;
+  code?: string;
+  status?: number;
+}
+
 export interface ModelOption {
   id: string;
   name: string;
   supportsImages: boolean;
+  pricing?: {
+    currency: "USD";
+    inputPerMillion?: number;
+    outputPerMillion?: number;
+    request?: number;
+  };
 }
+
+export interface Skill {
+  id: string;
+  name: string;
+  description: string;
+  content: string;
+  sourceUrl: string | null;
+  bundled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export const webSearchProviders = ["tavily", "exa", "firecrawl", "serpapi"] as const;
+export type WebSearchProvider = (typeof webSearchProviders)[number];
 
 export interface Coworker {
   id: string;
@@ -64,6 +110,7 @@ export interface Coworker {
   runtimeStatus: RuntimeStatus;
   workspacePath: string;
   enabledTools: string[];
+  enabledSkillIds: string[];
   policies: Record<string, ToolPolicy>;
   createdAt: string;
   updatedAt: string;
@@ -77,6 +124,7 @@ export interface CreateCoworkerInput {
   modelProvider: ModelProvider;
   modelName: string;
   enabledTools: string[];
+  enabledSkillIds?: string[];
   policies?: Record<string, ToolPolicy>;
 }
 
@@ -89,6 +137,7 @@ export interface UpdateCoworkerInput {
   modelName?: string;
   status?: "active" | "paused";
   enabledTools?: string[];
+  enabledSkillIds?: string[];
   policies?: Record<string, ToolPolicy>;
 }
 
@@ -261,6 +310,8 @@ export interface AppSettings {
   runInBackground: boolean;
   launchAtLogin: boolean;
   demoMode: boolean;
+  defaultModelProvider: RemoteModelProvider | null;
+  defaultModelName: string | null;
 }
 
 export interface AppSnapshot {
@@ -273,6 +324,7 @@ export interface AppSnapshot {
   artifacts: Artifact[];
   activity: ActivityItem[];
   integrations: Integration[];
+  skills: Skill[];
   settings: AppSettings;
   dataPath: string;
 }
@@ -285,6 +337,7 @@ export type EntityName =
   | "artifacts"
   | "activity"
   | "integrations"
+  | "skills"
   | "settings";
 
 export type DesktopEvent =
@@ -363,6 +416,11 @@ export interface DesktopApi {
   activity: {
     list(limit?: number): Promise<ActivityItem[]>;
   };
+  diagnostics: {
+    listProviderErrors(limit?: number): Promise<ProviderErrorDiagnostic[]>;
+    copyProviderReport(): Promise<{ count: number }>;
+    exportProviderReport(): Promise<string | null>;
+  };
   integrations: {
     list(): Promise<Integration[]>;
     configureEmail(input: {
@@ -383,6 +441,16 @@ export interface DesktopApi {
     ): Promise<{ supportsImages: boolean }>;
     credentialStatus(key: string): Promise<CredentialStatus>;
     removeCredential(key: string): Promise<void>;
+    configureWebSearch(input: {
+      provider: WebSearchProvider;
+      apiKey: string;
+    }): Promise<CredentialStatus>;
+  };
+  skills: {
+    list(): Promise<Skill[]>;
+    installFromUrl(url: string, coworkerId?: string): Promise<Skill>;
+    installFromContent(content: string, coworkerId?: string): Promise<Skill>;
+    remove(id: string): Promise<void>;
   };
   agents: {
     run(request: AgentRunRequest): Promise<AgentRunReceipt>;

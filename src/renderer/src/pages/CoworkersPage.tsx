@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react";
-import type { Coworker, ModelProvider } from "@shared/contracts";
-import { modelProviderDefinitions } from "@shared/model-providers";
+import type { AppSettings, Coworker, RemoteModelProvider } from "@shared/contracts";
+import { remoteModelProviderDefinitions } from "@shared/model-providers";
 import { Icon } from "../components/Icon";
 import { ModelSelector } from "../components/ModelSelector";
 import {
@@ -14,10 +14,12 @@ type CoworkerView = "cards" | "list";
 
 export function CoworkersPage({
   coworkers,
+  settings,
   onOpen,
   onChanged,
 }: {
   coworkers: Coworker[];
+  settings: AppSettings;
   onOpen: (coworker: Coworker) => void;
   onChanged: () => Promise<void>;
 }) {
@@ -115,6 +117,7 @@ export function CoworkersPage({
 
       {creating ? (
         <CreateCoworkerModal
+          settings={settings}
           onChanged={onChanged}
           onClose={() => setCreating(false)}
           onCreated={onOpen}
@@ -125,24 +128,32 @@ export function CoworkersPage({
 }
 
 export function CreateCoworkerModal({
+  settings,
   onChanged,
   onClose,
   onCreated,
 }: {
+  settings: Pick<AppSettings, "defaultModelProvider" | "defaultModelName">;
   onChanged: () => Promise<void>;
   onClose: () => void;
   onCreated: (coworker: Coworker) => void;
 }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [provider, setProvider] = useState<ModelProvider>("demo");
-  const [modelName, setModelName] = useState("faux-1");
+  const [provider, setProvider] = useState<RemoteModelProvider | "">(
+    settings.defaultModelProvider ?? "",
+  );
+  const [modelName, setModelName] = useState(settings.defaultModelName ?? "");
 
   async function createCoworker(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
     const name = String(data.get("name") ?? "").trim();
     const role = String(data.get("role") ?? "").trim();
+    if (!provider || !modelName) {
+      setError("No model configured. Add an API key and choose a default model in Settings.");
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
@@ -204,33 +215,39 @@ export function CreateCoworkerModal({
               maxLength={1000}
             />
           </label>
-          <div className="form-split">
-            <label>
-              <span>Model provider</span>
-              <select
+          {provider ? (
+            <div className="form-split">
+              <label>
+                <span>Model provider</span>
+                <select
+                  disabled={saving}
+                  name="provider"
+                  onChange={(event) => {
+                    setProvider(event.target.value as RemoteModelProvider);
+                    setModelName("");
+                  }}
+                  value={provider}
+                >
+                  {remoteModelProviderDefinitions.map((definition) => (
+                    <option key={definition.id} value={definition.id}>
+                      {definition.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <ModelSelector
                 disabled={saving}
-                name="provider"
-                onChange={(event) => {
-                  const nextProvider = event.target.value as ModelProvider;
-                  setProvider(nextProvider);
-                  setModelName(nextProvider === "demo" ? "faux-1" : "");
-                }}
-                value={provider}
-              >
-                {modelProviderDefinitions.map((definition) => (
-                  <option key={definition.id} value={definition.id}>
-                    {definition.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <ModelSelector
-              disabled={saving}
-              onChange={setModelName}
-              provider={provider}
-              value={modelName}
-            />
-          </div>
+                onChange={setModelName}
+                provider={provider}
+                value={modelName}
+              />
+            </div>
+          ) : (
+            <div className="model-not-configured create-coworker-model-empty">
+              <strong>No model configured</strong>
+              <small>Add an API key and select a default model in Settings before creating a coworker.</small>
+            </div>
+          )}
           {error ? <div className="inline-error">{error}</div> : null}
           <div className="modal-actions">
             <button type="button" className="secondary-button" onClick={onClose}>

@@ -102,6 +102,8 @@ export default function App() {
           imageAttachments={snapshot.imageAttachments.filter(
             (attachment) => attachment.coworkerId === selectedCoworker.id,
           )}
+          skills={snapshot.skills}
+          settings={snapshot.settings}
           onBack={() => setSelectedCoworkerId(null)}
           onChanged={refresh}
           onOpenApprovals={() => navigate("approvals")}
@@ -113,6 +115,7 @@ export default function App() {
       {page === "coworkers" && !selectedCoworker ? (
         <CoworkersPage
           coworkers={snapshot.coworkers}
+          settings={snapshot.settings}
           onOpen={(coworker) => setSelectedCoworkerId(coworker.id)}
           onChanged={refresh}
         />
@@ -151,6 +154,8 @@ export default function App() {
         <SettingsPage
           settings={snapshot.settings}
           integrations={snapshot.integrations}
+          skills={snapshot.skills}
+          coworkers={snapshot.coworkers}
           dataPath={snapshot.dataPath}
           onChanged={refresh}
         />
