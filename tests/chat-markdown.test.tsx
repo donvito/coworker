@@ -37,15 +37,18 @@ describe("coworker response Markdown", () => {
     expect(html).not.toContain("<script>");
   });
 
-  it("turns an invented file link into a download for the matching artifact", () => {
+  it("renders an invented file link as a file card for the matching artifact", () => {
     const html = renderToStaticMarkup(
       <ChatMarkdown artifacts={[csv]}>
         {"[Download the CSV](sandbox:/mnt/data/seedance_2_5_profiles.csv)"}
       </ChatMarkdown>,
     );
 
-    expect(html).toContain('class="chat-markdown-artifact-link"');
-    expect(html).toContain("Download the CSV");
+    expect(html).toContain('class="chat-artifact-card"');
+    expect(html).toContain("seedance_2_5_profiles.csv");
+    expect(html).toContain("CSV spreadsheet");
+    expect(html).toContain('aria-label="Open seedance_2_5_profiles.csv"');
+    expect(html).toContain('aria-label="Download seedance_2_5_profiles.csv"');
     expect(html).not.toContain("sandbox:/mnt/data");
   });
 
@@ -74,5 +77,17 @@ describe("coworker response Markdown", () => {
 
     expect(html).not.toContain("<a ");
     expect(html).not.toContain("javascript:");
+  });
+
+  it("keeps the file card nestable inside a Markdown paragraph", () => {
+    const html = renderToStaticMarkup(
+      <ChatMarkdown artifacts={[csv]}>
+        {"Created the CSV spreadsheet:\n\n[Download the CSV](sandbox:/mnt/data/seedance_2_5_profiles.csv)"}
+      </ChatMarkdown>,
+    );
+
+    const card = html.slice(html.indexOf('class="chat-artifact-card"'));
+    expect(card).not.toMatch(/<(div|article|section|p|ul|ol)\b/);
+    expect(html).toContain("Created the CSV spreadsheet:");
   });
 });

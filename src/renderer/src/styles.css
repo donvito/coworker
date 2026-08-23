@@ -3629,19 +3629,82 @@ select:focus {
   font-style: italic;
 }
 
-.chat-markdown-artifact-link {
-  background: none;
-  border: 0;
-  color: var(--blue);
-  cursor: pointer;
-  font: inherit;
-  padding: 0;
-  text-decoration: underline;
-  text-underline-offset: 2px;
+/* A file the coworker created, shown inline in the message. Mirrors
+   .conversation-file-card, built from inline elements so Markdown can nest it
+   inside a paragraph. */
+.chat-artifact-card {
+  display: inline-grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  align-items: start;
+  gap: 9px;
+  width: 100%;
+  max-width: 330px;
+  margin: 6px 0 2px;
+  padding: 9px;
+  background: #fff;
+  border: 1px solid #dde5e0;
+  border-radius: 10px;
+  box-shadow: 0 4px 14px rgba(31, 44, 38, 0.03);
+  text-align: left;
+  vertical-align: top;
 }
 
-.chat-markdown-artifact-status {
+.chat-artifact-icon {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 42px;
+  color: var(--blue);
+  background: var(--blue-soft);
+  border: 1px solid #cfdbf7;
+  border-radius: 7px;
+}
+
+.chat-artifact-icon svg {
+  width: 16px;
+  height: 16px;
+  transform: translateY(-4px);
+}
+
+.chat-artifact-icon small {
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  left: 3px;
+  overflow: hidden;
+  color: #4962a9;
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 760;
+  text-align: center;
+  text-overflow: ellipsis;
+}
+
+.chat-artifact-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.chat-artifact-copy strong {
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 660;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-artifact-copy > small {
+  margin-top: 2px;
   color: var(--ink-soft);
+  font-size: 10px;
+}
+
+.chat-artifact-copy > .artifact-actions {
+  width: 100%;
+  margin-top: 7px;
+  flex-wrap: wrap;
 }
 
 .chat-markdown-dead-link {

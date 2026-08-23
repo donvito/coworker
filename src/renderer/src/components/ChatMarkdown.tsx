@@ -1,8 +1,9 @@
-import { useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Artifact } from "@shared/contracts";
-import { readableError } from "../lib/errors";
+import { ArtifactActions, artifactExtension, artifactKind } from "./ArtifactActions";
+import { Icon } from "./Icon";
+import { formatRelativeTime } from "./Primitives";
 
 const browsableSchemes = ["http:", "https:", "mailto:"];
 
@@ -26,31 +27,26 @@ function matchArtifact(href: string, artifacts: Artifact[]): Artifact | undefine
   return artifacts.find((artifact) => artifact.name.toLowerCase() === name);
 }
 
-function ArtifactLink({ artifact, label }: { artifact: Artifact; label: React.ReactNode }) {
-  const [status, setStatus] = useState<string | null>(null);
-
-  async function download() {
-    setStatus(null);
-    try {
-      const destination = await window.coworker.artifacts.download(artifact.id);
-      if (destination) setStatus("Downloaded");
-    } catch (error) {
-      setStatus(readableError(error));
-    }
-  }
-
+/**
+ * Rendered in place of the link, so a created file reads as a file — name,
+ * kind, and the same Open/Download actions as the Files panel. Built from
+ * inline elements because Markdown drops it inside a paragraph.
+ */
+function ChatArtifactCard({ artifact }: { artifact: Artifact }) {
   return (
-    <>
-      <button
-        className="chat-markdown-artifact-link"
-        onClick={() => void download()}
-        title={`Download ${artifact.name}`}
-        type="button"
-      >
-        {label}
-      </button>
-      {status ? <small className="chat-markdown-artifact-status"> {status}</small> : null}
-    </>
+    <span className="chat-artifact-card">
+      <span className="chat-artifact-icon">
+        <Icon name="file" />
+        <small>{artifactExtension(artifact)}</small>
+      </span>
+      <span className="chat-artifact-copy">
+        <strong title={artifact.name}>{artifact.name}</strong>
+        <small>
+          {artifactKind(artifact)} · {formatRelativeTime(artifact.createdAt)}
+        </small>
+        <ArtifactActions target={{ id: artifact.id, name: artifact.name }} />
+      </span>
+    </span>
   );
 }
 
@@ -71,7 +67,7 @@ export function ChatMarkdown({
         components={{
           a: ({ children: label, href }) => {
             const artifact = href ? matchArtifact(href, artifacts) : undefined;
-            if (artifact) return <ArtifactLink artifact={artifact} label={label} />;
+            if (artifact) return <ChatArtifactCard artifact={artifact} />;
             if (!href || !isBrowsable(href)) {
               return <span className="chat-markdown-dead-link">{label}</span>;
             }
