@@ -1,15 +1,17 @@
 {
-  "name": "ai-coworker-desktop",
+  "name": "coworker",
   "version": "0.1.0",
   "description": "A local-first desktop app for independent AI coworkers.",
   "type": "module",
+  "productName": "Coworker",
   "main": "./out/main/index.js",
-  "author": "AI Coworker",
+  "author": "Coworker",
   "license": "UNLICENSED",
   "private": true,
   "packageManager": "pnpm@11.18.0",
   "scripts": {
-    "dev": "electron-vite dev",
+    "dev": "node scripts/dev-app-name.js && electron-vite dev",
+    "postinstall": "node scripts/dev-app-name.js",
     "build": "pnpm typecheck && electron-vite build",
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.json",
@@ -23,16 +25,17 @@
   },
   "build": {
     "appId": "com.localcoworker.desktop",
-    "productName": "AI Coworker",
+    "productName": "Coworker",
     "directories": {
       "output": "release"
     },
     "files": [
       "out/**/*",
+      "build/icon.png",
       "package.json"
     ],
     "mac": {
-      "icon": "build/icon.svg",
+      "icon": "build/icon.png",
       "target": [
         "dmg",
         "zip"
@@ -40,11 +43,11 @@
       "category": "public.app-category.productivity"
     },
     "win": {
-      "icon": "build/icon.svg",
+      "icon": "build/icon.png",
       "target": "nsis"
     },
     "linux": {
-      "icon": "build/icon.svg",
+      "icon": "build/icon.png",
       "target": "AppImage",
       "category": "Utility"
     }

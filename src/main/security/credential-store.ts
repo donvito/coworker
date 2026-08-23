@@ -8,6 +8,21 @@ export interface CredentialStore {
   get(key: string): Promise<string | null>;
   has(key: string): Promise<boolean>;
   delete(key: string): Promise<void>;
+  status?(key: string): Promise<CredentialReadStatus>;
+}
+
+export type CredentialReadStatus = "configured" | "missing" | "unreadable";
+
+export class CredentialDecryptionError extends Error {
+  readonly code = "CREDENTIAL_DECRYPTION_FAILED";
+
+  constructor(options?: ErrorOptions) {
+    super(
+      "This saved credential was encrypted by a different app identity. Re-enter it in Settings.",
+      options,
+    );
+    this.name = "CredentialDecryptionError";
+  }
 }
 
 export class SecureCredentialStore implements CredentialStore {
@@ -29,17 +44,31 @@ export class SecureCredentialStore implements CredentialStore {
 
   async get(key: string): Promise<string | null> {
     if (!safeStorage.isEncryptionAvailable()) return null;
+    let encrypted: Buffer;
     try {
-      const encrypted = await readFile(this.pathFor(key));
-      return safeStorage.decryptString(encrypted);
+      encrypted = await readFile(this.pathFor(key));
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
       throw error;
     }
+    try {
+      return safeStorage.decryptString(encrypted);
+    } catch (error) {
+      throw new CredentialDecryptionError({ cause: error });
+    }
   }
 
   async has(key: string): Promise<boolean> {
-    return (await this.get(key)) !== null;
+    return (await this.status(key)) === "configured";
+  }
+
+  async status(key: string): Promise<CredentialReadStatus> {
+    try {
+      return (await this.get(key)) === null ? "missing" : "configured";
+    } catch (error) {
+      if (error instanceof CredentialDecryptionError) return "unreadable";
+      throw error;
+    }
   }
 
   async delete(key: string): Promise<void> {
@@ -60,6 +89,10 @@ export class MemoryCredentialStore implements CredentialStore {
 
   async has(key: string): Promise<boolean> {
     return this.values.has(key);
+  }
+
+  async status(key: string): Promise<CredentialReadStatus> {
+    return this.values.has(key) ? "configured" : "missing";
   }
 
   async delete(key: string): Promise<void> {

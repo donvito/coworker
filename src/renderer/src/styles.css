@@ -1996,10 +1996,6 @@ select:focus {
   margin-top: 22px;
 }
 
-.compact-provider-grid {
-  margin: 12px 0;
-}
-
 .settings-model-browser {
   display: grid;
   gap: 10px;
@@ -5348,7 +5344,7 @@ select:focus {
 
 .provider-card {
   display: grid;
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: 1fr auto;
   align-items: center;
   gap: 9px;
   padding: 12px;
@@ -5357,21 +5353,41 @@ select:focus {
   border-radius: 11px;
 }
 
-.provider-monogram {
-  display: grid;
-  place-items: center;
-  width: 31px;
-  height: 31px;
-  color: #fff;
-  font-family: var(--display);
-  font-size: 14px;
-  font-weight: 700;
-  background: var(--blue);
-  border-radius: 9px;
+.model-provider-card {
+  width: 100%;
+  grid-template-columns: 1fr auto;
+  appearance: none;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 120ms ease,
+    background 120ms ease,
+    box-shadow 120ms ease,
+    transform 120ms ease;
 }
 
-.provider-card > span:nth-child(2) {
+.model-provider-card:hover {
+  border-color: rgba(59, 91, 187, 0.42);
+  background: #f8faff;
+  transform: translateY(-1px);
+}
+
+.model-provider-card.selected {
+  border-color: var(--blue);
+  background: var(--blue-soft);
+  box-shadow: 0 0 0 3px rgba(59, 91, 187, 0.12);
+}
+
+.model-provider-card:focus-visible {
+  outline: 3px solid rgba(59, 91, 187, 0.28);
+  outline-offset: 2px;
+}
+
+.model-provider-card > span:first-child {
   display: flex;
+  min-width: 0;
   flex-direction: column;
 }
 
@@ -5400,6 +5416,31 @@ select:focus {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.model-credential-form {
+  margin-bottom: 24px;
+  padding: 15px;
+  background: rgba(255, 255, 255, 0.62);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.credential-form-heading {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 4px;
+}
+
+.credential-form-heading strong {
+  font-size: 14px;
+}
+
+.credential-form-heading small {
+  color: var(--ink-soft);
+  font-size: 11px;
 }
 
 .inline-credential-form select {
@@ -5432,6 +5473,37 @@ select:focus {
   color: var(--red);
   background: var(--red-soft);
   border-color: #eabcbc;
+}
+
+.settings-notice p {
+  margin: 0;
+  color: inherit;
+  font-size: inherit;
+}
+
+.unreadable-credential-list {
+  display: flex;
+  margin: 7px 0;
+  padding: 0;
+  flex-direction: column;
+  gap: 4px;
+  list-style: none;
+}
+
+.unreadable-credential-list li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.unreadable-credential-list .text-button {
+  color: inherit;
+  font-size: 11px;
+  text-decoration: underline;
+}
+
+.settings-notice .ghost-button {
+  margin-top: 9px;
 }
 
 .data-path {

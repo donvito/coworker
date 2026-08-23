@@ -5,6 +5,8 @@ import {
   remoteModelProviders,
   toolPolicies,
   webSearchProviders,
+  type RemoteModelProvider,
+  type WebSearchProvider,
 } from "./contracts";
 
 const identifier = z.string().min(1).max(128);
@@ -258,20 +260,22 @@ export const installSkillPackageSchema = z.object({
   coworkerId: identifier.optional(),
 });
 
+// Derived from the provider constants so a new provider cannot be added without
+// its credential keys becoming valid at the IPC boundary.
+type CredentialKey =
+  | `model:${RemoteModelProvider}`
+  | `model:${RemoteModelProvider}:base-url`
+  | "integration:email:resend"
+  | `web-search:${WebSearchProvider}`;
+
 export const credentialKeySchema = z.enum([
-  "model:anthropic",
-  "model:openai",
-  "model:google",
-  "model:openrouter",
-  "model:ollama",
-  "model:lmstudio",
-  "model:openai-compatible",
+  ...remoteModelProviders.flatMap(
+    (provider) =>
+      [`model:${provider}`, `model:${provider}:base-url`] as const satisfies readonly CredentialKey[],
+  ),
   "integration:email:resend",
-  "web-search:tavily",
-  "web-search:exa",
-  "web-search:firecrawl",
-  "web-search:serpapi",
-]);
+  ...webSearchProviders.map((provider) => `web-search:${provider}` as const),
+] as [CredentialKey, ...CredentialKey[]]);
 
 export const approvalStatusSchema = z.enum(approvalStatuses);
 export const listLimitSchema = z.number().int().min(1).max(1_000);

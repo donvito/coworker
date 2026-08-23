@@ -1,4 +1,4 @@
-# AI Coworker Desktop
+# Coworker
 
 A local-first Electron app for running independent AI coworkers. Each coworker has its own durable task queue, an isolated worker runtime, a confined workspace, and policy-controlled tools — so it can do real work (documents, invoices, email drafts, scheduled reminders) without arbitrary code execution.
 

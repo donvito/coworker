@@ -61,8 +61,8 @@ export function registerIpc(input: {
   handle(ipcChannels.backup, async () => {
     const window = input.getMainWindow();
     const options = {
-      title: "Back up AI Coworker",
-      defaultPath: `AI-Coworker-Backup-${new Date().toISOString().slice(0, 10)}.db`,
+      title: "Back up Coworker",
+      defaultPath: `Coworker-Backup-${new Date().toISOString().slice(0, 10)}.db`,
       filters: [{ name: "SQLite database", extensions: ["db"] }],
     };
     const result = window
@@ -210,12 +210,12 @@ export function registerIpc(input: {
     const result = window
       ? await dialog.showSaveDialog(window, {
           title: "Export provider error report",
-          defaultPath: `AI-Coworker-Provider-Report-${new Date().toISOString().slice(0, 10)}.txt`,
+          defaultPath: `Coworker-Provider-Report-${new Date().toISOString().slice(0, 10)}.txt`,
           filters: [{ name: "Text report", extensions: ["txt"] }],
         })
       : await dialog.showSaveDialog({
           title: "Export provider error report",
-          defaultPath: `AI-Coworker-Provider-Report-${new Date().toISOString().slice(0, 10)}.txt`,
+          defaultPath: `Coworker-Provider-Report-${new Date().toISOString().slice(0, 10)}.txt`,
           filters: [{ name: "Text report", extensions: ["txt"] }],
         });
     if (result.canceled || !result.filePath) return null;
@@ -240,7 +240,16 @@ export function registerIpc(input: {
   );
   handle(ipcChannels.integrationsCredentialStatus, async (_event, key) => {
     const credentialKey = credentialKeySchema.parse(key);
-    return { key: credentialKey, configured: await input.credentials.has(credentialKey) };
+    const status = input.credentials.status
+      ? await input.credentials.status(credentialKey)
+      : (await input.credentials.has(credentialKey))
+        ? "configured"
+        : "missing";
+    return {
+      key: credentialKey,
+      configured: status === "configured",
+      needsReentry: status === "unreadable",
+    };
   });
   handle(ipcChannels.integrationsRemoveCredential, async (_event, key) => {
     await input.credentials.delete(credentialKeySchema.parse(key));

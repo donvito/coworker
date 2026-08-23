@@ -183,7 +183,7 @@ export function createCsvDocument(content: string): Buffer {
 
 export async function createExcelDocument(
   content: string,
-  fallbackTitle = "AI Coworker report",
+  fallbackTitle = "Coworker report",
 ): Promise<Buffer> {
   const blocks = parseDocumentMarkdown(content);
   const tables = blocks.filter(
@@ -196,10 +196,10 @@ export async function createExcelDocument(
   const title = titleFromBlocks(blocks, fallbackTitle);
   const columnCount = Math.max(1, ...tables.flatMap((table) => table.rows.map((row) => row.length)));
   const workbook = new ExcelJS.Workbook();
-  workbook.creator = "AI Coworker";
+  workbook.creator = "Coworker";
   workbook.created = new Date();
   workbook.modified = new Date();
-  workbook.subject = "Generated locally by AI Coworker";
+  workbook.subject = "Generated locally by Coworker";
   workbook.title = title;
 
   const worksheet = workbook.addWorksheet(worksheetName(title), {
@@ -428,7 +428,7 @@ function drawPdfTable(cursor: PdfCursor, rows: string[][]): void {
 
 export async function createPdfDocument(
   content: string,
-  fallbackTitle = "AI Coworker document",
+  fallbackTitle = "Coworker document",
 ): Promise<Uint8Array> {
   const blocks = parseDocumentMarkdown(content);
   const document = await PDFDocument.create();
@@ -443,8 +443,8 @@ export async function createPdfDocument(
   };
   const title = titleFromBlocks(blocks, fallbackTitle);
   document.setTitle(title);
-  document.setAuthor("AI Coworker");
-  document.setCreator("AI Coworker");
+  document.setAuthor("Coworker");
+  document.setCreator("Coworker");
 
   for (const block of blocks) {
     if (block.type === "heading") {
@@ -542,7 +542,7 @@ function docxTable(rows: string[][]): Table {
 
 export async function createWordDocument(
   content: string,
-  fallbackTitle = "AI Coworker document",
+  fallbackTitle = "Coworker document",
 ): Promise<Buffer> {
   const blocks = parseDocumentMarkdown(content);
   const children: FileChild[] = [];
@@ -594,8 +594,8 @@ export async function createWordDocument(
   const title = titleFromBlocks(blocks, fallbackTitle);
   const document = new Document({
     title,
-    creator: "AI Coworker",
-    description: "Generated locally by AI Coworker",
+    creator: "Coworker",
+    description: "Generated locally by Coworker",
     sections: [
       {
         properties: {
