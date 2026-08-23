@@ -40,6 +40,8 @@ describe("skill package upload", () => {
           demoMode: false,
           launchAtLogin: false,
           runInBackground: true,
+          theme: "forest",
+          showReasoning: true,
           globalOperatingInstructions: "Ask when information is missing.",
           defaultModelProvider: null,
           defaultModelName: null,

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {
+  appThemes,
   approvalStatuses,
   modelProviders,
   remoteModelProviders,
@@ -192,6 +193,8 @@ export const settingsPatchSchema = z
     runInBackground: z.boolean().optional(),
     launchAtLogin: z.boolean().optional(),
     demoMode: z.boolean().optional(),
+    theme: z.enum(appThemes).optional(),
+    showReasoning: z.boolean().optional(),
     globalOperatingInstructions: z.string().trim().max(50_000).optional(),
     defaultModelProvider: z.enum(remoteModelProviders).nullable().optional(),
     defaultModelName: z.string().trim().min(1).max(160).nullable().optional(),

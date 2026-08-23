@@ -74,6 +74,7 @@
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-markdown": "10.1.0",
+    "remark-breaks": "^4.0.0",
     "remark-gfm": "4.0.1",
     "rxjs": "7.8.1",
     "zod": "^4.4.3"
@@ -93,5 +94,10 @@
     "vite": "^7",
     "vitest": "^4.1.11",
     "vitest-evals": "^0.16.1"
+  },
+  "pnpm": {
+    "patchedDependencies": {
+      "@earendil-works/pi-ai": "patches/@earendil-works__pi-ai.patch"
+    }
   }
 }

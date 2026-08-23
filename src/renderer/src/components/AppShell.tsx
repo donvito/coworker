@@ -33,8 +33,8 @@ export function AppShell({
           <button className="brand" onClick={() => onNavigate("home")}>
             <img className="brand-mark" src={appIcon} alt="" />
             <span>
-              <strong>Workroom</strong>
-              <small>Local coworker desk</small>
+              <strong>Coworker</strong>
+              <small>AI Agents</small>
             </span>
           </button>
 

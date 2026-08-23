@@ -319,10 +319,16 @@ export interface Integration {
   updatedAt: string;
 }
 
+export const appThemes = ["forest", "ocean", "plum", "clay", "graphite"] as const;
+
+export type AppTheme = (typeof appThemes)[number];
+
 export interface AppSettings {
   runInBackground: boolean;
   launchAtLogin: boolean;
   demoMode: boolean;
+  theme: AppTheme;
+  showReasoning: boolean;
   globalOperatingInstructions: string;
   defaultModelProvider: RemoteModelProvider | null;
   defaultModelName: string | null;

@@ -23,6 +23,57 @@
   --mono: "SFMono-Regular", "Cascadia Code", "Roboto Mono", monospace;
 }
 
+/* Color themes retint the brand hues and tinted neutrals; semantic colors
+   (--blue, --ember, --amber, --red) stay shared. Selectors are attribute-only
+   so theme swatches can preview a palette by carrying data-theme locally. */
+[data-theme="ocean"] {
+  --ink: #16212b;
+  --ink-soft: #52616e;
+  --forest: #1f4c7a;
+  --forest-deep: #122b47;
+  --forest-soft: #d9e3ef;
+  --cloud: #e7edf1;
+  --paper: #f7fafc;
+  --line: #cbd6de;
+  --line-strong: #a9bac6;
+}
+
+[data-theme="plum"] {
+  --ink: #221b28;
+  --ink-soft: #5f5569;
+  --forest: #5b3d78;
+  --forest-deep: #2a1c3a;
+  --forest-soft: #e5dcee;
+  --cloud: #ebe8ee;
+  --paper: #faf8fb;
+  --line: #d3cdd9;
+  --line-strong: #b4aac0;
+}
+
+[data-theme="clay"] {
+  --ink: #291f18;
+  --ink-soft: #675a50;
+  --forest: #8a4a28;
+  --forest-deep: #362010;
+  --forest-soft: #f0ded0;
+  --cloud: #efe9e3;
+  --paper: #fbf8f5;
+  --line: #d9cec4;
+  --line-strong: #bfb0a3;
+}
+
+[data-theme="graphite"] {
+  --ink: #1b2126;
+  --ink-soft: #57606a;
+  --forest: #37424c;
+  --forest-deep: #171d22;
+  --forest-soft: #dfe4e8;
+  --cloud: #e9ecee;
+  --paper: #f8f9fa;
+  --line: #d1d6da;
+  --line-strong: #b0b8bf;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -2331,6 +2382,48 @@ select:focus {
   width: min(620px, 92%);
 }
 
+.workroom-reasoning {
+  width: min(620px, 86%);
+  font-size: 12.5px;
+  color: var(--ink-soft);
+}
+
+.workroom-reasoning summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  cursor: pointer;
+  list-style: none;
+  border: 1px dashed var(--line-strong);
+  border-radius: 999px;
+  user-select: none;
+}
+
+.workroom-reasoning summary::-webkit-details-marker {
+  display: none;
+}
+
+.workroom-reasoning summary svg {
+  width: 13px;
+  height: 13px;
+}
+
+.workroom-reasoning[open] summary {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.workroom-reasoning-text {
+  padding: 9px 12px;
+  white-space: pre-wrap;
+  line-height: 1.55;
+  background: rgba(255, 255, 255, 0.55);
+  border: 1px dashed var(--line-strong);
+  border-top: 0;
+  border-radius: 0 12px 12px;
+}
+
 .workroom-running {
   display: flex;
   align-items: center;
@@ -2971,7 +3064,7 @@ select:focus {
   min-width: 170px;
   align-items: center;
   gap: 12px;
-  flex: 1 1 210px;
+  flex: 1 1 420px;
 }
 
 .conversation-head-controls {
@@ -2980,7 +3073,7 @@ select:focus {
   align-items: center;
   justify-content: flex-end;
   gap: 10px;
-  flex: 1 1 360px;
+  flex: 0 0 auto;
 }
 
 .conversation-history-control {
@@ -3151,31 +3244,34 @@ select:focus {
   text-align: right;
 }
 
+/* Stacked under the coworker name in the chat header, so it reads as part of
+   that block instead of floating mid-header. */
 .conversation-model-switcher {
   position: relative;
   display: flex;
-  width: clamp(230px, 24vw, 340px);
-  min-width: 210px;
-  max-width: 340px;
+  width: 230px;
+  max-width: 100%;
   flex-direction: column;
-  gap: 4px;
-  flex: 1 1 260px;
+  gap: 1px;
+  flex: 0 0 auto;
+  margin-top: 3px;
 }
 
 .quick-model-trigger {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
+  gap: 8px;
   width: 100%;
-  min-height: 40px;
-  padding: 7px 11px;
+  min-height: 26px;
+  padding: 3px 9px;
   color: #33443c;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 680;
   text-align: left;
   background-color: #fff;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 8px;
 }
 
 .quick-model-trigger:hover,
@@ -3192,7 +3288,7 @@ select:focus {
 
 .quick-model-trigger > b {
   color: currentColor;
-  font-size: 16px;
+  font-size: 13px;
   font-weight: 500;
 }
 
@@ -3211,8 +3307,8 @@ select:focus {
 .quick-model-popover {
   position: absolute;
   z-index: 40;
-  top: 60px;
-  right: 0;
+  top: calc(100% - 12px);
+  left: 0;
   display: flex;
   width: min(520px, calc(100vw - 36px));
   max-height: min(520px, calc(100vh - 150px));
@@ -3540,6 +3636,10 @@ select:focus {
 
 .chat-markdown {
   overflow-wrap: anywhere;
+  /* The bubble uses pre-wrap for plain text. Markdown output must not inherit
+     it: react-markdown emits a newline text node between every block element,
+     which pre-wrap would render as an extra blank line. */
+  white-space: normal;
 }
 
 .chat-markdown > :first-child {
@@ -5403,6 +5503,71 @@ select:focus {
   margin-top: 2px;
   color: var(--ink-soft);
   font-size: 12px;
+}
+
+.theme-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 28px;
+}
+
+.theme-picker {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.theme-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  text-align: left;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+}
+
+.theme-option:hover {
+  border-color: var(--line-strong);
+}
+
+/* var(--forest) resolves against the option's own data-theme, so the
+   selected ring always matches the palette it represents. */
+.theme-option[aria-pressed="true"] {
+  border-color: var(--forest);
+  box-shadow: 0 0 0 1px var(--forest);
+}
+
+.theme-option-swatch {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  background: linear-gradient(
+    135deg,
+    var(--forest-deep) 0 50%,
+    var(--forest) 50% 76%,
+    var(--forest-soft) 76%
+  );
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 50%;
+}
+
+.theme-option strong {
+  font-size: 13px;
+  font-weight: 620;
+}
+
+.theme-option small {
+  color: var(--ink-soft);
+  font-size: 11px;
+}
+
+.theme-option > span:last-child {
+  display: flex;
+  flex-direction: column;
 }
 
 .global-instructions-form {

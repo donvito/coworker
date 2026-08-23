@@ -1,4 +1,5 @@
 import ReactMarkdown from "react-markdown";
+import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import type { Artifact } from "@shared/contracts";
 import { ArtifactActions, artifactExtension, artifactKind } from "./ArtifactActions";
@@ -60,7 +61,11 @@ export function ChatMarkdown({
   return (
     <div className="chat-markdown">
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
+        // remark-breaks keeps single newlines as line breaks. The chat bubble
+        // used to get that from `white-space: pre-wrap`, which .chat-markdown
+        // now disables because it also made the newlines react-markdown emits
+        // between block elements render as blank lines.
+        remarkPlugins={[remarkGfm, remarkBreaks]}
         // Keep the raw href so invented `sandbox:` links can be matched to an
         // artifact; only http(s)/mailto ever reach an anchor below.
         urlTransform={(url) => url}

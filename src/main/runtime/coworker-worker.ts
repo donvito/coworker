@@ -33,6 +33,10 @@ import type {
 } from "./protocol";
 import { toProviderToolName } from "./tool-names";
 import { createOpenAiCompatibleRuntimeProvider } from "./openai-compatible-provider";
+import {
+  clearEchoedReasoningField,
+  withOpenRouterReasoningCompat,
+} from "./openrouter-reasoning";
 
 if (!parentPort) throw new Error("Coworker worker must run inside a worker thread");
 
@@ -42,6 +46,8 @@ interface ActiveRun {
   threadId: string;
   resultText: string;
   assistantMessageId: string | null;
+  assistantTextStarted: boolean;
+  reasoningMessageId: string | null;
   approval: {
     approvalId: string;
     summary: string;
@@ -317,13 +323,15 @@ function createProxyTool(controlledName: string, providerName: string): AgentToo
 }
 
 function restoreMessages(messages: unknown[]): AgentMessage[] {
-  return messages.filter(
-    (message): message is AgentMessage =>
-      typeof message === "object" &&
-      message !== null &&
-      "role" in message &&
-      ["user", "assistant", "toolResult"].includes(String(message.role)),
-  );
+  return messages
+    .filter(
+      (message): message is AgentMessage =>
+        typeof message === "object" &&
+        message !== null &&
+        "role" in message &&
+        ["user", "assistant", "toolResult"].includes(String(message.role)),
+    )
+    .map(clearEchoedReasoningField);
 }
 
 function durableHistory(messages: unknown[]): string {
@@ -388,6 +396,9 @@ async function initialize(workerConfig: WorkerCoworkerConfig): Promise<void> {
       throw new Error(
         `Model ${workerConfig.coworker.modelName} is not available from ${workerConfig.coworker.modelProvider}`,
       );
+    }
+    if (workerConfig.coworker.modelProvider === "openrouter") {
+      model = withOpenRouterReasoningCompat(model);
     }
   }
 
@@ -756,6 +767,16 @@ function configureDemoResponses(input: string, resume: boolean): void {
   ]);
 }
 
+function endReasoningMessage(): void {
+  if (!activeRun?.reasoningMessageId) return;
+  emit({
+    type: EventType.REASONING_MESSAGE_END,
+    messageId: activeRun.reasoningMessageId,
+    timestamp: Date.now(),
+  });
+  activeRun.reasoningMessageId = null;
+}
+
 function handleAgentEvent(event: Parameters<Agent["subscribe"]>[0] extends (
   event: infer T,
   ...args: never[]
@@ -764,18 +785,42 @@ function handleAgentEvent(event: Parameters<Agent["subscribe"]>[0] extends (
   : never): void {
   if (!activeRun) return;
   if (event.type === "message_start" && event.message.role === "assistant") {
+    // TEXT_MESSAGE_START is deferred until the first text delta so a
+    // reasoning message emitted from thinking deltas is ordered before the
+    // visible answer bubble.
     activeRun.assistantMessageId = `${activeRun.runId}:assistant:${event.message.timestamp}`;
-    emit({
-      type: EventType.TEXT_MESSAGE_START,
-      messageId: activeRun.assistantMessageId,
-      role: "assistant",
-      timestamp: Date.now(),
-    });
+    activeRun.assistantTextStarted = false;
     return;
   }
   if (event.type === "message_update") {
     const update = event.assistantMessageEvent;
+    if (update.type === "thinking_delta" && activeRun.assistantMessageId) {
+      if (!activeRun.reasoningMessageId) {
+        activeRun.reasoningMessageId = `${activeRun.assistantMessageId}:reasoning`;
+        emit({
+          type: EventType.REASONING_MESSAGE_START,
+          messageId: activeRun.reasoningMessageId,
+          timestamp: Date.now(),
+        });
+      }
+      emit({
+        type: EventType.REASONING_MESSAGE_CONTENT,
+        messageId: activeRun.reasoningMessageId,
+        delta: update.delta,
+        timestamp: Date.now(),
+      });
+    }
     if (update.type === "text_delta" && activeRun.assistantMessageId) {
+      endReasoningMessage();
+      if (!activeRun.assistantTextStarted) {
+        activeRun.assistantTextStarted = true;
+        emit({
+          type: EventType.TEXT_MESSAGE_START,
+          messageId: activeRun.assistantMessageId,
+          role: "assistant",
+          timestamp: Date.now(),
+        });
+      }
       activeRun.resultText += update.delta;
       emit({
         type: EventType.TEXT_MESSAGE_CONTENT,
@@ -787,8 +832,9 @@ function handleAgentEvent(event: Parameters<Agent["subscribe"]>[0] extends (
     return;
   }
   if (event.type === "message_end" && event.message.role === "assistant") {
+    endReasoningMessage();
     recordAssistantTurn(event.message);
-    if (activeRun.assistantMessageId) {
+    if (activeRun.assistantMessageId && activeRun.assistantTextStarted) {
       emit({
         type: EventType.TEXT_MESSAGE_END,
         messageId: activeRun.assistantMessageId,
@@ -796,6 +842,7 @@ function handleAgentEvent(event: Parameters<Agent["subscribe"]>[0] extends (
       });
     }
     activeRun.assistantMessageId = null;
+    activeRun.assistantTextStarted = false;
     checkpointActiveRun();
     return;
   }
@@ -846,6 +893,8 @@ async function runTask(message: Extract<MainToWorkerMessage, { type: "run" }>): 
     threadId: message.threadId,
     resultText: "",
     assistantMessageId: null,
+    assistantTextStarted: false,
+    reasoningMessageId: null,
     approval: null,
   };
   try {

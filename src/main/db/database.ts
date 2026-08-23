@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { remoteModelProviders } from "@shared/contracts";
+import { appThemes, remoteModelProviders } from "@shared/contracts";
 import type {
   ActivityItem,
   AppSettings,
@@ -37,6 +37,8 @@ const defaultSettings: AppSettings = {
   runInBackground: true,
   launchAtLogin: false,
   demoMode: true,
+  theme: "graphite",
+  showReasoning: true,
   globalOperatingInstructions:
     "When essential information is missing or ambiguous, ask a concise follow-up question before acting. Do not invent names, dates, recipients, amounts, document details, or other required information. Before creating a document, confirm its output format if the user has not already selected one.",
   defaultModelProvider: null,
@@ -303,12 +305,15 @@ export class CoworkerDatabase {
       configuredProvider && typeof modelName === "string" && modelName.length > 0
         ? modelName
         : null;
+    const storedTheme = stored.get("theme");
     const settings: AppSettings = {
       runInBackground: Boolean(
         stored.get("runInBackground") ?? defaultSettings.runInBackground,
       ),
       launchAtLogin: Boolean(stored.get("launchAtLogin") ?? defaultSettings.launchAtLogin),
       demoMode: Boolean(stored.get("demoMode") ?? defaultSettings.demoMode),
+      theme: appThemes.find((candidate) => candidate === storedTheme) ?? defaultSettings.theme,
+      showReasoning: Boolean(stored.get("showReasoning") ?? defaultSettings.showReasoning),
       globalOperatingInstructions:
         typeof stored.get("globalOperatingInstructions") === "string"
           ? String(stored.get("globalOperatingInstructions"))

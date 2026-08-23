@@ -336,6 +336,7 @@ export function CoworkerDetailPage({
           artifacts={artifacts}
           storedMessages={conversationMessages}
           imageAttachments={imageAttachments}
+          showReasoning={settings.showReasoning}
           onBack={onBack}
           onChanged={onChanged}
           onCreate={() => setCreating(true)}
@@ -378,6 +379,7 @@ function CoworkerSurface({
   artifacts,
   storedMessages,
   imageAttachments,
+  showReasoning,
   onBack,
   onChanged,
   onCreate,
@@ -397,6 +399,7 @@ function CoworkerSurface({
   artifacts: Artifact[];
   storedMessages: StoredMessage[];
   imageAttachments: TaskImageAttachmentSummary[];
+  showReasoning: boolean;
   onBack: () => void;
   onChanged: () => Promise<void>;
   onCreate: () => void;
@@ -909,10 +912,14 @@ function CoworkerSurface({
                 <strong>{coworker.name}</strong>
                 <StatusLabel status={coworker.runtimeStatus} />
               </span>
-              <small>{coworker.role}</small>
               <small className="conversation-current-title">
-                {selectedConversation?.title ?? "New conversation"}
+                {coworker.role} · {selectedConversation?.title ?? "New conversation"}
               </small>
+              <QuickModelSwitcher
+                coworker={coworker}
+                disabled={agent.isRunning}
+                onChanged={onChanged}
+              />
             </span>
           </div>
           <div className="conversation-head-controls">
@@ -983,11 +990,6 @@ function CoworkerSurface({
               <Icon name="plus" />
               <span>{conversationBusy ? "Starting…" : "New"}</span>
             </button>
-            <QuickModelSwitcher
-              coworker={coworker}
-              disabled={agent.isRunning}
-              onChanged={onChanged}
-            />
             <button
               className="conversation-icon-button"
               onClick={onManage}
@@ -1059,6 +1061,20 @@ function CoworkerSurface({
                 </div>
               ) : null}
               {agent.messages.map((message) => {
+                if (message.role === "reasoning") {
+                  if (!showReasoning) return null;
+                  const reasoningText = textFromMessageContent(message.content);
+                  if (!reasoningText) return null;
+                  return (
+                    <details className="workroom-reasoning" key={message.id}>
+                      <summary>
+                        <Icon name="spark" />
+                        <span>Thinking</span>
+                      </summary>
+                      <div className="workroom-reasoning-text">{reasoningText}</div>
+                    </details>
+                  );
+                }
                 if (message.role !== "user" && message.role !== "assistant") return null;
                 const content = textFromMessageContent(message.content);
                 const messageImages = imagesFromMessageContent(message.content);
