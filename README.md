@@ -2,6 +2,24 @@
 
 A local-first Electron app for running independent AI coworkers. Each coworker has its own durable task queue, an isolated worker runtime, a confined workspace, and policy-controlled tools — so it can do real work (documents, invoices, email drafts, scheduled reminders) without arbitrary code execution.
 
+## Screenshots
+
+**Workroom home** — every coworker's runtime status, the decision queue, and a live desk log.
+
+![Workroom home](docs/images/home.png)
+
+**Coworkers** — each one has an independent runtime, workspace, and single focused task queue.
+
+![Coworkers](docs/images/coworkers.png)
+
+**Chat** — streaming replies, typed tool calls, and the files a coworker writes into its own workspace.
+
+![Coworker chat](docs/images/coworker-chat.png)
+
+**Approvals** — consequential actions pause here, and decisions are written to SQLite before work resumes.
+
+![Approvals](docs/images/approvals.png)
+
 ## Quick start
 
 Requires **Node.js 22.12+** and **pnpm**.
