@@ -55,7 +55,7 @@ describe("provider error diagnostics", () => {
 
     const report = await logger.report({ "App version": "1.2.3", Platform: "test" });
     expect(report.count).toBe(1);
-    expect(report.text).toContain("AI Coworker provider error report");
+    expect(report.text).toContain("Coworker provider error report");
     expect(report.text).toContain("App version: 1.2.3");
     expect(report.text).not.toContain(secret);
     expect(report.text).not.toContain("/Users/alice/");

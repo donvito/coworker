@@ -386,6 +386,7 @@ export interface AgentRunReceipt {
 export interface CredentialStatus {
   key: string;
   configured: boolean;
+  needsReentry?: boolean;
 }
 
 export interface DesktopApi {

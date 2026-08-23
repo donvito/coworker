@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { configureModelSchema, modelProviderSchema } from "@shared/validation";
+import { remoteModelProviders, webSearchProviders } from "@shared/contracts";
+import {
+  modelProviderBaseUrlKey,
+  modelProviderCredentialKey,
+} from "@shared/model-providers";
+import {
+  configureModelSchema,
+  credentialKeySchema,
+  modelProviderSchema,
+} from "@shared/validation";
 
 describe("model provider validation", () => {
   it.each(["openrouter", "ollama", "lmstudio", "openai-compatible"] as const)(
@@ -43,5 +52,25 @@ describe("model provider validation", () => {
         baseUrl: "https://user:password@models.example.test/v1",
       }).success,
     ).toBe(false);
+  });
+});
+
+describe("credential key validation", () => {
+  it("accepts every credential key the settings screen checks", () => {
+    const keys = [
+      ...remoteModelProviders.flatMap((provider) => [
+        modelProviderCredentialKey(provider),
+        modelProviderBaseUrlKey(provider),
+      ]),
+      "integration:email:resend",
+      ...webSearchProviders.map((provider) => `web-search:${provider}`),
+    ];
+    for (const key of keys) {
+      expect(credentialKeySchema.parse(key)).toBe(key);
+    }
+  });
+
+  it("rejects a key outside the known providers", () => {
+    expect(() => credentialKeySchema.parse("model:not-a-provider")).toThrow();
   });
 });

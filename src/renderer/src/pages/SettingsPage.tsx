@@ -11,6 +11,7 @@ import type {
 import { webSearchProviders } from "@shared/contracts";
 import {
   getModelProviderDefinition,
+  modelProviderBaseUrlKey,
   modelProviderCredentialKey,
   modelProviderName,
   remoteModelProviderDefinitions,
@@ -58,6 +59,7 @@ export function SettingsPage({
   const [notice, setNotice] = useState<string | null>(null);
   const [noticeKind, setNoticeKind] = useState<"success" | "error">("success");
   const [credentialStatus, setCredentialStatus] = useState<Record<string, boolean>>({});
+  const [unreadableKeys, setUnreadableKeys] = useState<string[]>([]);
   const [credentialsLoaded, setCredentialsLoaded] = useState(false);
   const [modelProvider, setModelProvider] = useState<RemoteModelProvider>("anthropic");
   const [catalogProvider, setCatalogProvider] = useState<RemoteModelProvider | "">(
@@ -72,18 +74,32 @@ export function SettingsPage({
   );
 
   useEffect(() => {
+    const keys = [
+      ...remoteModelProviderDefinitions.flatMap((provider) =>
+        getModelProviderDefinition(provider.id).baseUrlMode === "none"
+          ? [modelProviderCredentialKey(provider.id)]
+          : [
+              modelProviderCredentialKey(provider.id),
+              modelProviderBaseUrlKey(provider.id),
+            ],
+      ),
+      "integration:email:resend",
+      ...webSearchProviders.map((provider) => `web-search:${provider}`),
+    ];
     void Promise.all(
-      [
-        ...remoteModelProviderDefinitions.map((provider) =>
-          modelProviderCredentialKey(provider.id),
-        ),
-        "integration:email:resend",
-        ...webSearchProviders.map((provider) => `web-search:${provider}`),
-      ].map(
-        async (key) => [key, (await window.coworker.integrations.credentialStatus(key)).configured] as const,
+      keys.map(
+        async (key) =>
+          [key, await window.coworker.integrations.credentialStatus(key)] as const,
       ),
     )
-      .then((entries) => setCredentialStatus(Object.fromEntries(entries)))
+      .then((entries) => {
+        setCredentialStatus(
+          Object.fromEntries(entries.map(([key, status]) => [key, status.configured])),
+        );
+        setUnreadableKeys(
+          entries.filter(([, status]) => status.needsReentry).map(([key]) => key),
+        );
+      })
       .catch((loadError) => {
         setNoticeKind("error");
         setNotice(
@@ -210,7 +226,7 @@ export function SettingsPage({
     event.preventDefault();
     const form = event.currentTarget;
     const data = new FormData(form);
-    const provider = String(data.get("provider")) as RemoteModelProvider;
+    const provider = modelProvider;
     const apiKey = String(data.get("apiKey") ?? "").trim();
     const baseUrl = String(data.get("baseUrl") ?? "").trim();
     setWorking(true);
@@ -260,7 +276,7 @@ export function SettingsPage({
     event.preventDefault();
     const form = event.currentTarget;
     const data = new FormData(form);
-    const provider = String(data.get("provider")) as WebSearchProvider;
+    const provider = webSearchProvider;
     setWorking(true);
     setNotice(null);
     try {
@@ -275,6 +291,27 @@ export function SettingsPage({
     } catch (configureError) {
       setNoticeKind("error");
       setNotice(configureError instanceof Error ? configureError.message : String(configureError));
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function discardUnreadableCredentials() {
+    setWorking(true);
+    setNotice(null);
+    try {
+      await Promise.all(
+        unreadableKeys.map((key) => window.coworker.integrations.removeCredential(key)),
+      );
+      const discarded = unreadableKeys.length;
+      setUnreadableKeys([]);
+      setNoticeKind("success");
+      setNotice(
+        `Discarded ${discarded} unreadable credential${discarded === 1 ? "" : "s"}. Save a new key whenever you need that provider again.`,
+      );
+    } catch (discardError) {
+      setNoticeKind("error");
+      setNotice(discardError instanceof Error ? discardError.message : String(discardError));
     } finally {
       setWorking(false);
     }
@@ -386,6 +423,43 @@ export function SettingsPage({
         </nav>
 
         <div className="settings-content">
+          {unreadableKeys.length > 0 ? (
+            <div className="settings-notice error" role="alert">
+              <p>
+                {unreadableKeys.length === 1
+                  ? "1 saved credential can no longer be decrypted because it was encrypted under the app's previous name:"
+                  : `${unreadableKeys.length} saved credentials can no longer be decrypted because they were encrypted under the app's previous name:`}
+              </p>
+              <ul className="unreadable-credential-list">
+                {unreadableKeys.map((key) => {
+                  const location = credentialLocation(key);
+                  return (
+                    <li key={key}>
+                      <strong>{location.label}</strong>
+                      <button
+                        className="text-button"
+                        onClick={() => setTab(location.tab)}
+                        type="button"
+                      >
+                        Open {location.tabLabel}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+              <p>
+                Save a new key to replace it, or discard it if you no longer use that provider.
+              </p>
+              <button
+                className="ghost-button"
+                disabled={working}
+                onClick={() => void discardUnreadableCredentials()}
+                type="button"
+              >
+                Discard unreadable {unreadableKeys.length === 1 ? "credential" : "credentials"}
+              </button>
+            </div>
+          ) : null}
           {notice ? (
             <div
               className={noticeKind === "error" ? "settings-notice error" : "settings-notice"}
@@ -478,10 +552,20 @@ export function SettingsPage({
                 never returned to the renderer or written as plaintext in SQLite. Model access is
                 verified before the configuration is saved.
               </p>
-              <div className="provider-grid">
+              <div className="provider-grid model-provider-grid">
                 {remoteModelProviderDefinitions.map((provider) => (
-                  <div className="provider-card" key={provider.id}>
-                    <span className="provider-monogram">{provider.label[0]?.toUpperCase()}</span>
+                  <button
+                    aria-pressed={modelProvider === provider.id}
+                    className={`provider-card model-provider-card${
+                      modelProvider === provider.id ? " selected" : ""
+                    }`}
+                    key={provider.id}
+                    onClick={() => {
+                      setModelProvider(provider.id);
+                      setNotice(null);
+                    }}
+                    type="button"
+                  >
                     <span>
                       <strong>{provider.label}</strong>
                       <small>
@@ -496,28 +580,27 @@ export function SettingsPage({
                           ? "connection-dot connected"
                           : "connection-dot"
                       }
+                      aria-hidden="true"
                     />
-                  </div>
+                  </button>
                 ))}
               </div>
-              <form className="inline-credential-form" onSubmit={configureModel}>
-                <select
-                  name="provider"
-                  aria-label="Model provider"
-                  onChange={(event) =>
-                    setModelProvider(event.target.value as RemoteModelProvider)
-                  }
-                  value={modelProvider}
-                >
-                  {remoteModelProviderDefinitions.map((provider) => (
-                    <option key={provider.id} value={provider.id}>
-                      {provider.label}
-                    </option>
-                  ))}
-                </select>
+              <form
+                className="inline-credential-form model-credential-form"
+                key={modelProvider}
+                onSubmit={configureModel}
+              >
+                <div className="credential-form-heading">
+                  <strong>{modelProviderName(modelProvider)}</strong>
+                  <small>
+                    {credentialStatus[modelProviderCredentialKey(modelProvider)]
+                      ? "Connected · enter new credentials to replace the saved configuration"
+                      : "Enter the provider credentials below"}
+                  </small>
+                </div>
                 {getModelProviderDefinition(modelProvider).baseUrlMode !== "none" ? (
                   <input
-                    key={modelProvider}
+                    aria-label={`${modelProviderName(modelProvider)} base URL`}
                     name="baseUrl"
                     type="url"
                     placeholder={
@@ -531,6 +614,7 @@ export function SettingsPage({
                   />
                 ) : null}
                 <input
+                  aria-label={`${modelProviderName(modelProvider)} API key`}
                   name="apiKey"
                   type="password"
                   placeholder={
@@ -691,31 +775,58 @@ export function SettingsPage({
 
               <span className="eyebrow skills-provider-eyebrow">Web search credentials</span>
               <p>The web-search skill automatically uses the first configured provider available.</p>
-              <div className="provider-grid compact-provider-grid">
+              <div className="provider-grid model-provider-grid">
                 {webSearchProviders.map((provider) => (
-                  <div className="provider-card" key={provider}>
-                    <span className="provider-monogram">{provider[0]?.toUpperCase()}</span>
+                  <button
+                    aria-pressed={webSearchProvider === provider}
+                    className={`provider-card model-provider-card${
+                      webSearchProvider === provider ? " selected" : ""
+                    }`}
+                    key={provider}
+                    onClick={() => {
+                      setWebSearchProvider(provider);
+                      setNotice(null);
+                    }}
+                    type="button"
+                  >
                     <span>
                       <strong>{providerLabel(provider)}</strong>
-                      <small>{credentialStatus[`web-search:${provider}`] ? "Connected" : "Not connected"}</small>
+                      <small>
+                        {credentialStatus[`web-search:${provider}`] ? "Connected" : "Not connected"}
+                      </small>
                     </span>
-                    <span className={credentialStatus[`web-search:${provider}`] ? "connection-dot connected" : "connection-dot"} />
-                  </div>
+                    <span
+                      aria-hidden="true"
+                      className={
+                        credentialStatus[`web-search:${provider}`]
+                          ? "connection-dot connected"
+                          : "connection-dot"
+                      }
+                    />
+                  </button>
                 ))}
               </div>
-              <form className="inline-credential-form" onSubmit={configureWebSearch}>
-                <select
-                  name="provider"
-                  onChange={(event) => setWebSearchProvider(event.target.value as WebSearchProvider)}
-                  value={webSearchProvider}
-                >
-                  {webSearchProviders.map((provider) => (
-                    <option key={provider} value={provider}>{providerLabel(provider)}</option>
-                  ))}
-                </select>
+              <form
+                className="inline-credential-form model-credential-form"
+                key={webSearchProvider}
+                onSubmit={configureWebSearch}
+              >
+                <div className="credential-form-heading">
+                  <strong>{providerLabel(webSearchProvider)}</strong>
+                  <small>
+                    {credentialStatus[`web-search:${webSearchProvider}`]
+                      ? "Connected · enter a new key to replace the saved one"
+                      : "Enter the provider API key below"}
+                  </small>
+                </div>
                 <input
+                  aria-label={`${providerLabel(webSearchProvider)} API key`}
                   name="apiKey"
-                  placeholder={credentialStatus[`web-search:${webSearchProvider}`] ? "Stored — enter to replace" : `${providerLabel(webSearchProvider)} API key`}
+                  placeholder={
+                    credentialStatus[`web-search:${webSearchProvider}`]
+                      ? "Stored — enter to replace"
+                      : `${providerLabel(webSearchProvider)} API key`
+                  }
                   required
                   type="password"
                 />
@@ -875,6 +986,39 @@ export function SettingsPage({
       </div>
     </div>
   );
+}
+
+function credentialLocation(key: string): {
+  label: string;
+  tab: SettingsTab;
+  tabLabel: string;
+} {
+  const webSearch = webSearchProviders.find((provider) => key === `web-search:${provider}`);
+  if (webSearch) {
+    return {
+      label: `${providerLabel(webSearch)} web search key`,
+      tab: "skills",
+      tabLabel: "Skills",
+    };
+  }
+  if (key === "integration:email:resend") {
+    return { label: "Resend email key", tab: "integrations", tabLabel: "Integrations" };
+  }
+  const model = remoteModelProviderDefinitions.find(
+    (provider) =>
+      key === modelProviderCredentialKey(provider.id) ||
+      key === modelProviderBaseUrlKey(provider.id),
+  );
+  if (model) {
+    return {
+      label: key.endsWith(":base-url")
+        ? `${model.label} base URL`
+        : `${model.label} API key`,
+      tab: "models",
+      tabLabel: "Models",
+    };
+  }
+  return { label: key, tab: "models", tabLabel: "Models" };
 }
 
 function providerLabel(provider: WebSearchProvider): string {

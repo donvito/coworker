@@ -41,8 +41,9 @@ function createMainWindow(): BrowserWindow {
     minWidth: 1180,
     minHeight: 760,
     show: false,
-    title: "AI Coworker",
+    title: "Coworker",
     backgroundColor: "#f2efe8",
+    icon: appIcon(),
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
     webPreferences: {
       preload: fileURLToPath(new URL("../preload/index.cjs", import.meta.url)),
@@ -88,6 +89,18 @@ function createMainWindow(): BrowserWindow {
   return window;
 }
 
+let cachedAppIcon: Electron.NativeImage | null | undefined;
+
+function appIcon(): Electron.NativeImage | undefined {
+  if (cachedAppIcon === undefined) {
+    const image = nativeImage.createFromPath(
+      fileURLToPath(new URL("../../build/icon.png", import.meta.url)),
+    );
+    cachedAppIcon = image.isEmpty() ? null : image;
+  }
+  return cachedAppIcon ?? undefined;
+}
+
 function trayImage() {
   const svg = `
     <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 22 22">
@@ -108,7 +121,7 @@ function rebuildTrayMenu(): void {
   tray.setContextMenu(
     Menu.buildFromTemplate([
       {
-        label: "Open AI Coworker",
+        label: "Open Coworker",
         click: () => {
           if (!mainWindow) mainWindow = createMainWindow();
           mainWindow.show();
@@ -140,7 +153,7 @@ function rebuildTrayMenu(): void {
 }
 
 async function start(): Promise<void> {
-  const dataPath = process.env.AI_COWORKER_DATA_PATH || app.getPath("userData");
+  const dataPath = process.env.COWORKER_DATA_PATH || app.getPath("userData");
   const credentials = new SecureCredentialStore(join(dataPath, "credentials"));
   service = new DesktopAppService({
     dataPath,
@@ -162,9 +175,13 @@ async function start(): Promise<void> {
     credentials,
     getMainWindow: () => mainWindow,
   });
+  if (process.platform === "darwin" && !app.isPackaged) {
+    const icon = appIcon();
+    if (icon) app.dock?.setIcon(icon);
+  }
   mainWindow = createMainWindow();
   tray = new Tray(trayImage());
-  tray.setToolTip("AI Coworker");
+  tray.setToolTip("Coworker");
   tray.on("click", () => {
     if (isQuitting || shutdownStarted) return;
     if (!mainWindow) mainWindow = createMainWindow();
@@ -180,7 +197,7 @@ async function start(): Promise<void> {
 }
 
 app.whenReady().then(start).catch((error) => {
-  console.error("Failed to start AI Coworker", error);
+  console.error("Failed to start Coworker", error);
   app.exit(1);
 });
 
@@ -219,6 +236,6 @@ app.on("before-quit", (event) => {
   tray = null;
   void service
     .shutdown()
-    .catch((error) => console.error("Failed to shut down AI Coworker cleanly", error))
+    .catch((error) => console.error("Failed to shut down Coworker cleanly", error))
     .finally(() => app.quit());
 });

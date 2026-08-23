@@ -1,4 +1,4 @@
-# Local AI Coworker Desktop App — Architecture & Implementation Plan
+# Coworker Desktop App — Architecture & Implementation Plan
 
 **Status:** Proposed architecture  
 **Product type:** Installable desktop application  
@@ -1434,7 +1434,7 @@ Example:
 ```text
 Ava workspace
 
-~/Documents/AI Coworker/Ava
+~/Documents/Coworker/Ava
 ```
 
 or a user-selected folder.
@@ -1633,7 +1633,7 @@ It replaces the cloud API/control-plane architecture from the hosted design.
 # 26. Suggested monorepo
 
 ```text
-ai-coworker-desktop/
+coworker/
 │
 ├── apps/
 │   └── desktop/
@@ -2433,13 +2433,13 @@ Examples:
 
 ```text
 Windows
-AI-Coworker-Setup.exe
+Coworker-Setup.exe
 
 macOS
-AI-Coworker.dmg
+Coworker.dmg
 
 Linux
-AI-Coworker.AppImage
+Coworker.AppImage
 ```
 
 Use:
@@ -2474,7 +2474,7 @@ Use Electron's standard user-data directory.
 Conceptually:
 
 ```text
-<AppData>/AI Coworker/
+<AppData>/Coworker/
     coworker.db
 
     artifacts/
@@ -2513,7 +2513,7 @@ artifacts directory
 Create:
 
 ```text
-AI-Coworker-Backup-2026-08-23.zip
+Coworker-Backup-2026-08-23.zip
 ```
 
 Later support automatic daily backup.
@@ -2592,7 +2592,7 @@ The V1 architecture should remain this simple:
 
 ```text
 ┌───────────────────────────────────────────────┐
-│              AI Coworker Desktop              │
+│                   Coworker                    │
 │                                               │
 │  React + CopilotKit UI                        │
 │      │                                        │

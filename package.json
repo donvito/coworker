@@ -1,38 +1,45 @@
 {
-  "name": "ai-coworker-desktop",
+  "name": "coworker",
   "version": "0.1.0",
   "description": "A local-first desktop app for independent AI coworkers.",
   "type": "module",
+  "productName": "Coworker",
   "main": "./out/main/index.js",
-  "author": "AI Coworker",
+  "author": "Coworker",
   "license": "UNLICENSED",
   "private": true,
   "packageManager": "pnpm@11.18.0",
   "scripts": {
-    "dev": "electron-vite dev",
+    "dev": "node scripts/dev-app-name.js && electron-vite dev",
+    "postinstall": "node scripts/dev-app-name.js",
     "build": "pnpm typecheck && electron-vite build",
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "pnpm build && vitest run",
     "test:watch": "vitest",
     "eval": "pnpm build && vitest run --config vitest.evals.config.ts",
+    "eval:contract": "pnpm build && vitest run --config vitest.evals.config.ts evals/tool-safety.eval.ts evals/multimodal.eval.ts",
+    "eval:behavior": "pnpm build && vitest run --config vitest.evals.config.ts evals/coworker-behavior.eval.ts",
+    "eval:record": "pnpm build && vitest run --config vitest.evals.config.ts evals/coworker-behavior.eval.ts",
     "eval:report": "node -e \"require('node:fs').mkdirSync('eval-results',{recursive:true})\" && pnpm build && vitest run --config vitest.evals.config.ts --reporter=vitest-evals/reporter --reporter=json --outputFile.json=eval-results/latest.json",
+    "eval:report:contract": "node -e \"require('node:fs').mkdirSync('eval-results',{recursive:true})\" && pnpm build && vitest run --config vitest.evals.config.ts evals/tool-safety.eval.ts evals/multimodal.eval.ts --reporter=vitest-evals/reporter --reporter=json --outputFile.json=eval-results/latest.json",
     "eval:ui": "vitest-evals serve eval-results",
     "package": "pnpm build && electron-builder --dir",
     "dist": "pnpm build && electron-builder"
   },
   "build": {
     "appId": "com.localcoworker.desktop",
-    "productName": "AI Coworker",
+    "productName": "Coworker",
     "directories": {
       "output": "release"
     },
     "files": [
       "out/**/*",
+      "build/icon.png",
       "package.json"
     ],
     "mac": {
-      "icon": "build/icon.svg",
+      "icon": "build/icon.png",
       "target": [
         "dmg",
         "zip"
@@ -40,11 +47,11 @@
       "category": "public.app-category.productivity"
     },
     "win": {
-      "icon": "build/icon.svg",
+      "icon": "build/icon.png",
       "target": "nsis"
     },
     "linux": {
-      "icon": "build/icon.svg",
+      "icon": "build/icon.png",
       "target": "AppImage",
       "category": "Utility"
     }

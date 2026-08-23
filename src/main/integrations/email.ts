@@ -54,7 +54,7 @@ async function buildEml(
     `From: ${safeHeader(from)}`,
     `To: ${payload.to.map(safeHeader).join(", ")}`,
     `Subject: ${safeHeader(payload.subject)}`,
-    `Message-ID: <${messageId}@local.ai-coworker>`,
+    `Message-ID: <${messageId}@local.coworker>`,
     "MIME-Version: 1.0",
   ];
   if (attachments.length === 0) {

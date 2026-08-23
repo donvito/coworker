@@ -41,7 +41,10 @@ import {
   persistImageAttachments,
   removePersistedImageAttachments,
 } from "@main/integrations/image-attachments";
-import type { CredentialStore } from "@main/security/credential-store";
+import {
+  CredentialDecryptionError,
+  type CredentialStore,
+} from "@main/security/credential-store";
 import { SchedulerService } from "@main/scheduler/scheduler-service";
 import { ToolGateway } from "@main/tools/tool-gateway";
 import { CoworkerRuntimeManager } from "@main/runtime/runtime-manager";
@@ -75,6 +78,18 @@ function safeDirectoryName(name: string): string {
 function taskTitle(text: string): string {
   const firstLine = text.split("\n")[0]?.trim() || "New task";
   return firstLine.length > 80 ? `${firstLine.slice(0, 77)}…` : firstLine;
+}
+
+async function readableCredential(
+  credentials: CredentialStore,
+  key: string,
+): Promise<string | null> {
+  try {
+    return await credentials.get(key);
+  } catch (error) {
+    if (error instanceof CredentialDecryptionError) return null;
+    throw error;
+  }
 }
 
 export class DesktopAppService {
@@ -400,8 +415,10 @@ export class DesktopAppService {
     try {
       const definition = getModelProviderDefinition(input.provider);
       const key = modelProviderCredentialKey(input.provider);
-      const storedApiKey = await this.options.credentials.get(key);
       const submittedApiKey = input.apiKey?.trim();
+      const storedApiKey = submittedApiKey
+        ? null
+        : await readableCredential(this.options.credentials, key);
       const apiKey =
         submittedApiKey ||
         storedApiKey ||
@@ -409,11 +426,15 @@ export class DesktopAppService {
       if (!apiKey) {
         throw new Error(`A ${modelProviderName(input.provider)} API key is required`);
       }
+      const submittedBaseUrl = input.baseUrl?.trim();
       const storedBaseUrl =
-        definition.baseUrlMode === "none"
+        definition.baseUrlMode === "none" || submittedBaseUrl
           ? undefined
-          : await this.options.credentials.get(modelProviderBaseUrlKey(input.provider));
-      const baseUrl = input.baseUrl?.trim() || storedBaseUrl || definition.defaultBaseUrl;
+          : await readableCredential(
+              this.options.credentials,
+              modelProviderBaseUrlKey(input.provider),
+            );
+      const baseUrl = submittedBaseUrl || storedBaseUrl || definition.defaultBaseUrl;
       if (definition.baseUrlMode === "required" && !baseUrl) {
         throw new Error(`A base URL is required for ${modelProviderName(input.provider)}`);
       }
@@ -581,7 +602,7 @@ export class DesktopAppService {
       join(
         this.options.dataPath,
         "backups",
-        `AI-Coworker-Backup-${new Date().toISOString().replaceAll(":", "-")}.db`,
+        `Coworker-Backup-${new Date().toISOString().replaceAll(":", "-")}.db`,
       );
     return this.database.backup(path);
   }

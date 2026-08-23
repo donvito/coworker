@@ -114,7 +114,7 @@ export class ProviderErrorLogger implements ProviderErrorSink {
   ): Promise<{ count: number; text: string }> {
     const records = await this.list(limit);
     const header = [
-      "AI Coworker provider error report",
+      "Coworker provider error report",
       `Generated: ${new Date().toISOString()}`,
       ...Object.entries(metadata).map(([key, value]) => `${key}: ${value}`),
       `Entries: ${records.length}`,

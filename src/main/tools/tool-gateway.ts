@@ -13,10 +13,6 @@ import type {
   WebSearchProvider,
 } from "@shared/contracts";
 import { getToolCatalogEntry } from "@shared/tool-catalog";
-import {
-  documentFormatClarification,
-  requiresDocumentFormatClarification,
-} from "@shared/document-format";
 import type { CoworkerDatabase } from "@main/db/database";
 import {
   createDocument,
@@ -259,21 +255,6 @@ export class ToolGateway {
       };
     }
     const validatedArguments = parsed.data;
-
-    if (
-      requiresDocumentFormatClarification(
-        input.task.input,
-        input.toolName,
-      )
-    ) {
-      return {
-        kind: "denied",
-        toolCall: this.database.updateToolCall(toolCall.id, "DENIED", {
-          error: documentFormatClarification,
-        }),
-        reason: documentFormatClarification,
-      };
-    }
 
     const policy = policyFor(input.coworker, input.toolName);
     if (policy === "denied") {

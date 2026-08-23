@@ -1,3 +1,5 @@
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { parentPort } from "node:worker_threads";
 import { EventType, type BaseEvent } from "@ag-ui/core";
 import { Agent, type AgentMessage, type AgentTool } from "@earendil-works/pi-agent-core";
@@ -12,6 +14,7 @@ import {
   type MutableModels,
 } from "@earendil-works/pi-ai";
 import { getToolCatalogEntry } from "@shared/tool-catalog";
+import { isoWithLocalOffset, shiftTimestampsDeep } from "@shared/time";
 import { formatModelSelectableSkills } from "@shared/pi-skill-prompt";
 import {
   documentFormatClarification,
@@ -46,6 +49,26 @@ interface ActiveRun {
     toolName: string;
   } | null;
 }
+
+// Model-transcript seam for the behavior evals. Those evals assert model
+// judgment, so they run once against a real provider to capture its turns and
+// replay them afterwards, rather than grading a scripted stand-in. Recording
+// happens whenever a real provider runs with the path set; replay happens when
+// the demo provider runs and the file already exists.
+const modelTranscriptPath = process.env.COWORKER_MODEL_TRANSCRIPT || null;
+
+interface RecordedTurn {
+  /** Which pass over the task produced this turn. A resumed run continues the
+   * pass it resumed; re-running a completed task starts a new one. */
+  run: number;
+  text: string;
+  toolCalls: Array<{ id: string; name: string; arguments: Record<string, unknown> }>;
+  stopReason: string;
+}
+
+let recordedTurns: RecordedTurn[] = [];
+let recordedTaskId: string | null = null;
+let recordedRunIndex = 0;
 
 let config: WorkerCoworkerConfig | null = null;
 let agent: Agent | null = null;
@@ -201,7 +224,8 @@ const parameterSchemas: Record<string, ReturnType<typeof Type.Object>> = {
     ),
     timezone: Type.Optional(
       Type.String({
-        description: "IANA timezone such as America/New_York; omit to use the user's local timezone",
+        description:
+          "IANA timezone such as America/New_York. Omit it to use the user's own timezone, which is the default and needs no confirmation.",
       }),
     ),
     taskTemplate: Type.Object({
@@ -229,14 +253,13 @@ const parameterSchemas: Record<string, ReturnType<typeof Type.Object>> = {
 };
 
 function createProxyTool(controlledName: string, providerName: string): AgentTool<any> {
+  const scheduleTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
   const catalogDescription =
     getToolCatalogEntry(controlledName)?.description ??
     `Execute the controlled ${controlledName} coworker tool.`;
   const description =
     controlledName === "schedules.create"
-      ? `${catalogDescription} Current time: ${new Date().toISOString()}. User timezone: ${
-          Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"
-        }.`
+      ? `${catalogDescription} Current time: ${isoWithLocalOffset()} (${scheduleTimezone}). Relative times such as "in 10 minutes" are relative to that instant, and runAt must be later than it. The user is in ${scheduleTimezone}; when they name a time without a timezone, use ${scheduleTimezone} rather than asking which one they meant.`
       : catalogDescription;
   return {
     name: providerName,
@@ -389,8 +412,15 @@ async function initialize(workerConfig: WorkerCoworkerConfig): Promise<void> {
     controlledToolNamesByProviderName.set(providerName, controlledName);
     return createProxyTool(controlledName, providerName);
   });
+  // The user's timezone belongs in the system prompt, not only on the tool.
+  // A tool description informs how to call a tool; whether to ask a clarifying
+  // question first is decided before any tool is reached, so a model that does
+  // not know the timezone up front interrupts to ask for something the app has
+  // known all along.
   const schedulingRule = workerConfig.coworker.enabledTools.includes("schedules.create")
-    ? "Scheduling rule: For requests to schedule work, set a reminder, follow up later, or run something at a date or time, use schedules.create by default. Do not create an ICS, Markdown, or other file instead unless the user explicitly asks for a file export."
+    ? `Scheduling rule: For requests to schedule work, set a reminder, follow up later, or run something at a date or time, use schedules.create by default. Do not create an ICS, Markdown, or other file instead unless the user explicitly asks for a file export. The user's timezone is ${
+        Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"
+      }; treat any time they give without a timezone as being in it, and never ask them which timezone they meant.`
     : "";
   const skillsRule = formatModelSelectableSkills(workerConfig.skills);
   const recentSkillUses = workerConfig.recentSkillUses.length
@@ -524,8 +554,101 @@ function lastToolDetails(context: Context, toolName: string): unknown {
   return message?.role === "toolResult" ? message.details : null;
 }
 
+function recordAssistantTurn(message: { content: unknown; stopReason?: unknown }): void {
+  if (!modelTranscriptPath || !config || config.coworker.modelProvider === "demo") return;
+  const blocks = Array.isArray(message.content) ? message.content : [];
+  const turn: RecordedTurn = {
+    run: recordedRunIndex,
+    text: blocks
+      .filter((block): block is { type: "text"; text: string } => block?.type === "text")
+      .map((block) => block.text)
+      .join(""),
+    toolCalls: blocks
+      .filter(
+        (block): block is {
+          type: "toolCall";
+          id: string;
+          name: string;
+          arguments: Record<string, unknown>;
+        } => block?.type === "toolCall",
+      )
+      .map((block) => ({
+        // Downstream tools derive identifiers from the tool-call id -- an
+        // invoice number, for one -- and a later turn may reference the file
+        // that produced. Replaying the original id keeps those agreeing.
+        id: block.id,
+        // Recordings are replayed through the controlled tool surface, so store
+        // the portable name the gateway will receive rather than the provider's.
+        name: controlledToolNamesByProviderName.get(block.name) ?? block.name,
+        arguments: block.arguments,
+      })),
+    stopReason: typeof message.stopReason === "string" ? message.stopReason : "endTurn",
+  };
+  recordedTurns.push(turn);
+  mkdirSync(dirname(modelTranscriptPath), { recursive: true });
+  writeFileSync(
+    modelTranscriptPath,
+    `${JSON.stringify(
+      {
+        provider: config.coworker.modelProvider,
+        model: config.coworker.modelName,
+        recordedAt: new Date().toISOString(),
+        turns: recordedTurns,
+      },
+      null,
+      2,
+    )}\n`,
+  );
+}
+
+function replayRecordedTurns(resume: boolean): boolean {
+  if (!demo || !activeRun || !modelTranscriptPath || !existsSync(modelTranscriptPath)) {
+    return false;
+  }
+  // A resumed run continues consuming the same recording, so only prime the
+  // provider when nothing is left over from the run that hit the approval.
+  if (resume && demo.getPendingResponseCount() > 0) return true;
+  let turns: RecordedTurn[];
+  let shiftMs = 0;
+  try {
+    const recording = JSON.parse(readFileSync(modelTranscriptPath, "utf8"));
+    turns = recording.turns ?? [];
+    // Absolute times in the recording were relative when the model wrote them.
+    // Age the recording forward so they keep the distance it intended.
+    const recordedAt = Date.parse(recording.recordedAt ?? "");
+    if (!Number.isNaN(recordedAt)) shiftMs = Date.now() - recordedAt;
+  } catch {
+    return false;
+  }
+  if (turns.length === 0) return false;
+  const passTurns = turns.filter((turn) => (turn.run ?? 0) === recordedRunIndex);
+  if (passTurns.length === 0) {
+    // The recording ended before this pass produced anything -- the live run
+    // was torn down while it was still working. Complete without acting so the
+    // state the recording captured is left intact.
+    demo.setResponses([fauxAssistantMessage("Nothing further was required.")]);
+    return true;
+  }
+  demo.setResponses(
+    passTurns.map((turn, index) =>
+      turn.toolCalls.length > 0
+        ? fauxAssistantMessage(
+            turn.toolCalls.map((call) =>
+              fauxToolCall(call.name, shiftTimestampsDeep(call.arguments, shiftMs), {
+                id: call.id || `${activeRun!.taskId}:replay:${index}:${call.name}`,
+              }),
+            ),
+            { stopReason: "toolUse" },
+          )
+        : fauxAssistantMessage(turn.text),
+    ),
+  );
+  return true;
+}
+
 function configureDemoResponses(input: string, resume: boolean): void {
   if (!demo || !activeRun) return;
+  if (replayRecordedTurns(resume)) return;
   if (resume) {
     demo.setResponses([
       fauxAssistantMessage(
@@ -664,6 +787,7 @@ function handleAgentEvent(event: Parameters<Agent["subscribe"]>[0] extends (
     return;
   }
   if (event.type === "message_end" && event.message.role === "assistant") {
+    recordAssistantTurn(event.message);
     if (activeRun.assistantMessageId) {
       emit({
         type: EventType.TEXT_MESSAGE_END,
@@ -729,6 +853,13 @@ async function runTask(message: Extract<MainToWorkerMessage, { type: "run" }>): 
       agent.state.messages = restoreMessages(message.checkpoint);
     } else {
       agent.state.messages = [];
+    }
+    if (message.taskId !== recordedTaskId) {
+      recordedTaskId = message.taskId;
+      recordedTurns = [];
+      recordedRunIndex = 0;
+    } else if (!message.resume) {
+      recordedRunIndex += 1;
     }
     configureDemoResponses(message.input, Boolean(message.resume));
     emit({

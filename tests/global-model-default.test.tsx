@@ -185,6 +185,60 @@ describe("global model default", () => {
     expect(onChanged).toHaveBeenCalledOnce();
   });
 
+  it("selects a credential provider from its card without a redundant dropdown", async () => {
+    const configureModel = vi.fn().mockResolvedValue({ key: "model:openrouter" });
+    Object.defineProperty(window, "coworker", {
+      configurable: true,
+      value: {
+        integrations: {
+          credentialStatus: vi.fn().mockResolvedValue({ configured: false }),
+          configureModel,
+        },
+        diagnostics: {
+          listProviderErrors: vi.fn().mockResolvedValue([]),
+        },
+      },
+    });
+
+    render(
+      <SettingsPage
+        coworkers={[]}
+        dataPath="/tmp/coworker-data"
+        integrations={[]}
+        onChanged={vi.fn().mockResolvedValue(undefined)}
+        settings={{
+          demoMode: false,
+          launchAtLogin: false,
+          runInBackground: true,
+          globalOperatingInstructions: "Ask when information is missing.",
+          defaultModelProvider: null,
+          defaultModelName: null,
+        }}
+        skills={[]}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Models" }));
+    const openRouter = screen.getByRole("button", { name: "OpenRouter Not connected" });
+    expect(openRouter.getAttribute("aria-pressed")).toBe("false");
+    expect(screen.queryByRole("combobox", { name: "Model provider" })).toBeNull();
+
+    fireEvent.click(openRouter);
+    expect(openRouter.getAttribute("aria-pressed")).toBe("true");
+    fireEvent.change(screen.getByLabelText("OpenRouter API key"), {
+      target: { value: "router-key" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Verify and save" }));
+
+    await waitFor(() =>
+      expect(configureModel).toHaveBeenCalledWith({
+        provider: "openrouter",
+        apiKey: "router-key",
+        baseUrl: undefined,
+      }),
+    );
+  });
+
   it("starts a new coworker with the saved global model unless the form is changed", async () => {
     const create = vi.fn().mockResolvedValue({ id: "coworker-1" });
     Object.defineProperty(window, "coworker", {
