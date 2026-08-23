@@ -46,6 +46,18 @@ CREATE TABLE IF NOT EXISTS schedules (
   CHECK (enabled IN (0, 1))
 );
 
+CREATE TABLE IF NOT EXISTS conversations (
+  id TEXT PRIMARY KEY,
+  coworker_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (coworker_id) REFERENCES coworkers(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS conversations_coworker_updated_idx
+  ON conversations(coworker_id, updated_at DESC);
+
 CREATE TABLE IF NOT EXISTS tasks (
   id TEXT PRIMARY KEY,
   coworker_id TEXT NOT NULL,
@@ -248,6 +260,38 @@ CREATE TABLE IF NOT EXISTS coworker_skills (
   PRIMARY KEY (coworker_id, skill_id),
   FOREIGN KEY (coworker_id) REFERENCES coworkers(id) ON DELETE CASCADE,
   FOREIGN KEY (skill_id) REFERENCES skills(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS skill_resources (
+  skill_id TEXT NOT NULL,
+  path TEXT NOT NULL,
+  mime_type TEXT NOT NULL,
+  content BLOB NOT NULL,
+  PRIMARY KEY (skill_id, path),
+  FOREIGN KEY (skill_id) REFERENCES skills(id) ON DELETE CASCADE
+);
+
+INSERT OR IGNORE INTO conversations(id, coworker_id, title, created_at, updated_at)
+SELECT
+  tasks.thread_id,
+  tasks.coworker_id,
+  MIN(tasks.title),
+  MIN(tasks.created_at),
+  MAX(COALESCE(tasks.completed_at, tasks.started_at, tasks.created_at))
+FROM tasks
+WHERE tasks.thread_id IS NOT NULL AND tasks.thread_id <> ''
+GROUP BY tasks.thread_id, tasks.coworker_id;
+
+INSERT OR IGNORE INTO conversations(id, coworker_id, title, created_at, updated_at)
+SELECT
+  'coworker:' || coworkers.id,
+  coworkers.id,
+  'New conversation',
+  coworkers.created_at,
+  coworkers.updated_at
+FROM coworkers
+WHERE NOT EXISTS (
+  SELECT 1 FROM conversations WHERE conversations.coworker_id = coworkers.id
 );
 
 INSERT OR IGNORE INTO schema_migrations(version, applied_at)

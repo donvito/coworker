@@ -10,7 +10,9 @@ import type {
   ApprovalDecisionInput,
   ApprovalStatus,
   Artifact,
+  Conversation,
   Coworker,
+  CreateConversationInput,
   CreateCoworkerInput,
   CreateScheduleInput,
   CreateTaskInput,
@@ -35,6 +37,8 @@ const defaultSettings: AppSettings = {
   runInBackground: true,
   launchAtLogin: false,
   demoMode: true,
+  globalOperatingInstructions:
+    "When essential information is missing or ambiguous, ask a concise follow-up question before acting. Do not invent names, dates, recipients, amounts, document details, or other required information. Before creating a document, confirm its output format if the user has not already selected one.",
   defaultModelProvider: null,
   defaultModelName: null,
 };
@@ -106,6 +110,16 @@ function taskFromRow(row: Row): Task {
     createdAt: String(row.created_at),
     startedAt: row.started_at === null ? null : String(row.started_at),
     completedAt: row.completed_at === null ? null : String(row.completed_at),
+  };
+}
+
+function conversationFromRow(row: Row): Conversation {
+  return {
+    id: String(row.id),
+    coworkerId: String(row.coworker_id),
+    title: String(row.title),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at),
   };
 }
 
@@ -295,6 +309,10 @@ export class CoworkerDatabase {
       ),
       launchAtLogin: Boolean(stored.get("launchAtLogin") ?? defaultSettings.launchAtLogin),
       demoMode: Boolean(stored.get("demoMode") ?? defaultSettings.demoMode),
+      globalOperatingInstructions:
+        typeof stored.get("globalOperatingInstructions") === "string"
+          ? String(stored.get("globalOperatingInstructions"))
+          : defaultSettings.globalOperatingInstructions,
       defaultModelProvider: configuredProvider,
       defaultModelName: configuredModelName,
     };
@@ -368,6 +386,7 @@ export class CoworkerDatabase {
         timestamp,
         timestamp,
       );
+    this.createConversation({ coworkerId: id }, `coworker:${id}`);
     this.setCoworkerSkills(id, input.enabledSkillIds ?? []);
     this.addActivity({
       coworkerId: id,
@@ -376,6 +395,44 @@ export class CoworkerDatabase {
       metadata: { role: input.role },
     });
     return this.getCoworker(id);
+  }
+
+  listConversations(coworkerId?: string): Conversation[] {
+    const rows = coworkerId
+      ? this.database
+          .prepare(
+            `SELECT * FROM conversations
+             WHERE coworker_id = ?
+             ORDER BY updated_at DESC, created_at DESC`,
+          )
+          .all(coworkerId)
+      : this.database
+          .prepare("SELECT * FROM conversations ORDER BY updated_at DESC, created_at DESC")
+          .all();
+    return (rows as Row[]).map(conversationFromRow);
+  }
+
+  getConversation(id: string): Conversation {
+    const row = this.database.prepare("SELECT * FROM conversations WHERE id = ?").get(id) as
+      | Row
+      | undefined;
+    if (!row) throw new Error(`Conversation ${id} was not found`);
+    return conversationFromRow(row);
+  }
+
+  createConversation(
+    input: CreateConversationInput,
+    id: string = randomUUID(),
+  ): Conversation {
+    this.getCoworker(input.coworkerId);
+    const timestamp = now();
+    this.database
+      .prepare(
+        `INSERT INTO conversations(id, coworker_id, title, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?)`,
+      )
+      .run(id, input.coworkerId, input.title ?? "New conversation", timestamp, timestamp);
+    return this.getConversation(id);
   }
 
   updateCoworker(id: string, input: UpdateCoworkerInput): Coworker {
@@ -505,6 +562,54 @@ export class CoworkerDatabase {
     });
   }
 
+  replaceSkillResources(
+    skillId: string,
+    resources: Array<{ path: string; mimeType: string; content: Uint8Array }>,
+  ): void {
+    this.getSkill(skillId);
+    this.transaction(() => {
+      this.database.prepare("DELETE FROM skill_resources WHERE skill_id = ?").run(skillId);
+      const insert = this.database.prepare(
+        "INSERT INTO skill_resources(skill_id, path, mime_type, content) VALUES (?, ?, ?, ?)",
+      );
+      for (const resource of resources) {
+        insert.run(skillId, resource.path, resource.mimeType, resource.content);
+      }
+    });
+  }
+
+  listSkillResources(skillId: string): Array<{ path: string; mimeType: string; size: number }> {
+    this.getSkill(skillId);
+    return (
+      this.database
+        .prepare(
+          "SELECT path, mime_type, length(content) AS size FROM skill_resources WHERE skill_id = ? ORDER BY path",
+        )
+        .all(skillId) as Row[]
+    ).map((row) => ({
+      path: String(row.path),
+      mimeType: String(row.mime_type),
+      size: Number(row.size),
+    }));
+  }
+
+  getSkillResource(
+    skillId: string,
+    path: string,
+  ): { path: string; mimeType: string; content: Uint8Array } | null {
+    const row = this.database
+      .prepare(
+        "SELECT path, mime_type, content FROM skill_resources WHERE skill_id = ? AND path = ?",
+      )
+      .get(skillId, path) as Row | undefined;
+    if (!row) return null;
+    return {
+      path: String(row.path),
+      mimeType: String(row.mime_type),
+      content: row.content as Uint8Array,
+    };
+  }
+
   listCoworkerSkillIds(coworkerId: string): string[] {
     return (
       this.database
@@ -552,6 +657,27 @@ export class CoworkerDatabase {
     const timestamp = now();
     const runId = input.runId ?? randomUUID();
     const threadId = input.threadId ?? `coworker:${input.coworkerId}`;
+    const conversationRow = this.database
+      .prepare("SELECT * FROM conversations WHERE id = ?")
+      .get(threadId) as Row | undefined;
+    if (conversationRow && String(conversationRow.coworker_id) !== input.coworkerId) {
+      throw new Error("Conversation does not belong to this coworker");
+    }
+    if (!conversationRow) {
+      this.createConversation(
+        { coworkerId: input.coworkerId, title: input.title },
+        threadId,
+      );
+    } else {
+      const existingTitle = String(conversationRow.title);
+      this.database
+        .prepare(
+          `UPDATE conversations
+           SET title = ?, updated_at = ?
+           WHERE id = ?`,
+        )
+        .run(existingTitle === "New conversation" ? input.title : existingTitle, timestamp, threadId);
+    }
     this.database
       .prepare(
         `INSERT INTO tasks(
@@ -794,6 +920,26 @@ export class CoworkerDatabase {
              ORDER BY created_at ASC LIMIT ?`,
           )
           .all(coworkerId, limit);
+    return (rows as Row[]).map(messageFromRow);
+  }
+
+  listConversationMessages(
+    coworkerId: string,
+    conversationId: string,
+    limit = 500,
+  ): Message[] {
+    const conversation = this.getConversation(conversationId);
+    if (conversation.coworkerId !== coworkerId) {
+      throw new Error("Conversation does not belong to this coworker");
+    }
+    const rows = this.database
+      .prepare(
+        `SELECT messages.* FROM messages
+         INNER JOIN tasks ON tasks.id = messages.task_id
+         WHERE messages.coworker_id = ? AND tasks.thread_id = ?
+         ORDER BY messages.created_at ASC LIMIT ?`,
+      )
+      .all(coworkerId, conversationId, limit);
     return (rows as Row[]).map(messageFromRow);
   }
 

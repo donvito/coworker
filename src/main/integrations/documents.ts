@@ -21,8 +21,9 @@ import {
   type PDFFont,
   type PDFPage,
 } from "pdf-lib";
+import ExcelJS from "exceljs";
 
-export type DocumentFormat = "pdf" | "docx";
+export type DocumentFormat = "pdf" | "docx" | "xlsx" | "csv";
 
 type DocumentBlock =
   | { type: "heading"; level: number; text: string }
@@ -142,6 +143,152 @@ export function parseDocumentMarkdown(content: string): DocumentBlock[] {
 
 function titleFromBlocks(blocks: DocumentBlock[], fallback: string): string {
   return blocks.find((block) => block.type === "heading")?.text || fallback;
+}
+
+function spreadsheetCellValue(value: string): string | number | boolean {
+  const normalized = value.trim();
+  if (/^-?(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d+)?$/.test(normalized)) {
+    const number = Number(normalized.replaceAll(",", ""));
+    if (Number.isFinite(number)) return number;
+  }
+  if (/^(?:true|false)$/i.test(normalized)) return normalized.toLowerCase() === "true";
+  return normalized;
+}
+
+function worksheetName(value: string): string {
+  const normalized = value.replace(/[\\/?*:[\]]/g, " ").replace(/\s+/g, " ").trim();
+  return (normalized || "Report").slice(0, 31);
+}
+
+function csvCell(value: string): string {
+  const safe = /^[=+@]/.test(value) || /^-\D/.test(value) ? `'${value}` : value;
+  return /[",\r\n]/.test(safe) ? `"${safe.replaceAll('"', '""')}"` : safe;
+}
+
+export function createCsvDocument(content: string): Buffer {
+  const tables = parseDocumentMarkdown(content).filter(
+    (block): block is Extract<DocumentBlock, { type: "table" }> => block.type === "table",
+  );
+  if (tables.length === 0) {
+    throw new Error("CSV export requires a Markdown table with a header row");
+  }
+  if (tables.length > 1) {
+    throw new Error("CSV export supports one table; use XLSX for a multi-section report");
+  }
+  const csv = tables[0]!.rows
+    .map((row) => row.map((cell) => csvCell(cell)).join(","))
+    .join("\r\n");
+  return Buffer.from(`\uFEFF${csv}\r\n`, "utf8");
+}
+
+export async function createExcelDocument(
+  content: string,
+  fallbackTitle = "AI Coworker report",
+): Promise<Buffer> {
+  const blocks = parseDocumentMarkdown(content);
+  const tables = blocks.filter(
+    (block): block is Extract<DocumentBlock, { type: "table" }> => block.type === "table",
+  );
+  if (tables.length === 0) {
+    throw new Error("Excel export requires at least one Markdown table with a header row");
+  }
+
+  const title = titleFromBlocks(blocks, fallbackTitle);
+  const columnCount = Math.max(1, ...tables.flatMap((table) => table.rows.map((row) => row.length)));
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = "AI Coworker";
+  workbook.created = new Date();
+  workbook.modified = new Date();
+  workbook.subject = "Generated locally by AI Coworker";
+  workbook.title = title;
+
+  const worksheet = workbook.addWorksheet(worksheetName(title), {
+    properties: { defaultRowHeight: 20 },
+    pageSetup: { fitToPage: true, fitToWidth: 1, orientation: "landscape" },
+    views: [{ showGridLines: false }],
+  });
+  let firstTableHeaderRow: number | null = null;
+  let firstTableEndRow: number | null = null;
+
+  for (const block of blocks) {
+    if (block.type === "heading") {
+      const row = worksheet.addRow([block.text]);
+      if (columnCount > 1) worksheet.mergeCells(row.number, 1, row.number, columnCount);
+      row.height = block.level === 1 ? 30 : 24;
+      const cell = row.getCell(1);
+      cell.font = {
+        bold: true,
+        color: { argb: "FF173A2F" },
+        size: block.level === 1 ? 18 : block.level === 2 ? 14 : 12,
+      };
+      cell.alignment = { vertical: "middle" };
+      if (block.level === 1) {
+        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE8EFEC" } };
+      }
+    } else if (block.type === "paragraph") {
+      const row = worksheet.addRow([block.text]);
+      if (columnCount > 1) worksheet.mergeCells(row.number, 1, row.number, columnCount);
+      row.getCell(1).alignment = { vertical: "top", wrapText: true };
+      row.height = Math.max(20, Math.ceil(block.text.length / 90) * 18);
+    } else if (block.type === "list") {
+      block.items.forEach((item, index) => {
+        const marker = block.ordered ? `${index + 1}.` : "•";
+        const row = worksheet.addRow([`${marker} ${item}`]);
+        if (columnCount > 1) worksheet.mergeCells(row.number, 1, row.number, columnCount);
+        row.getCell(1).alignment = { wrapText: true };
+      });
+    } else if (block.type === "table") {
+      const startRow = worksheet.rowCount + 1;
+      block.rows.forEach((values, rowIndex) => {
+        const row = worksheet.addRow(values.map(spreadsheetCellValue));
+        row.height = rowIndex === 0 ? 24 : 21;
+        row.eachCell({ includeEmpty: true }, (cell) => {
+          cell.alignment = { vertical: "middle", wrapText: true };
+          cell.border = {
+            top: { style: "thin", color: { argb: "FFD7DEDB" } },
+            left: { style: "thin", color: { argb: "FFD7DEDB" } },
+            bottom: { style: "thin", color: { argb: "FFD7DEDB" } },
+            right: { style: "thin", color: { argb: "FFD7DEDB" } },
+          };
+          if (rowIndex === 0) {
+            cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
+            cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF245845" } };
+          } else if (rowIndex % 2 === 0) {
+            cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF4F7F5" } };
+          }
+        });
+      });
+      if (firstTableHeaderRow === null) {
+        firstTableHeaderRow = startRow;
+        firstTableEndRow = worksheet.rowCount;
+      }
+      worksheet.addRow([]);
+    } else {
+      worksheet.addRow([]);
+    }
+  }
+
+  for (let columnIndex = 1; columnIndex <= columnCount; columnIndex += 1) {
+    let width = 12;
+    for (const table of tables) {
+      for (const row of table.rows) {
+        width = Math.max(width, Math.min(42, (row[columnIndex - 1] ?? "").length + 3));
+      }
+    }
+    worksheet.getColumn(columnIndex).width = width;
+  }
+  if (firstTableHeaderRow !== null && firstTableEndRow !== null) {
+    worksheet.autoFilter = {
+      from: { row: firstTableHeaderRow, column: 1 },
+      to: { row: firstTableEndRow, column: columnCount },
+    };
+    worksheet.views = [
+      { state: "frozen", ySplit: firstTableHeaderRow, showGridLines: false },
+    ];
+  }
+
+  const bytes = await workbook.xlsx.writeBuffer();
+  return Buffer.from(bytes);
 }
 
 function splitLongWord(word: string, font: PDFFont, size: number, maxWidth: number): string[] {
@@ -473,7 +620,8 @@ export async function createDocument(
   content: string,
   fallbackTitle?: string,
 ): Promise<Uint8Array> {
-  return format === "pdf"
-    ? createPdfDocument(content, fallbackTitle)
-    : createWordDocument(content, fallbackTitle);
+  if (format === "pdf") return createPdfDocument(content, fallbackTitle);
+  if (format === "docx") return createWordDocument(content, fallbackTitle);
+  if (format === "xlsx") return createExcelDocument(content, fallbackTitle);
+  return createCsvDocument(content);
 }

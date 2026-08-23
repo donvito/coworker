@@ -123,6 +123,10 @@ export function CoworkerSettingsModal({
           <label>
             <span>Operating instructions</span>
             <textarea defaultValue={coworker.systemPrompt} name="systemPrompt" required rows={5} />
+            <small>
+              Combined with Settings → General → Global operating instructions and built-in tool
+              safeguards.
+            </small>
           </label>
           <div className="form-split">
             <label>

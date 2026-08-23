@@ -12,6 +12,13 @@ import {
   type MutableModels,
 } from "@earendil-works/pi-ai";
 import { getToolCatalogEntry } from "@shared/tool-catalog";
+import { formatModelSelectableSkills } from "@shared/pi-skill-prompt";
+import {
+  documentFormatClarification,
+  documentFormatInstruction,
+  hasExplicitDocumentFormat,
+  requestsDocumentCreation,
+} from "@shared/document-format";
 import { anthropicProvider } from "@earendil-works/pi-ai/providers/anthropic";
 import { googleProvider } from "@earendil-works/pi-ai/providers/google";
 import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
@@ -100,6 +107,12 @@ function toolResultText(result: unknown): string {
 const parameterSchemas: Record<string, ReturnType<typeof Type.Object>> = {
   "skills.read": Type.Object({
     name: Type.String({ description: "Exact name of an enabled skill" }),
+    path: Type.Optional(
+      Type.String({
+        description:
+          "Relative packaged resource path. Omit to read skill.md and list available resources.",
+      }),
+    ),
   }),
   "web.search": Type.Object({
     query: Type.String({ description: "Focused web search query" }),
@@ -135,17 +148,39 @@ const parameterSchemas: Record<string, ReturnType<typeof Type.Object>> = {
     ),
     dueDays: Type.Optional(Type.Number()),
     currency: Type.Optional(Type.String()),
+    format: Type.Union([
+      Type.Literal("pdf"),
+      Type.Literal("docx"),
+      Type.Literal("markdown"),
+      Type.Literal("txt"),
+    ], {
+      description:
+        "The output format explicitly selected by the user. This tool creates that final file directly; do not export it again.",
+    }),
   }),
   "documents.export": Type.Object({
-    sourcePath: Type.String({
+    sourcePath: Type.Optional(Type.String({
       description: "Relative path to an existing Markdown or plain-text workspace file",
-    }),
+    })),
+    name: Type.Optional(Type.String({
+      description: "Final document base name when creating directly from content",
+    })),
+    content: Type.Optional(Type.String({
+      description:
+        "Professionally structured Markdown document content to convert directly without creating an intermediate file. Use #/##/### headings, **bold labels**, lists, tables, and --- dividers as appropriate to the document type.",
+    })),
     formats: Type.Array(
-      Type.Union([Type.Literal("pdf"), Type.Literal("docx")]),
+      Type.Union([
+        Type.Literal("pdf"),
+        Type.Literal("docx"),
+        Type.Literal("xlsx"),
+        Type.Literal("csv"),
+      ]),
       {
-        description: "One or both output formats",
+        description:
+          "One or more final output formats. For XLSX or CSV, content must include a Markdown table with a descriptive header row and one record per row. CSV supports exactly one table.",
         minItems: 1,
-        maxItems: 2,
+        maxItems: 4,
         uniqueItems: true,
       },
     ),
@@ -334,7 +369,6 @@ async function initialize(workerConfig: WorkerCoworkerConfig): Promise<void> {
   }
 
   imageInputSupported = model.input.includes("image");
-  const history = durableHistory(workerConfig.recentMessages);
   controlledToolNamesByProviderName.clear();
   const usePortableToolNames = workerConfig.coworker.modelProvider !== "demo";
   const skillToolNames = workerConfig.skills.length > 0 ? ["skills.read"] : [];
@@ -358,21 +392,22 @@ async function initialize(workerConfig: WorkerCoworkerConfig): Promise<void> {
   const schedulingRule = workerConfig.coworker.enabledTools.includes("schedules.create")
     ? "Scheduling rule: For requests to schedule work, set a reminder, follow up later, or run something at a date or time, use schedules.create by default. Do not create an ICS, Markdown, or other file instead unless the user explicitly asks for a file export."
     : "";
-  const skillsRule = workerConfig.skills.length
-    ? `<available_skills>\n${workerConfig.skills
-        .map(
-          (skill) =>
-            `<skill>\n<name>${skill.name}</name>\n<description>${skill.description}</description>\n<location>skill://${skill.name}/SKILL.md</location>\n</skill>`,
-        )
-        .join("\n")}\n</available_skills>\n\nSkills are capability packages enabled for this coworker. When a task matches a skill, call skills.read with its exact name before following it. Never claim to have loaded a skill until that tool succeeds.`
+  const skillsRule = formatModelSelectableSkills(workerConfig.skills);
+  const recentSkillUses = workerConfig.recentSkillUses.length
+    ? `Recent durable skill usage: ${[...new Set(workerConfig.recentSkillUses)].join(", ")}. When asked whether a skill was used, answer from this record and the current tool history.`
     : "";
   agent = new Agent({
     initialState: {
       systemPrompt: [
         workerConfig.coworker.systemPrompt,
+        workerConfig.globalOperatingInstructions
+          ? `Global operating instructions:\n${workerConfig.globalOperatingInstructions}`
+          : "",
+        documentFormatInstruction,
+        "Final office file rule: invoice.create writes the selected final format directly. For a new PDF, Word, Excel, or CSV file, pass its content directly to documents.export with a name; do not create a temporary Markdown or text file first. You can create genuine XLSX and CSV files with documents.export, so never claim those formats are unavailable when that tool is enabled.",
         schedulingRule,
         skillsRule,
-        history ? `Recent durable conversation history:\n${history}` : "",
+        recentSkillUses,
       ]
         .filter(Boolean)
         .join("\n\n"),
@@ -499,6 +534,10 @@ function configureDemoResponses(input: string, resume: boolean): void {
     ]);
     return;
   }
+  if (requestsDocumentCreation(input) && !hasExplicitDocumentFormat(input)) {
+    demo.setResponses([fauxAssistantMessage(documentFormatClarification)]);
+    return;
+  }
   if (
     /\b(?:schedule|remind)\b|\bevery\s+(?:day|weekday|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b|\btomorrow\s+at\b/i.test(
       input,
@@ -533,6 +572,13 @@ function configureDemoResponses(input: string, resume: boolean): void {
             ],
             dueDays: invoice.dueDays,
             currency: "USD",
+            format: /\bpdf\b/i.test(input)
+              ? "pdf"
+              : /\b(?:docx?|word)\b/i.test(input)
+                ? "docx"
+                : /\b(?:plain[- ]text|txt)\b/i.test(input)
+                  ? "txt"
+                  : "markdown",
           },
           { id: `${activeRun.taskId}:invoice` },
         ),
@@ -634,11 +680,12 @@ function handleAgentEvent(event: Parameters<Agent["subscribe"]>[0] extends (
     return;
   }
   if (event.type === "tool_execution_start") {
+    const controlledName =
+      controlledToolNamesByProviderName.get(event.toolName) ?? event.toolName;
     emit({
       type: EventType.TOOL_CALL_START,
       toolCallId: event.toolCallId,
-      toolCallName:
-        controlledToolNamesByProviderName.get(event.toolName) ?? event.toolName,
+      toolCallName: controlledName,
       timestamp: Date.now(),
     });
     emit({
@@ -680,6 +727,8 @@ async function runTask(message: Extract<MainToWorkerMessage, { type: "run" }>): 
   try {
     if (message.checkpoint?.length) {
       agent.state.messages = restoreMessages(message.checkpoint);
+    } else {
+      agent.state.messages = [];
     }
     configureDemoResponses(message.input, Boolean(message.resume));
     emit({
@@ -688,11 +737,15 @@ async function runTask(message: Extract<MainToWorkerMessage, { type: "run" }>): 
       runId: message.runId,
       timestamp: Date.now(),
     });
-    const prompt = message.resume
+    const basePrompt = message.resume
       ? `The human ${message.resume.decision} ${message.resume.toolName}. Result: ${JSON.stringify(
           message.resume.result,
         )}. Continue and finish the original task.`
       : message.input;
+    const threadHistory = message.resume ? "" : durableHistory(message.threadMessages ?? []);
+    const prompt = threadHistory
+      ? `Recent durable history for this conversation only:\n${threadHistory}\n\nCurrent user request:\n${basePrompt}`
+      : basePrompt;
     const images = message.resume ? undefined : message.images;
     if (images?.length && !imageInputSupported) {
       throw new Error(

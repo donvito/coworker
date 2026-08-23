@@ -13,6 +13,10 @@ import type {
   WebSearchProvider,
 } from "@shared/contracts";
 import { getToolCatalogEntry } from "@shared/tool-catalog";
+import {
+  documentFormatClarification,
+  requiresDocumentFormatClarification,
+} from "@shared/document-format";
 import type { CoworkerDatabase } from "@main/db/database";
 import {
   createDocument,
@@ -26,7 +30,10 @@ import { searchWeb } from "@main/integrations/web-search";
 const localTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 
 const schemas = {
-  "skills.read": z.object({ name: z.string().trim().min(1).max(64) }),
+  "skills.read": z.object({
+    name: z.string().trim().min(1).max(64),
+    path: z.string().trim().min(1).max(500).optional(),
+  }),
   "web.search": z.object({
     query: z.string().trim().min(1).max(2_000),
     limit: z.number().int().min(1).max(10).default(5),
@@ -53,15 +60,34 @@ const schemas = {
       .max(200),
     dueDays: z.number().int().min(0).max(365).default(14),
     currency: z.string().trim().length(3).default("USD"),
+    format: z.enum(["pdf", "docx", "markdown", "txt"]),
   }),
-  "documents.export": z.object({
-    sourcePath: z.string().min(1).max(2_000),
-    formats: z
-      .array(z.enum(["pdf", "docx"]))
-      .min(1)
-      .max(2)
-      .refine((formats) => new Set(formats).size === formats.length, "Formats must be unique"),
-  }),
+  "documents.export": z
+    .object({
+      sourcePath: z.string().min(1).max(2_000).optional(),
+      name: z.string().trim().min(1).max(240).optional(),
+      content: z.string().max(5_000_000).optional(),
+      formats: z
+        .array(z.enum(["pdf", "docx", "xlsx", "csv"]))
+        .min(1)
+        .max(4)
+        .refine((formats) => new Set(formats).size === formats.length, "Formats must be unique"),
+    })
+    .superRefine((value, context) => {
+      const hasSource = value.sourcePath !== undefined;
+      const hasContent = value.content !== undefined || value.name !== undefined;
+      if (hasSource === hasContent) {
+        context.addIssue({
+          code: "custom",
+          message: "Provide either sourcePath or both name and content",
+        });
+      } else if (hasContent && (value.name === undefined || value.content === undefined)) {
+        context.addIssue({
+          code: "custom",
+          message: "Direct document creation requires both name and content",
+        });
+      }
+    }),
   "email.create_draft": z.object({
     to: z.union([z.string().email(), z.array(z.string().email()).min(1).max(50)]),
     subject: z.string().trim().min(1).max(500),
@@ -234,6 +260,21 @@ export class ToolGateway {
     }
     const validatedArguments = parsed.data;
 
+    if (
+      requiresDocumentFormatClarification(
+        input.task.input,
+        input.toolName,
+      )
+    ) {
+      return {
+        kind: "denied",
+        toolCall: this.database.updateToolCall(toolCall.id, "DENIED", {
+          error: documentFormatClarification,
+        }),
+        reason: documentFormatClarification,
+      };
+    }
+
     const policy = policyFor(input.coworker, input.toolName);
     if (policy === "denied") {
       const reason = `${input.toolName} is denied by policy`;
@@ -324,11 +365,42 @@ export class ToolGateway {
           .listCoworkerSkills(coworker.id)
           .find((candidate) => candidate.name === args.name);
         if (!skill) throw new Error(`${args.name} is not enabled for ${coworker.name}`);
+        if (args.path) {
+          const resourcePath = args.path.replaceAll("\\", "/");
+          if (
+            resourcePath.startsWith("/") ||
+            resourcePath.split("/").some((part) => !part || part === "." || part === "..")
+          ) {
+            throw new Error("Skill resource path must stay inside the skill package");
+          }
+          const resource = this.database.getSkillResource(skill.id, resourcePath);
+          if (!resource) throw new Error(`Skill resource ${resourcePath} was not found`);
+          const readable =
+            resource.mimeType.startsWith("text/") ||
+            ["application/json", "application/yaml"].includes(resource.mimeType);
+          if (!readable) {
+            return {
+              name: skill.name,
+              path: resource.path,
+              mimeType: resource.mimeType,
+              size: resource.content.byteLength,
+              binary: true,
+              message: "Binary resource is stored in the package but cannot be loaded as prompt text.",
+            };
+          }
+          return {
+            name: skill.name,
+            path: resource.path,
+            mimeType: resource.mimeType,
+            content: Buffer.from(resource.content).toString("utf8"),
+          };
+        }
         return {
           name: skill.name,
           description: skill.description,
           content: skill.content,
           sourceUrl: skill.sourceUrl,
+          resources: this.database.listSkillResources(skill.id),
         };
       }
       case "web.search": {
@@ -401,16 +473,51 @@ export class ToolGateway {
           `## Total: ${formatMoney(total, args.currency)}`,
           "",
         ].filter(Boolean);
-        const relativePath = `invoices/${invoiceNumber}.md`;
+        const markdown = lines.join("\n");
+        const plainText = [
+          `Invoice ${invoiceNumber}`,
+          `Bill to: ${args.client}`,
+          args.recipientEmail ? `Email: ${args.recipientEmail}` : "",
+          `Issued: ${issuedAt.toISOString().slice(0, 10)}`,
+          `Due: ${dueAt.toISOString().slice(0, 10)}`,
+          "",
+          ...args.lineItems.map(
+            (item) =>
+              `${item.description}: ${item.quantity} × ${formatMoney(item.rate, args.currency)} = ${formatMoney(item.quantity * item.rate, args.currency)}`,
+          ),
+          "",
+          `Total: ${formatMoney(total, args.currency)}`,
+          "",
+        ]
+          .filter((line, index, all) => line !== "" || all[index - 1] !== "")
+          .join("\n");
+        const extension = args.format === "markdown" ? "md" : args.format;
+        const relativePath = `invoices/${invoiceNumber}.${extension}`;
         const path = await resolveWorkspacePath(coworker.workspacePath, relativePath, {
           createParent: true,
         });
-        await writeFile(path, lines.join("\n"), { encoding: "utf8", mode: 0o600 });
+        if (args.format === "pdf" || args.format === "docx") {
+          const bytes = await createDocument(args.format, markdown, invoiceNumber);
+          await writeFile(path, bytes, { mode: 0o600 });
+        } else {
+          await writeFile(path, args.format === "txt" ? plainText : markdown, {
+            encoding: "utf8",
+            mode: 0o600,
+          });
+        }
+        const mimeType =
+          args.format === "pdf"
+            ? "application/pdf"
+            : args.format === "docx"
+              ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+              : args.format === "markdown"
+                ? "text/markdown"
+                : "text/plain";
         const artifact = this.database.createArtifact({
           taskId: toolCall.taskId,
           coworkerId: coworker.id,
-          name: `${invoiceNumber}.md`,
-          mimeType: "text/markdown",
+          name: `${invoiceNumber}.${extension}`,
+          mimeType,
           filePath: path,
         });
         return {
@@ -419,28 +526,51 @@ export class ToolGateway {
           total,
           currency: args.currency,
           dueAt: dueAt.toISOString(),
+          format: args.format,
           path: relativePath,
           artifactId: artifact.id,
         };
       }
       case "documents.export": {
         const args = schemas["documents.export"].parse(rawArgs);
-        const sourcePath = args.sourcePath.replaceAll("\\", "/");
-        const sourceExtension = posix.extname(sourcePath).toLowerCase();
-        if (![".md", ".markdown", ".txt"].includes(sourceExtension)) {
-          throw new Error("Document export supports Markdown and plain-text source files");
+        let sourcePath: string | null = null;
+        let content: string;
+        let parsedSource: ReturnType<typeof posix.parse>;
+        if (args.sourcePath !== undefined) {
+          sourcePath = args.sourcePath.replaceAll("\\", "/");
+          const sourceExtension = posix.extname(sourcePath).toLowerCase();
+          if (![".md", ".markdown", ".txt"].includes(sourceExtension)) {
+            throw new Error("Document export supports Markdown and plain-text source files");
+          }
+          const absoluteSourcePath = await resolveWorkspacePath(
+            coworker.workspacePath,
+            sourcePath,
+          );
+          const sourceStats = await stat(absoluteSourcePath);
+          if (!sourceStats.isFile()) throw new Error("Document export source must be a file");
+          if (sourceStats.size > 5_000_000) {
+            throw new Error("Document export source is larger than 5 MB");
+          }
+          content = await readFile(absoluteSourcePath, "utf8");
+          parsedSource = posix.parse(sourcePath);
+        } else {
+          const normalizedName = args.name!.replaceAll("\\", "/");
+          const baseName = posix
+            .basename(normalizedName)
+            .replace(/\.(?:pdf|docx?|xlsx?|csv)$/i, "");
+          if (!baseName || baseName === "." || baseName === "..") {
+            throw new Error("Document name must contain a valid file name");
+          }
+          sourcePath = null;
+          content = args.content!;
+          parsedSource = {
+            root: "",
+            dir: posix.dirname(normalizedName) === "." ? "" : posix.dirname(normalizedName),
+            base: baseName,
+            ext: "",
+            name: baseName,
+          };
         }
-        const absoluteSourcePath = await resolveWorkspacePath(
-          coworker.workspacePath,
-          sourcePath,
-        );
-        const sourceStats = await stat(absoluteSourcePath);
-        if (!sourceStats.isFile()) throw new Error("Document export source must be a file");
-        if (sourceStats.size > 5_000_000) {
-          throw new Error("Document export source is larger than 5 MB");
-        }
-        const content = await readFile(absoluteSourcePath, "utf8");
-        const parsedSource = posix.parse(sourcePath);
         const files = [];
 
         for (const format of args.formats) {
@@ -466,7 +596,11 @@ export class ToolGateway {
             mimeType:
               format === "pdf"
                 ? "application/pdf"
-                : "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                : format === "docx"
+                  ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                  : format === "xlsx"
+                    ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    : "text/csv",
             filePath: absolutePath,
           });
           files.push({

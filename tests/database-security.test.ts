@@ -69,10 +69,12 @@ describe("durable state and queue invariants", () => {
     expect(first.getSettings()).toMatchObject({
       defaultModelProvider: null,
       defaultModelName: null,
+      globalOperatingInstructions: expect.stringMatching(/missing|ambiguous/i),
     });
     first.updateSettings({
       defaultModelProvider: "openrouter",
       defaultModelName: "google/gemini-flash",
+      globalOperatingInstructions: "Ask before making assumptions.",
     });
     first.close();
 
@@ -83,6 +85,7 @@ describe("durable state and queue invariants", () => {
         launchAtLogin: false,
         defaultModelProvider: "openrouter",
         defaultModelName: "google/gemini-flash",
+        globalOperatingInstructions: "Ask before making assumptions.",
       });
     } finally {
       reopened.close();

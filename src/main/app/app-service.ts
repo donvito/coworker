@@ -9,6 +9,7 @@ import type {
   Approval,
   ApprovalDecisionInput,
   ApprovalStatus,
+  CreateConversationInput,
   CreateCoworkerInput,
   CreateScheduleInput,
   CreateTaskInput,
@@ -46,9 +47,10 @@ import { ToolGateway } from "@main/tools/tool-gateway";
 import { CoworkerRuntimeManager } from "@main/runtime/runtime-manager";
 import { ProviderErrorLogger } from "@main/runtime/provider-error-logger";
 import {
-  bundledWebSearchSkill,
+  bundledSkills,
   installSkillFromUrl,
   parseSkillMarkdown,
+  parseSkillPackage,
   skillUrlFromPrompt,
 } from "@main/integrations/skills";
 import { webSearchCredentialKey } from "@main/integrations/web-search";
@@ -160,6 +162,7 @@ export class DesktopAppService {
   snapshot(): AppSnapshot {
     return {
       coworkers: this.database.listCoworkers(),
+      conversations: this.database.listConversations(),
       tasks: this.database.listTasks(),
       messages: this.database
         .listCoworkers()
@@ -221,6 +224,12 @@ export class DesktopAppService {
     this.emit({ type: "entity.changed", entity: "activity" });
   }
 
+  createConversation(input: CreateConversationInput) {
+    const conversation = this.database.createConversation(input);
+    this.emit({ type: "entity.changed", entity: "conversations", id: conversation.id });
+    return conversation;
+  }
+
   createTask(input: CreateTaskInput) {
     const coworker = this.database.getCoworker(input.coworkerId);
     if (coworker.status !== "active") {
@@ -228,6 +237,7 @@ export class DesktopAppService {
     }
     const task = this.database.createTask(input);
     this.emit({ type: "entity.changed", entity: "tasks", id: task.id });
+    this.emit({ type: "entity.changed", entity: "conversations", id: task.threadId });
     this.emit({ type: "entity.changed", entity: "activity" });
     this.runtime.enqueueTask(task.coworkerId);
     return task;
@@ -347,6 +357,7 @@ export class DesktopAppService {
       });
       committed = true;
       this.emit({ type: "entity.changed", entity: "tasks", id: task.id });
+      this.emit({ type: "entity.changed", entity: "conversations", id: task.threadId });
       this.emit({ type: "entity.changed", entity: "activity" });
       this.runtime.enqueueTask(task.coworkerId);
       return { runId: task.runId, taskId: task.id };
@@ -444,6 +455,7 @@ export class DesktopAppService {
 
   async installSkillFromUrl(url: string, coworkerId?: string) {
     const skill = await installSkillFromUrl(this.database, url, coworkerId);
+    this.database.replaceSkillResources(skill.id, []);
     if (coworkerId) await this.runtime.stop(coworkerId);
     this.emit({ type: "entity.changed", entity: "skills", id: skill.id });
     this.emit({ type: "entity.changed", entity: "coworkers", id: coworkerId });
@@ -456,6 +468,38 @@ export class DesktopAppService {
     const existing = this.database.getSkillByName(parsed.name);
     if (existing?.bundled) throw new Error(`The bundled skill “${parsed.name}” cannot be replaced`);
     const skill = this.database.upsertSkill({ ...parsed, bundled: false });
+    this.database.replaceSkillResources(skill.id, []);
+    if (coworkerId) {
+      const coworker = this.database.getCoworker(coworkerId);
+      this.database.setCoworkerSkills(coworkerId, [...coworker.enabledSkillIds, skill.id]);
+      await this.runtime.stop(coworkerId);
+    }
+    this.emit({ type: "entity.changed", entity: "skills", id: skill.id });
+    this.emit({ type: "entity.changed", entity: "coworkers", id: coworkerId });
+    this.emit({ type: "entity.changed", entity: "activity" });
+    return skill;
+  }
+
+  async installSkillFromPackage(
+    fileName: string,
+    dataBase64: string,
+    coworkerId?: string,
+  ) {
+    if (!/\.(?:skill|zip)$/i.test(fileName)) {
+      throw new Error("Skill packages must use a .skill or .zip extension");
+    }
+    const bytes = Buffer.from(dataBase64, "base64");
+    const parsed = await parseSkillPackage(bytes);
+    const existing = this.database.getSkillByName(parsed.skill.name);
+    if (existing?.bundled) {
+      throw new Error(`The bundled skill “${parsed.skill.name}” cannot be replaced`);
+    }
+    const skill = this.database.upsertSkill({
+      ...parsed.skill,
+      sourceUrl: null,
+      bundled: false,
+    });
+    this.database.replaceSkillResources(skill.id, parsed.resources);
     if (coworkerId) {
       const coworker = this.database.getCoworker(coworkerId);
       this.database.setCoworkerSkills(coworkerId, [...coworker.enabledSkillIds, skill.id]);
@@ -500,7 +544,14 @@ export class DesktopAppService {
   }
 
   async updateSettings(input: Partial<AppSettings>): Promise<AppSettings> {
+    const previous = this.database.getSettings();
     const settings = this.database.updateSettings(input);
+    if (
+      input.globalOperatingInstructions !== undefined &&
+      settings.globalOperatingInstructions !== previous.globalOperatingInstructions
+    ) {
+      await this.runtime.stopAll();
+    }
     await this.options.onSettingsChanged?.(settings);
     this.emit({ type: "entity.changed", entity: "settings" });
     return settings;
@@ -573,18 +624,20 @@ export class DesktopAppService {
   }
 
   private seedSkills(): void {
-    const existing = this.database.getSkillByName(bundledWebSearchSkill.name);
-    if (
-      !existing ||
-      existing.content !== bundledWebSearchSkill.content ||
-      existing.description !== bundledWebSearchSkill.description
-    ) {
-      this.database.upsertSkill(bundledWebSearchSkill);
+    for (const bundledSkill of bundledSkills) {
+      const existing = this.database.getSkillByName(bundledSkill.name);
+      if (
+        !existing ||
+        existing.content !== bundledSkill.content ||
+        existing.description !== bundledSkill.description
+      ) {
+        this.database.upsertSkill(bundledSkill);
+      }
     }
   }
 
   private enableBundledSkills(): void {
-    const migrationKey = "bundled-skills-enabled-v1";
+    const migrationKey = "bundled-skills-enabled-v2";
     if (this.database.getMetadata(migrationKey) === "true") return;
     const bundledIds = this.database
       .listSkills()

@@ -8,6 +8,59 @@ import { SettingsPage } from "@renderer/pages/SettingsPage";
 afterEach(() => cleanup());
 
 describe("global model default", () => {
+  it("shows and saves editable global operating instructions", async () => {
+    const updateSettings = vi.fn().mockResolvedValue(undefined);
+    const onChanged = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(window, "coworker", {
+      configurable: true,
+      value: {
+        app: { updateSettings },
+        integrations: {
+          credentialStatus: vi.fn().mockResolvedValue({ configured: false }),
+        },
+        diagnostics: {
+          listProviderErrors: vi.fn().mockResolvedValue([]),
+        },
+      },
+    });
+
+    render(
+      <SettingsPage
+        coworkers={[]}
+        dataPath="/tmp/coworker-data"
+        integrations={[]}
+        onChanged={onChanged}
+        settings={{
+          demoMode: false,
+          launchAtLogin: false,
+          runInBackground: true,
+          globalOperatingInstructions: "Ask when information is missing.",
+          defaultModelProvider: null,
+          defaultModelName: null,
+        }}
+        skills={[]}
+      />,
+    );
+
+    const instructions = screen.getByRole("textbox", {
+      name: "Global operating instructions",
+    });
+    expect((instructions as HTMLTextAreaElement).value).toBe(
+      "Ask when information is missing.",
+    );
+    fireEvent.change(instructions, {
+      target: { value: "Ask a concise follow-up before making assumptions." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save instructions" }));
+
+    await waitFor(() =>
+      expect(updateSettings).toHaveBeenCalledWith({
+        globalOperatingInstructions: "Ask a concise follow-up before making assumptions.",
+      }),
+    );
+    expect(onChanged).toHaveBeenCalledOnce();
+  });
+
   it("shows no configured model when no provider credentials have been saved", async () => {
     Object.defineProperty(window, "coworker", {
       configurable: true,
@@ -28,10 +81,11 @@ describe("global model default", () => {
         integrations={[]}
         onChanged={vi.fn().mockResolvedValue(undefined)}
         settings={{
-          demoMode: false,
-          launchAtLogin: false,
-          runInBackground: true,
-          defaultModelProvider: null,
+      demoMode: false,
+      launchAtLogin: false,
+      runInBackground: true,
+      globalOperatingInstructions: "Ask when information is missing.",
+      defaultModelProvider: null,
           defaultModelName: null,
         }}
         skills={[]}
@@ -90,10 +144,11 @@ describe("global model default", () => {
         integrations={[]}
         onChanged={onChanged}
         settings={{
-          demoMode: false,
-          launchAtLogin: false,
-          runInBackground: true,
-          defaultModelProvider: "openrouter",
+      demoMode: false,
+      launchAtLogin: false,
+      runInBackground: true,
+      globalOperatingInstructions: "Ask when information is missing.",
+      defaultModelProvider: "openrouter",
           defaultModelName: "vendor/old-model",
         }}
         skills={[]}

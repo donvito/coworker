@@ -1,8 +1,178 @@
 import { isIP } from "node:net";
+import { extname } from "node:path";
+import JSZip from "jszip";
 import type { Skill } from "@shared/contracts";
 import type { CoworkerDatabase } from "@main/db/database";
 
 export const bundledWebSearchSkillId = "bundled:web-search";
+export const bundledDocumentAuthoringSkillId = "bundled:document-authoring";
+
+export interface PackagedSkillResource {
+  path: string;
+  mimeType: string;
+  content: Uint8Array;
+}
+
+export interface ParsedSkillPackage {
+  skill: Pick<Skill, "name" | "description" | "content">;
+  resources: PackagedSkillResource[];
+}
+
+const maxSkillPackageBytes = 10_000_000;
+const maxSkillPackageEntries = 200;
+
+function resourceMimeType(path: string): string {
+  switch (extname(path).toLowerCase()) {
+    case ".md":
+    case ".markdown":
+      return "text/markdown";
+    case ".txt":
+    case ".log":
+      return "text/plain";
+    case ".json":
+      return "application/json";
+    case ".yaml":
+    case ".yml":
+      return "application/yaml";
+    case ".js":
+    case ".mjs":
+      return "text/javascript";
+    case ".ts":
+    case ".tsx":
+      return "text/typescript";
+    case ".py":
+      return "text/x-python";
+    case ".html":
+      return "text/html";
+    case ".css":
+      return "text/css";
+    case ".csv":
+      return "text/csv";
+    case ".svg":
+      return "image/svg+xml";
+    case ".png":
+      return "image/png";
+    case ".jpg":
+    case ".jpeg":
+      return "image/jpeg";
+    case ".gif":
+      return "image/gif";
+    case ".webp":
+      return "image/webp";
+    case ".pdf":
+      return "application/pdf";
+    default:
+      return "application/octet-stream";
+  }
+}
+
+function safePackagePath(entryName: string): string {
+  const normalized = entryName.replaceAll("\\", "/");
+  if (
+    normalized.includes("\0") ||
+    normalized.startsWith("/") ||
+    /^[a-z]:\//i.test(normalized)
+  ) {
+    throw new Error(`Skill package contains an unsafe path: ${entryName}`);
+  }
+  const segments = normalized.replace(/\/$/, "").split("/");
+  if (segments.some((segment) => !segment || segment === "." || segment === "..")) {
+    throw new Error(`Skill package contains an unsafe path: ${entryName}`);
+  }
+  return normalized;
+}
+
+function isIgnorablePackageMetadata(path: string): boolean {
+  const parts = path.replace(/\/$/, "").split("/");
+  const fileName = parts.at(-1)?.toLowerCase() ?? "";
+  return (
+    parts[0]?.toLowerCase() === "__macosx" ||
+    fileName === ".ds_store" ||
+    fileName === "thumbs.db" ||
+    fileName.startsWith("._")
+  );
+}
+
+export async function parseSkillPackage(bytes: Uint8Array): Promise<ParsedSkillPackage> {
+  if (bytes.byteLength === 0 || bytes.byteLength > maxSkillPackageBytes) {
+    throw new Error("Skill packages must be between 1 byte and 10 MB");
+  }
+  let archive: JSZip;
+  try {
+    archive = await JSZip.loadAsync(bytes, { checkCRC32: true, createFolders: false });
+  } catch {
+    throw new Error("The skill package is not a valid ZIP archive");
+  }
+  const entries = Object.values(archive.files);
+  if (entries.length === 0 || entries.length > maxSkillPackageEntries) {
+    throw new Error("Skill packages must contain 1–200 entries");
+  }
+
+  const roots = new Set<string>();
+  const files: Array<{ archivePath: string; relativePath: string; entry: JSZip.JSZipObject }> = [];
+  for (const entry of entries) {
+    const originalName = entry.unsafeOriginalName ?? entry.name;
+    const archivePath = safePackagePath(originalName);
+    if (isIgnorablePackageMetadata(archivePath)) continue;
+    const unixPermissions =
+      typeof entry.unixPermissions === "string"
+        ? Number.parseInt(entry.unixPermissions, 8)
+        : entry.unixPermissions;
+    if (unixPermissions !== null && unixPermissions !== undefined && (unixPermissions & 0o170000) === 0o120000) {
+      throw new Error(`Skill packages cannot contain symbolic links: ${archivePath}`);
+    }
+    const withoutSlash = archivePath.replace(/\/$/, "");
+    const [root, ...rest] = withoutSlash.split("/");
+    roots.add(root!);
+    if (!entry.dir) {
+      if (rest.length === 0) {
+        throw new Error("The ZIP must contain the skill folder as its single root");
+      }
+      files.push({ archivePath, relativePath: rest.join("/"), entry });
+    }
+  }
+  if (files.length === 0) {
+    throw new Error("The skill package does not contain any skill files");
+  }
+  if (roots.size !== 1) {
+    const found = [...roots].sort().join(", ") || "none";
+    throw new Error(
+      `The ZIP must contain exactly one skill folder at its root. Found: ${found}`,
+    );
+  }
+  const rootName = [...roots][0]!;
+  const skillFiles = files.filter((file) => file.relativePath.toLowerCase() === "skill.md");
+  if (skillFiles.length !== 1) {
+    throw new Error("The root skill folder must contain exactly one skill.md file");
+  }
+
+  let extractedBytes = 0;
+  const extracted = new Map<string, Uint8Array>();
+  for (const file of files) {
+    const content = await file.entry.async("uint8array");
+    extractedBytes += content.byteLength;
+    if (extractedBytes > maxSkillPackageBytes) {
+      throw new Error("Expanded skill package content must be 10 MB or smaller");
+    }
+    extracted.set(file.relativePath, content);
+  }
+  let markdown: string;
+  try {
+    markdown = new TextDecoder("utf-8", { fatal: true }).decode(
+      extracted.get(skillFiles[0]!.relativePath)!,
+    );
+  } catch {
+    throw new Error("skill.md must be valid UTF-8 text");
+  }
+  const skill = parseSkillMarkdown(markdown);
+  if (rootName !== skill.name) {
+    throw new Error(`Skill folder “${rootName}” must match the declared name “${skill.name}”`);
+  }
+  const resources = [...extracted.entries()]
+    .filter(([path]) => path.toLowerCase() !== "skill.md")
+    .map(([path, content]) => ({ path, content, mimeType: resourceMimeType(path) }));
+  return { skill, resources };
+}
 
 export const bundledWebSearchSkill = {
   id: bundledWebSearchSkillId,
@@ -28,6 +198,57 @@ Use the \`web.search\` tool whenever the request needs current or externally ver
   sourceUrl: null,
   bundled: true,
 } as const;
+
+export const bundledDocumentAuthoringSkill = {
+  id: bundledDocumentAuthoringSkillId,
+  name: "document-authoring",
+  description:
+    "Create or substantially revise polished office documents and data reports in PDF, Word DOCX, Excel XLSX, CSV, Markdown, or plain text. Use for drafting, restructuring, or improving a final document's content and presentation. Do not use for merely reviewing, summarizing, or answering questions about a document.",
+  content: `---
+name: document-authoring
+description: Create or substantially revise polished office documents and data reports in PDF, Word DOCX, Excel XLSX, CSV, Markdown, or plain text. Use for drafting, restructuring, or improving a final document's content and presentation. Do not use for merely reviewing, summarizing, or answering questions about a document.
+---
+
+# Document authoring
+
+Create a useful final deliverable, not a raw transcript with a file extension.
+
+## Establish the brief
+
+- Respect the format the user selected. If they did not select one, ask which format they want and wait.
+- Identify the document's purpose, audience, required facts, and any template or constraints already supplied.
+- Ask concise follow-up questions only for information that materially affects correctness. Never invent names, dates, recipients, amounts, terms, or other required facts.
+- For a substantial collaborative document, agree on a short outline before drafting when the structure or desired outcome is unclear. Do not force a lengthy coauthoring workflow on a simple, well-specified request.
+
+## Structure the content
+
+For PDF and Word DOCX, give the exporter polished semantic Markdown:
+
+- Use exactly one \`#\` title, then \`##\` major sections and \`###\` subsections where useful.
+- Use meaningful paragraphs, real lists, bold field labels, and Markdown tables for aligned data.
+- Adapt the structure to the deliverable. Letters use conventional correspondence structure; reports foreground purpose and findings; proposals make the recommendation and next steps scannable; agreements use consistent numbered clauses and signature areas where appropriate.
+- Never simulate layout with ALL CAPS body text, repeated equals signs, tabs, repeated punctuation, or manual space padding.
+
+For Excel XLSX and CSV:
+
+- Put the data in a Markdown table with a descriptive header row and one record per row.
+- Use XLSX when presentation, titles, explanatory sections, filters, or multiple tables matter.
+- Use CSV for one portable data table. CSV supports exactly one table and does not preserve presentation layout.
+- Keep amounts, dates, percentages, identifiers, and formulas unambiguous. Do not add decorative prose inside the data table.
+
+## Export and verify
+
+- Call \`documents.export\` directly with a final name, content, and the requested format. Do not create an intermediate Markdown file first.
+- Use \`files.write\` only when the requested final format is Markdown or plain text.
+- Check the tool result for the requested extension and a saved artifact before saying the file is ready.
+- If export fails, explain the actual error and preserve the draft for a corrected attempt. Never claim that a file was created when the tool did not succeed.
+- Before finishing, re-read the complete content for hierarchy, consistency, missing placeholders, unsupported claims, and whether a reader without the conversation context can understand it.
+`,
+  sourceUrl: null,
+  bundled: true,
+} as const;
+
+export const bundledSkills = [bundledWebSearchSkill, bundledDocumentAuthoringSkill] as const;
 
 function unquote(value: string): string {
   const trimmed = value.trim();

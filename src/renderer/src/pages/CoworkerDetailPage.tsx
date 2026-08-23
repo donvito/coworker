@@ -11,6 +11,7 @@ import type {
   Approval,
   AppSettings,
   Artifact,
+  Conversation,
   Coworker,
   Message as StoredMessage,
   Task,
@@ -49,6 +50,12 @@ const invoiceSchema = z.object({
   ),
   dueDays: z.number().optional(),
   currency: z.string().optional(),
+  format: z.enum(["pdf", "docx", "markdown", "txt"]).optional(),
+});
+
+const skillReadSchema = z.object({
+  name: z.string(),
+  path: z.string().optional(),
 });
 
 const emailSchema = z.object({
@@ -60,9 +67,18 @@ const emailSchema = z.object({
 
 const fileSchema = z.object({ path: z.string(), content: z.string() });
 const documentExportSchema = z.object({
-  sourcePath: z.string(),
-  formats: z.array(z.enum(["pdf", "docx"])),
+  sourcePath: z.string().optional(),
+  name: z.string().optional(),
+  content: z.string().optional(),
+  formats: z.array(z.enum(["pdf", "docx", "xlsx", "csv"])),
 });
+
+const officeFormatLabel = {
+  pdf: "PDF",
+  docx: "Word",
+  xlsx: "Excel",
+  csv: "CSV",
+} as const;
 const scheduleCreateSchema = z.object({
   name: z.string(),
   scheduleType: z.enum(["cron", "once"]),
@@ -218,6 +234,7 @@ function PersistedMessageImages({
 export function CoworkerDetailPage({
   coworker,
   coworkers,
+  conversations,
   tasks,
   approvals,
   artifacts,
@@ -233,6 +250,7 @@ export function CoworkerDetailPage({
 }: {
   coworker: Coworker;
   coworkers: Coworker[];
+  conversations: Conversation[];
   tasks: Task[];
   approvals: Approval[];
   artifacts: Artifact[];
@@ -248,13 +266,48 @@ export function CoworkerDetailPage({
 }) {
   const [managing, setManaging] = useState(false);
   const [creating, setCreating] = useState(false);
+  const latestConversation = conversations.reduce<Conversation | null>(
+    (latest, conversation) =>
+      !latest || conversation.updatedAt > latest.updatedAt ? conversation : latest,
+    null,
+  );
+  const [selectedConversationId, setSelectedConversationId] = useState(
+    latestConversation?.id ?? `coworker:${coworker.id}`,
+  );
+  const selectedConversation =
+    conversations.find((conversation) => conversation.id === selectedConversationId) ?? null;
+  const activeConversationId = selectedConversationId;
+  const conversationTaskIds = new Set(
+    tasks
+      .filter((task) => task.coworkerId === coworker.id && task.threadId === activeConversationId)
+      .map((task) => task.id),
+  );
+  const conversationMessages = messages.filter(
+    (message) => message.taskId && conversationTaskIds.has(message.taskId),
+  );
+
+  useEffect(() => {
+    const next = conversations.reduce<Conversation | null>(
+      (latest, conversation) =>
+        !latest || conversation.updatedAt > latest.updatedAt ? conversation : latest,
+      null,
+    );
+    setSelectedConversationId(next?.id ?? `coworker:${coworker.id}`);
+  }, [coworker.id]);
+
+  async function createConversation() {
+    const conversation = await window.coworker.conversations.create({ coworkerId: coworker.id });
+    setSelectedConversationId(conversation.id);
+    await onChanged();
+  }
+
   const agent = useMemo(
     () =>
       new IpcCoworkerAgent(coworker.id, {
         agentId: coworker.id,
         description: `${coworker.name} · ${coworker.role}`,
-        threadId: `coworker:${coworker.id}`,
-        initialMessages: messages
+        threadId: activeConversationId,
+        initialMessages: conversationMessages
           .filter((message) => message.role === "user" || message.role === "assistant")
           .map((message) => ({
             id: message.id,
@@ -262,26 +315,35 @@ export function CoworkerDetailPage({
             content: message.content,
           })),
       }),
-    [coworker.id],
+    [coworker.id, activeConversationId],
   );
 
   return (
     <>
-      <LocalCopilotProvider agentId={coworker.id} agent={agent}>
+      <LocalCopilotProvider
+        agentId={coworker.id}
+        agent={agent}
+        key={`${coworker.id}:${activeConversationId}`}
+      >
         <CoworkerSurface
           coworker={coworker}
           coworkers={coworkers}
+          conversations={conversations}
+          conversationId={activeConversationId}
+          selectedConversation={selectedConversation}
           tasks={tasks}
           approvals={approvals}
           artifacts={artifacts}
-          storedMessages={messages}
+          storedMessages={conversationMessages}
           imageAttachments={imageAttachments}
           onBack={onBack}
           onChanged={onChanged}
           onCreate={() => setCreating(true)}
           onManage={() => setManaging(true)}
+          onNewConversation={createConversation}
           onOpenApprovals={onOpenApprovals}
           onSelectCoworker={onSelectCoworker}
+          onSelectConversation={setSelectedConversationId}
         />
       </LocalCopilotProvider>
       {managing ? (
@@ -308,6 +370,9 @@ export function CoworkerDetailPage({
 function CoworkerSurface({
   coworker,
   coworkers,
+  conversations,
+  conversationId,
+  selectedConversation,
   tasks,
   approvals,
   artifacts,
@@ -317,11 +382,16 @@ function CoworkerSurface({
   onChanged,
   onCreate,
   onManage,
+  onNewConversation,
   onOpenApprovals,
   onSelectCoworker,
+  onSelectConversation,
 }: {
   coworker: Coworker;
   coworkers: Coworker[];
+  conversations: Conversation[];
+  conversationId: string;
+  selectedConversation: Conversation | null;
   tasks: Task[];
   approvals: Approval[];
   artifacts: Artifact[];
@@ -331,8 +401,10 @@ function CoworkerSurface({
   onChanged: () => Promise<void>;
   onCreate: () => void;
   onManage: () => void;
+  onNewConversation: () => Promise<void>;
   onOpenApprovals: () => void;
   onSelectCoworker: (coworker: Coworker) => void;
+  onSelectConversation: (conversationId: string) => void;
 }) {
   const { agent, isReady } = useAgent({
     agentId: coworker.id,
@@ -343,7 +415,9 @@ function CoworkerSurface({
     ],
     throttleMs: 24,
   });
-  const coworkerTasks = tasks.filter((task) => task.coworkerId === coworker.id);
+  const coworkerTasks = tasks.filter(
+    (task) => task.coworkerId === coworker.id && task.threadId === conversationId,
+  );
   const latestTask = coworkerTasks.reduce<Task | null>(
     (latest, task) => (!latest || task.createdAt > latest.createdAt ? task : latest),
     null,
@@ -357,12 +431,16 @@ function CoworkerSurface({
   const [draggingImages, setDraggingImages] = useState(false);
   const [supportsImageInput, setSupportsImageInput] = useState<boolean | null>(null);
   const [search, setSearch] = useState("");
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [conversationBusy, setConversationBusy] = useState(false);
+  const [conversationError, setConversationError] = useState<string | null>(null);
   const [approvalInFlight, setApprovalInFlight] = useState<string | null>(null);
   const [approvalError, setApprovalError] = useState<string | null>(null);
   const [rightRailTab, setRightRailTab] = useState<"files" | "approvals">(
     pending.length > 0 ? "approvals" : "files",
   );
   const transcriptRef = useRef<HTMLDivElement>(null);
+  const historyRef = useRef<HTMLDivElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const imageDragDepth = useRef(0);
   const messageTimes = useMemo(
@@ -395,6 +473,14 @@ function CoworkerSurface({
     right.createdAt.localeCompare(left.createdAt),
   );
   const tasksById = new Map(tasks.map((task) => [task.id, task]));
+  const conversationTaskCounts = new Map<string, number>();
+  for (const task of tasks) {
+    if (task.coworkerId !== coworker.id) continue;
+    conversationTaskCounts.set(task.threadId, (conversationTaskCounts.get(task.threadId) ?? 0) + 1);
+  }
+  const sortedConversations = [...conversations].sort((left, right) =>
+    right.updatedAt.localeCompare(left.updatedAt),
+  );
 
   useEffect(() => {
     transcriptRef.current?.scrollTo({
@@ -402,6 +488,29 @@ function CoworkerSurface({
       behavior: "smooth",
     });
   }, [agent.messages.length, agent.isRunning]);
+
+  useEffect(() => {
+    if (!historyOpen) return;
+    const close = (event: PointerEvent) => {
+      if (!historyRef.current?.contains(event.target as Node)) setHistoryOpen(false);
+    };
+    document.addEventListener("pointerdown", close);
+    return () => document.removeEventListener("pointerdown", close);
+  }, [historyOpen]);
+
+  async function startNewConversation() {
+    if (agent.isRunning || conversationBusy) return;
+    setConversationBusy(true);
+    setConversationError(null);
+    setHistoryOpen(false);
+    try {
+      await onNewConversation();
+    } catch (error) {
+      setConversationError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setConversationBusy(false);
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -424,6 +533,22 @@ function CoworkerSurface({
   }, [coworker.modelProvider, coworker.modelName]);
 
   useRenderTool({
+    name: "skills.read",
+    parameters: skillReadSchema,
+    render: ({ status, parameters }) => (
+      <div className="tool-card conversation-tool-card skill-used-card">
+        <span className="tool-card-icon">
+          <Icon name="check" />
+        </span>
+        <span>
+          <small>{status === "complete" ? "Skill used" : "Loading skill"}</small>
+          <strong>{parameters.name}</strong>
+          {parameters.path ? <span>{parameters.path}</span> : null}
+        </span>
+      </div>
+    ),
+  });
+  useRenderTool({
     name: "invoice.create",
     parameters: invoiceSchema,
     render: ({ status, parameters, result }) => {
@@ -438,11 +563,13 @@ function CoworkerSurface({
         <div className="invoice-document-card">
           <div className="invoice-document-head">
             <span>
-              <small>Invoice draft</small>
+              <small>Invoice</small>
               <strong>{parameters.client || "New invoice"}</strong>
             </span>
             <span className="invoice-state">
-              {status === "complete" ? "Draft ready" : "Preparing"}
+              {status === "complete"
+                ? `${(parameters.format || "file").toUpperCase()} ready`
+                : "Preparing"}
             </span>
           </div>
           <div className="invoice-document-body">
@@ -539,10 +666,10 @@ function CoworkerSurface({
             <small>{status === "complete" ? "Document exported" : "Exporting document"}</small>
             <strong>
               {(parameters.formats ?? [])
-                .map((format) => (format === "docx" ? "Word" : "PDF"))
+                .map((format) => officeFormatLabel[format])
                 .join(" + ") || "Document"}
             </strong>
-            <span>{parameters.sourcePath || "Workspace document"}</span>
+            <span>{parameters.sourcePath || parameters.name || "Workspace document"}</span>
             {artifactTargets.length > 0 ? (
               <span className="chat-exported-files">
                 {artifactTargets.map((target) => (
@@ -783,9 +910,79 @@ function CoworkerSurface({
                 <StatusLabel status={coworker.runtimeStatus} />
               </span>
               <small>{coworker.role}</small>
+              <small className="conversation-current-title">
+                {selectedConversation?.title ?? "New conversation"}
+              </small>
             </span>
           </div>
           <div className="conversation-head-controls">
+            <div className="conversation-history-control" ref={historyRef}>
+              <button
+                aria-expanded={historyOpen}
+                aria-haspopup="dialog"
+                className="conversation-history-trigger"
+                disabled={agent.isRunning}
+                onClick={() => setHistoryOpen((open) => !open)}
+                type="button"
+              >
+                <Icon name="clock" />
+                <span>History</span>
+              </button>
+              {historyOpen ? (
+                <div
+                  aria-label="Conversation history"
+                  className="conversation-history-menu"
+                  role="dialog"
+                >
+                  <header>
+                    <span>
+                      <strong>Past conversations</strong>
+                      <small>Continue where you left off</small>
+                    </span>
+                    <button
+                      aria-label="Start a new conversation"
+                      onClick={() => void startNewConversation()}
+                      type="button"
+                    >
+                      <Icon name="plus" />
+                    </button>
+                  </header>
+                  <div className="conversation-history-list">
+                    {sortedConversations.map((conversation) => (
+                      <button
+                        aria-current={conversation.id === conversationId ? "true" : undefined}
+                        className={conversation.id === conversationId ? "selected" : ""}
+                        key={conversation.id}
+                        onClick={() => {
+                          onSelectConversation(conversation.id);
+                          setHistoryOpen(false);
+                          setConversationError(null);
+                        }}
+                        type="button"
+                      >
+                        <span>
+                          <strong>{conversation.title}</strong>
+                          <small>
+                            {conversationTaskCounts.get(conversation.id) ?? 0} turns ·{" "}
+                            {formatRelativeTime(conversation.updatedAt)}
+                          </small>
+                        </span>
+                        {conversation.id === conversationId ? <Icon name="check" /> : null}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+            <button
+              className="conversation-new-button"
+              disabled={agent.isRunning || conversationBusy}
+              onClick={() => void startNewConversation()}
+              type="button"
+            >
+              <Icon name="plus" />
+              <span>{conversationBusy ? "Starting…" : "New"}</span>
+            </button>
             <QuickModelSwitcher
               coworker={coworker}
               disabled={agent.isRunning}
@@ -799,6 +996,11 @@ function CoworkerSurface({
               <Icon name="more" />
             </button>
           </div>
+          {conversationError ? (
+            <small className="conversation-head-error" role="alert">
+              {conversationError}
+            </small>
+          ) : null}
         </header>
 
         <div className="conversation-thread">

@@ -49,6 +49,11 @@ export const createTaskSchema = z.object({
   threadId: identifier.optional(),
 });
 
+export const createConversationSchema = z.object({
+  coworkerId: identifier,
+  title: z.string().trim().min(1).max(160).optional(),
+});
+
 export const approvalDecisionSchema = z.object({
   approvalId: identifier,
   decision: z.enum(["approve", "reject", "edit"]),
@@ -185,6 +190,7 @@ export const settingsPatchSchema = z
     runInBackground: z.boolean().optional(),
     launchAtLogin: z.boolean().optional(),
     demoMode: z.boolean().optional(),
+    globalOperatingInstructions: z.string().trim().max(50_000).optional(),
     defaultModelProvider: z.enum(remoteModelProviders).nullable().optional(),
     defaultModelName: z.string().trim().min(1).max(160).nullable().optional(),
   })
@@ -243,6 +249,12 @@ export const installSkillUrlSchema = z.object({
 
 export const installSkillContentSchema = z.object({
   content: z.string().min(1).max(1_000_000),
+  coworkerId: identifier.optional(),
+});
+
+export const installSkillPackageSchema = z.object({
+  fileName: z.string().trim().min(1).max(240).regex(/\.(?:skill|zip)$/i),
+  dataBase64: z.string().min(4).max(14_000_000).regex(/^[A-Za-z0-9+/]*={0,2}$/),
   coworkerId: identifier.optional(),
 });
 

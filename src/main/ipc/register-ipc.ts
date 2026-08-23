@@ -22,9 +22,11 @@ import {
   createCoworkerSchema,
   createScheduleSchema,
   createTaskSchema,
+  createConversationSchema,
   idSchema,
   installSkillUrlSchema,
   installSkillContentSchema,
+  installSkillPackageSchema,
   listLimitSchema,
   modelProviderSchema,
   settingsPatchSchema,
@@ -86,6 +88,15 @@ export function registerIpc(input: {
   );
   handle(ipcChannels.coworkersRemove, (_event, id) =>
     input.service.removeCoworker(idSchema.parse(id)),
+  );
+
+  handle(ipcChannels.conversationsList, (_event, coworkerId) =>
+    input.service.database.listConversations(
+      coworkerId === undefined ? undefined : idSchema.parse(coworkerId),
+    ),
+  );
+  handle(ipcChannels.conversationsCreate, (_event, value) =>
+    input.service.createConversation(createConversationSchema.parse(value)),
   );
 
   handle(ipcChannels.tasksList, (_event, coworkerId) =>
@@ -246,6 +257,14 @@ export function registerIpc(input: {
   handle(ipcChannels.skillsInstallFromContent, (_event, value) => {
     const parsed = installSkillContentSchema.parse(value);
     return input.service.installSkillFromContent(parsed.content, parsed.coworkerId);
+  });
+  handle(ipcChannels.skillsInstallFromPackage, (_event, value) => {
+    const parsed = installSkillPackageSchema.parse(value);
+    return input.service.installSkillFromPackage(
+      parsed.fileName,
+      parsed.dataBase64,
+      parsed.coworkerId,
+    );
   });
   handle(ipcChannels.skillsRemove, (_event, id) =>
     input.service.removeSkill(idSchema.parse(id)),

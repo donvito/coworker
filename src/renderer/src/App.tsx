@@ -91,6 +91,9 @@ export default function App() {
         <CoworkerDetailPage
           coworker={selectedCoworker}
           coworkers={snapshot.coworkers}
+          conversations={snapshot.conversations.filter(
+            (conversation) => conversation.coworkerId === selectedCoworker.id,
+          )}
           tasks={snapshot.tasks}
           approvals={snapshot.approvals}
           artifacts={snapshot.artifacts.filter(
@@ -102,6 +105,7 @@ export default function App() {
           imageAttachments={snapshot.imageAttachments.filter(
             (attachment) => attachment.coworkerId === selectedCoworker.id,
           )}
+          key={selectedCoworker.id}
           skills={snapshot.skills}
           settings={snapshot.settings}
           onBack={() => setSelectedCoworkerId(null)}

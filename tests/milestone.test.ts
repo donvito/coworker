@@ -82,6 +82,12 @@ describe("first architecture milestone", () => {
           },
           join(root, "workspaces", "ava"),
         );
+        const salesHandoffSkill = database.upsertSkill({
+          name: "sales-handoff",
+          description: "Creates structured sales handoff reports for account teams.",
+          content:
+            "---\nname: sales-handoff\ndescription: Creates structured sales handoff reports for account teams.\n---\n\n# Sales handoff\n\nSummarize the opportunity and next actions.",
+        });
         const sarah = database.createCoworker(
           {
             name: "Sarah",
@@ -90,6 +96,7 @@ describe("first architecture milestone", () => {
             modelProvider: "demo",
             modelName: "faux-1",
             enabledTools: ["files.write"],
+            enabledSkillIds: [salesHandoffSkill.id],
           },
           join(root, "workspaces", "sarah"),
         );
@@ -97,12 +104,12 @@ describe("first architecture milestone", () => {
           coworkerId: ava.id,
           title: "Prepare the Acme invoice",
           input:
-            "Prepare an invoice for Acme Ltd for 12 hours at $150/hour, due in 14 days, and send it to billing@acme.test.",
+            "Prepare a Markdown invoice for Acme Ltd for 12 hours at $150/hour, due in 14 days, and send it to billing@acme.test.",
         });
         const sarahTask = database.createTask({
           coworkerId: sarah.id,
           title: "Create sales handoff",
-          input: "Create today's sales handoff report and save it.",
+          input: "Create today's sales handoff report as Markdown and save it.",
           source: "schedule",
         });
 
@@ -136,6 +143,11 @@ describe("first architecture milestone", () => {
           true,
         );
         expect(database.listArtifacts(sarah.id)).toHaveLength(1);
+        expect(
+          database
+            .listToolCalls(sarahTask.id)
+            .filter((toolCall) => toolCall.toolName === "skills.read"),
+        ).toEqual([]);
         const [approval] = database.listApprovals("PENDING");
         expect(approval).toMatchObject({
           coworkerId: ava.id,

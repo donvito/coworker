@@ -141,6 +141,8 @@ export function artifactExtension(artifact: Artifact): string {
 export function artifactKind(artifact: Artifact): string {
   if (artifact.mimeType === "application/pdf") return "PDF document";
   if (artifact.mimeType.includes("wordprocessingml")) return "Word document";
+  if (artifact.mimeType.includes("spreadsheetml")) return "Excel workbook";
+  if (artifact.mimeType === "text/csv") return "CSV spreadsheet";
   if (artifact.mimeType === "text/markdown") return "Markdown";
   if (artifact.mimeType === "message/rfc822") return "Email draft";
   if (artifact.mimeType.startsWith("text/")) return "Text document";

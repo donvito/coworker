@@ -44,10 +44,11 @@ describe("provider diagnostics settings", () => {
         integrations={[]}
         onChanged={vi.fn().mockResolvedValue(undefined)}
         settings={{
-          demoMode: false,
-          launchAtLogin: false,
-          runInBackground: true,
-          defaultModelProvider: null,
+      demoMode: false,
+      launchAtLogin: false,
+      runInBackground: true,
+      globalOperatingInstructions: "Ask when information is missing.",
+      defaultModelProvider: null,
           defaultModelName: null,
         }}
         skills={[]}

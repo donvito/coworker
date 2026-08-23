@@ -21,6 +21,23 @@ import { PageHeader } from "../components/Primitives";
 
 type SettingsTab = "general" | "models" | "skills" | "integrations" | "data";
 
+function bytesToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  for (let offset = 0; offset < bytes.length; offset += 32_768) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + 32_768));
+  }
+  return btoa(binary);
+}
+
+function readableError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.replace(
+    /^Error invoking remote method '[^']+':\s*(?:Error:\s*)?/,
+    "",
+  );
+}
+
 export function SettingsPage({
   settings,
   integrations,
@@ -50,6 +67,9 @@ export function SettingsPage({
   const [webSearchProvider, setWebSearchProvider] = useState<WebSearchProvider>("tavily");
   const [providerErrors, setProviderErrors] = useState<ProviderErrorDiagnostic[]>([]);
   const [diagnosticsLoading, setDiagnosticsLoading] = useState(false);
+  const [globalInstructions, setGlobalInstructions] = useState(
+    settings.globalOperatingInstructions,
+  );
 
   useEffect(() => {
     void Promise.all(
@@ -79,6 +99,10 @@ export function SettingsPage({
     setCatalogProvider(settings.defaultModelProvider ?? "");
     setCatalogModel(settings.defaultModelName ?? "");
   }, [settings.defaultModelName, settings.defaultModelProvider]);
+
+  useEffect(() => {
+    setGlobalInstructions(settings.globalOperatingInstructions);
+  }, [settings.globalOperatingInstructions]);
 
   useEffect(() => {
     if (tab === "data") void refreshProviderErrors();
@@ -128,6 +152,27 @@ export function SettingsPage({
     try {
       await window.coworker.app.updateSettings(patch);
       await onChanged();
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function saveGlobalInstructions(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setWorking(true);
+    setNotice(null);
+    try {
+      await window.coworker.app.updateSettings({
+        globalOperatingInstructions: globalInstructions.trim(),
+      });
+      await onChanged();
+      setNoticeKind("success");
+      setNotice(
+        "Global operating instructions saved. Coworkers will use them on the next request.",
+      );
+    } catch (saveError) {
+      setNoticeKind("error");
+      setNotice(saveError instanceof Error ? saveError.message : String(saveError));
     } finally {
       setWorking(false);
     }
@@ -260,14 +305,29 @@ export function SettingsPage({
     setWorking(true);
     setNotice(null);
     try {
-      if (file.size > 1_000_000) throw new Error("Skill files must be 1 MB or smaller.");
-      const skill = await window.coworker.skills.installFromContent(await file.text());
+      const isPackage = /\.(?:skill|zip)$/i.test(file.name);
+      if (!isPackage && !/\.md$/i.test(file.name)) {
+        throw new Error("Upload skill.md, a .skill package, or a .zip package.");
+      }
+      if (file.size > (isPackage ? 10_000_000 : 1_000_000)) {
+        throw new Error(isPackage ? "Skill packages must be 10 MB or smaller." : "Skill files must be 1 MB or smaller.");
+      }
+      const skill = isPackage
+        ? await window.coworker.skills.installFromPackage(
+            file.name,
+            bytesToBase64(await file.arrayBuffer()),
+          )
+        : await window.coworker.skills.installFromContent(await file.text());
       await onChanged();
       setNoticeKind("success");
-      setNotice(`${skill.name} was uploaded and is globally available.`);
+      setNotice(
+        coworkers.length
+          ? `${skill.name} was installed. Enable it for the coworkers below that should use it.`
+          : `${skill.name} was installed and is available for future coworker configuration.`,
+      );
     } catch (uploadError) {
       setNoticeKind("error");
-      setNotice(uploadError instanceof Error ? uploadError.message : String(uploadError));
+      setNotice(readableError(uploadError));
     } finally {
       setWorking(false);
     }
@@ -375,6 +435,37 @@ export function SettingsPage({
                   </span>
                 </label>
               </div>
+              <form className="global-instructions-form" onSubmit={saveGlobalInstructions}>
+                <span>
+                  <strong>Global operating instructions</strong>
+                  <small>
+                    Applied to every coworker alongside its own operating instructions. Built-in
+                    tool and approval safeguards still apply.
+                  </small>
+                </span>
+                <textarea
+                  aria-label="Global operating instructions"
+                  disabled={working}
+                  maxLength={50_000}
+                  onChange={(event) => setGlobalInstructions(event.target.value)}
+                  rows={7}
+                  value={globalInstructions}
+                />
+                <div>
+                  <small>
+                    Use this for shared behavior, such as asking follow-up questions when required
+                    information is missing.
+                  </small>
+                  <button
+                    className="primary-button"
+                    disabled={
+                      working || globalInstructions.trim() === settings.globalOperatingInstructions
+                    }
+                  >
+                    Save instructions
+                  </button>
+                </div>
+              </form>
             </section>
           ) : null}
 
@@ -532,8 +623,9 @@ export function SettingsPage({
               <span className="eyebrow">Agent Skills standard</span>
               <h2>Global skills, configured per coworker</h2>
               <p>
-                Paste an HTTPS URL that returns a compliant SKILL.md. The app validates and stores
-                it globally; each coworker can opt in independently.
+                Install a compliant skill.md directly, or upload a standard .skill/.zip package
+                containing one root folder whose name matches the skill. Packaged resources are
+                preserved; each coworker can opt in independently.
               </p>
               <form className="skill-url-form" onSubmit={installSkill}>
                 <input
@@ -547,7 +639,7 @@ export function SettingsPage({
               </form>
               <label className="skill-upload-button">
                 <input
-                  accept=".md,text/markdown,text/plain"
+                  accept=".md,.skill,.zip,text/markdown,application/zip"
                   disabled={working}
                   onChange={(event) => {
                     void uploadSkill(event.target.files?.[0]);
@@ -555,7 +647,7 @@ export function SettingsPage({
                   }}
                   type="file"
                 />
-                <span>Or upload a SKILL.md file</span>
+                <span>Upload skill.md, .skill, or .zip</span>
               </label>
 
               <div className="skill-settings-list">

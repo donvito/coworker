@@ -17,8 +17,9 @@ export interface WorkerCoworkerConfig {
   modelBaseUrl?: string;
   modelSupportsImages?: boolean;
   modelContextWindow?: number;
-  recentMessages: unknown[];
+  globalOperatingInstructions: string;
   skills: Array<{ name: string; description: string }>;
+  recentSkillUses: string[];
 }
 
 export type MainToWorkerMessage =
@@ -30,6 +31,7 @@ export type MainToWorkerMessage =
       threadId: string;
       input: string;
       images?: ImageContent[];
+      threadMessages?: unknown[];
       checkpoint?: unknown[];
       resume?: {
         decision: "approved" | "edited" | "rejected";

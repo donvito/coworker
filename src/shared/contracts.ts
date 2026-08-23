@@ -159,6 +159,19 @@ export interface Task {
   completedAt: string | null;
 }
 
+export interface Conversation {
+  id: string;
+  coworkerId: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateConversationInput {
+  coworkerId: string;
+  title?: string;
+}
+
 export interface TaskImageAttachment {
   id: string;
   taskId: string;
@@ -310,12 +323,14 @@ export interface AppSettings {
   runInBackground: boolean;
   launchAtLogin: boolean;
   demoMode: boolean;
+  globalOperatingInstructions: string;
   defaultModelProvider: RemoteModelProvider | null;
   defaultModelName: string | null;
 }
 
 export interface AppSnapshot {
   coworkers: Coworker[];
+  conversations: Conversation[];
   tasks: Task[];
   messages: Message[];
   imageAttachments: TaskImageAttachmentSummary[];
@@ -331,6 +346,7 @@ export interface AppSnapshot {
 
 export type EntityName =
   | "coworkers"
+  | "conversations"
   | "tasks"
   | "approvals"
   | "schedules"
@@ -385,6 +401,10 @@ export interface DesktopApi {
     create(input: CreateCoworkerInput): Promise<Coworker>;
     update(id: string, input: UpdateCoworkerInput): Promise<Coworker>;
     remove(id: string): Promise<void>;
+  };
+  conversations: {
+    list(coworkerId?: string): Promise<Conversation[]>;
+    create(input: CreateConversationInput): Promise<Conversation>;
   };
   tasks: {
     list(coworkerId?: string): Promise<Task[]>;
@@ -450,6 +470,11 @@ export interface DesktopApi {
     list(): Promise<Skill[]>;
     installFromUrl(url: string, coworkerId?: string): Promise<Skill>;
     installFromContent(content: string, coworkerId?: string): Promise<Skill>;
+    installFromPackage(
+      fileName: string,
+      dataBase64: string,
+      coworkerId?: string,
+    ): Promise<Skill>;
     remove(id: string): Promise<void>;
   };
   agents: {

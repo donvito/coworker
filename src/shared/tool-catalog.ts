@@ -12,7 +12,8 @@ export const toolCatalog = [
   {
     name: "skills.read",
     label: "Read enabled skill",
-    description: "Load the full instructions for a skill enabled for this coworker.",
+    description:
+      "Load the instructions for an enabled skill and list its packaged resources. Call again with a relative path to read a text resource referenced by skill.md.",
     risk: "low",
     defaultPolicy: "automatic",
   },
@@ -48,15 +49,16 @@ export const toolCatalog = [
   {
     name: "invoice.create",
     label: "Create invoice",
-    description: "Create a deterministic invoice document in the coworker's workspace.",
+    description:
+      "Create a deterministic invoice directly in the PDF, Word DOCX, Markdown, or plain-text format explicitly selected by the user. This creates the final file; do not call documents.export afterward.",
     risk: "low",
     defaultPolicy: "automatic",
   },
   {
     name: "documents.export",
-    label: "Export PDF or Word document",
+    label: "Export office document",
     description:
-      "Convert an existing Markdown or text workspace file into sibling PDF, Word DOCX, or both files.",
+      "Create PDF, Word DOCX, Excel XLSX, or CSV files directly from polished semantic Markdown, or convert an existing Markdown/text workspace file. Use a Markdown table with a header row for Excel or CSV. For new documents, supply the final content and name so no intermediate Markdown file is created.",
     risk: "medium",
     defaultPolicy: "automatic",
   },

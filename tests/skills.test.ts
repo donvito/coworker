@@ -1,12 +1,19 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import JSZip from "jszip";
+import { DesktopAppService } from "@main/app/app-service";
 import { CoworkerDatabase } from "@main/db/database";
 import { MemoryCredentialStore } from "@main/security/credential-store";
 import { ToolGateway } from "@main/tools/tool-gateway";
 import {
+  bundledDocumentAuthoringSkill,
   bundledWebSearchSkill,
   downloadSkillFromUrl,
   installSkillFromUrl,
   parseSkillMarkdown,
+  parseSkillPackage,
   skillUrlFromPrompt,
 } from "@main/integrations/skills";
 
@@ -21,6 +28,45 @@ Summarize user-visible changes and include upgrade guidance.
 `;
 
 describe("Agent Skills support", () => {
+  it("ships a valid, narrowly routed document-authoring skill", () => {
+    expect(parseSkillMarkdown(bundledDocumentAuthoringSkill.content)).toMatchObject({
+      name: "document-authoring",
+      description: expect.stringContaining("Do not use for merely reviewing"),
+    });
+    expect(bundledDocumentAuthoringSkill.bundled).toBe(true);
+  });
+
+  it("seeds and enables the bundled authoring skill for existing coworkers", async () => {
+    const root = await mkdtemp(join(tmpdir(), "coworker-bundled-skills-"));
+    const database = new CoworkerDatabase(join(root, "coworker.db"));
+    const legacyCoworker = database.createCoworker(
+      {
+        name: "Legacy",
+        role: "Office coworker",
+        systemPrompt: "Work carefully.",
+        modelProvider: "demo",
+        modelName: "faux-1",
+        enabledTools: ["documents.export"],
+      },
+      join(root, "workspace"),
+    );
+    database.setMetadata("bundled-skills-enabled-v1", "true");
+    const service = new DesktopAppService({
+      dataPath: root,
+      database,
+      credentials: new MemoryCredentialStore(),
+    });
+    try {
+      await service.initialize();
+      const skill = service.database.getSkillByName("document-authoring");
+      expect(skill).not.toBeNull();
+      expect(service.database.getCoworker(legacyCoworker.id).enabledSkillIds).toContain(skill!.id);
+    } finally {
+      await service.shutdown();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("validates compliant skill frontmatter and recognizes chat installation prompts", () => {
     expect(parseSkillMarkdown(compliantSkill)).toMatchObject({
       name: "release-notes",
@@ -92,9 +138,67 @@ describe("Agent Skills support", () => {
     expect(fetcher).not.toHaveBeenCalled();
   });
 
+  it("loads a standard packaged skill and preserves its resources", async () => {
+    const archive = new JSZip();
+    archive.file("release-notes/skill.md", compliantSkill);
+    archive.file(
+      "release-notes/resources/template.md",
+      "# Release template\n\n## Highlights\n",
+    );
+    const bytes = await archive.generateAsync({ type: "uint8array" });
+
+    const parsed = await parseSkillPackage(bytes);
+
+    expect(parsed.skill.name).toBe("release-notes");
+    expect(parsed.resources).toEqual([
+      expect.objectContaining({
+        path: "resources/template.md",
+        mimeType: "text/markdown",
+      }),
+    ]);
+    expect(new TextDecoder().decode(parsed.resources[0]!.content)).toContain("Release template");
+  });
+
+  it("ignores harmless macOS metadata beside the single skill folder", async () => {
+    const archive = new JSZip();
+    archive.file("release-notes/skill.md", compliantSkill);
+    archive.file("release-notes/.DS_Store", "metadata");
+    archive.file("__MACOSX/release-notes/._skill.md", "metadata");
+    archive.file("__MACOSX/._release-notes", "metadata");
+
+    const parsed = await parseSkillPackage(
+      await archive.generateAsync({ type: "uint8array" }),
+    );
+
+    expect(parsed.skill.name).toBe("release-notes");
+    expect(parsed.resources).toEqual([]);
+  });
+
+  it("rejects packages whose single root folder does not match the skill name", async () => {
+    const wrongRoot = new JSZip();
+    wrongRoot.file("another-name/skill.md", compliantSkill);
+    await expect(
+      parseSkillPackage(await wrongRoot.generateAsync({ type: "uint8array" })),
+    ).rejects.toThrow(/folder.*match/i);
+
+    const multipleRoots = new JSZip();
+    multipleRoots.file("release-notes/skill.md", compliantSkill);
+    multipleRoots.file("extra/readme.md", "extra");
+    await expect(
+      parseSkillPackage(await multipleRoots.generateAsync({ type: "uint8array" })),
+    ).rejects.toThrow(/exactly one skill folder/i);
+  });
+
   it("exposes full instructions only through an enabled coworker's skill reader", async () => {
     const database = new CoworkerDatabase(":memory:");
     const skill = database.upsertSkill(parseSkillMarkdown(compliantSkill));
+    database.replaceSkillResources(skill.id, [
+      {
+        path: "resources/template.md",
+        mimeType: "text/markdown",
+        content: new TextEncoder().encode("# Packaged template"),
+      },
+    ]);
     const coworker = database.createCoworker(
       {
         name: "Ava",
@@ -126,6 +230,24 @@ describe("Agent Skills support", () => {
         expect(result.result).toMatchObject({
           name: "release-notes",
           content: expect.stringContaining("# Release notes"),
+          resources: [
+            expect.objectContaining({ path: "resources/template.md", mimeType: "text/markdown" }),
+          ],
+        });
+      }
+
+      const resource = await gateway.request({
+        task,
+        coworker,
+        toolCallId: "read-skill-resource",
+        toolName: "skills.read",
+        arguments: { name: "release-notes", path: "resources/template.md" },
+      });
+      expect(resource.kind).toBe("completed");
+      if (resource.kind === "completed") {
+        expect(resource.result).toMatchObject({
+          path: "resources/template.md",
+          content: "# Packaged template",
         });
       }
     } finally {

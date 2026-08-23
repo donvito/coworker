@@ -16,6 +16,10 @@ const api: DesktopApi = {
     update: (id, input) => ipcRenderer.invoke(ipcChannels.coworkersUpdate, id, input),
     remove: (id) => ipcRenderer.invoke(ipcChannels.coworkersRemove, id),
   },
+  conversations: {
+    list: (coworkerId) => ipcRenderer.invoke(ipcChannels.conversationsList, coworkerId),
+    create: (input) => ipcRenderer.invoke(ipcChannels.conversationsCreate, input),
+  },
   tasks: {
     list: (coworkerId) => ipcRenderer.invoke(ipcChannels.tasksList, coworkerId),
     create: (input) => ipcRenderer.invoke(ipcChannels.tasksCreate, input),
@@ -76,6 +80,12 @@ const api: DesktopApi = {
       ipcRenderer.invoke(ipcChannels.skillsInstallFromUrl, { url, coworkerId }),
     installFromContent: (content, coworkerId) =>
       ipcRenderer.invoke(ipcChannels.skillsInstallFromContent, { content, coworkerId }),
+    installFromPackage: (fileName, dataBase64, coworkerId) =>
+      ipcRenderer.invoke(ipcChannels.skillsInstallFromPackage, {
+        fileName,
+        dataBase64,
+        coworkerId,
+      }),
     remove: (id) => ipcRenderer.invoke(ipcChannels.skillsRemove, id),
   },
   agents: {

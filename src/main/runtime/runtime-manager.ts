@@ -52,7 +52,7 @@ export class CoworkerRuntimeManager {
       (() => new Worker(new URL("./runtime/coworker-worker.js", import.meta.url)));
   }
 
-  async start(coworkerId: string, excludeTaskId?: string): Promise<void> {
+  async start(coworkerId: string): Promise<void> {
     const existing = this.runtimes.get(coworkerId);
     if (existing) {
       await existing.ready;
@@ -110,18 +110,29 @@ export class CoworkerRuntimeManager {
       );
       const config: WorkerCoworkerConfig = {
         coworker,
+        globalOperatingInstructions:
+          this.options.database.getSettings().globalOperatingInstructions,
         modelApiKey: modelConfiguration.apiKey,
         modelBaseUrl: modelConfiguration.baseUrl,
         modelSupportsImages: modelConfiguration.supportsImages,
         modelContextWindow: modelConfiguration.contextWindow,
-        recentMessages: this.options.database
-          .listMessages(coworkerId)
-          .filter((message) => message.taskId !== excludeTaskId)
-          .slice(-100),
         skills: this.options.database.listCoworkerSkills(coworkerId).map((skill) => ({
           name: skill.name,
           description: skill.description,
         })),
+        recentSkillUses: this.options.database
+          .listToolCalls()
+          .filter(
+            (toolCall) =>
+              toolCall.coworkerId === coworkerId &&
+              toolCall.toolName === "skills.read" &&
+              toolCall.status === "COMPLETED",
+          )
+          .slice(-20)
+          .flatMap((toolCall) => {
+            const args = toolCall.arguments as { name?: unknown };
+            return typeof args?.name === "string" ? [args.name] : [];
+          }),
       };
       this.send(record, { type: "initialize", config });
       await Promise.race([
@@ -202,7 +213,7 @@ export class CoworkerRuntimeManager {
         return;
       }
       claimedTask = task;
-      await this.start(coworkerId, task.id);
+      await this.start(coworkerId);
       const runtime = this.runtimes.get(coworkerId);
       if (!runtime) throw new Error("Coworker runtime disappeared during startup");
       if (runtime.idleTimer) clearTimeout(runtime.idleTimer);
@@ -229,6 +240,12 @@ export class CoworkerRuntimeManager {
         this.options.emit({ type: "entity.changed", entity: "approvals", id: approval.id });
       }
       const checkpoint = this.options.database.getCheckpoint(task.id);
+      const threadMessages = resume
+        ? undefined
+        : this.options.database
+            .listConversationMessages(coworker.id, task.threadId)
+            .filter((message) => message.taskId !== task.id)
+            .slice(-100);
       const images = resume
         ? undefined
         : await loadImageAttachments(
@@ -242,6 +259,7 @@ export class CoworkerRuntimeManager {
         threadId: task.threadId,
         input: task.input,
         images,
+        threadMessages,
         checkpoint: checkpoint?.messages,
         resume,
       });
