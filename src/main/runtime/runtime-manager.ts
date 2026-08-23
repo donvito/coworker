@@ -5,6 +5,7 @@ import type { DesktopEvent, RuntimeStatus, Task } from "@shared/contracts";
 import type { CoworkerDatabase } from "@main/db/database";
 import type { CredentialStore } from "@main/security/credential-store";
 import { loadImageAttachments } from "@main/integrations/image-attachments";
+import { getRuntimeModelConfiguration } from "@main/integrations/model-catalog";
 import type { ToolGateway } from "@main/tools/tool-gateway";
 import type {
   MainToWorkerMessage,
@@ -95,20 +96,24 @@ export class CoworkerRuntimeManager {
       void this.handleWorkerExit(coworkerId, record, code);
     });
 
-    const modelApiKey =
-      coworker.modelProvider === "demo"
-        ? undefined
-        : (await this.options.credentials.get(`model:${coworker.modelProvider}`)) ?? undefined;
-    const config: WorkerCoworkerConfig = {
-      coworker,
-      modelApiKey,
-      recentMessages: this.options.database
-        .listMessages(coworkerId)
-        .filter((message) => message.taskId !== excludeTaskId)
-        .slice(-100),
-    };
-    this.send(record, { type: "initialize", config });
     try {
+      const modelConfiguration = await getRuntimeModelConfiguration(
+        coworker.modelProvider,
+        coworker.modelName,
+        this.options.credentials,
+      );
+      const config: WorkerCoworkerConfig = {
+        coworker,
+        modelApiKey: modelConfiguration.apiKey,
+        modelBaseUrl: modelConfiguration.baseUrl,
+        modelSupportsImages: modelConfiguration.supportsImages,
+        modelContextWindow: modelConfiguration.contextWindow,
+        recentMessages: this.options.database
+          .listMessages(coworkerId)
+          .filter((message) => message.taskId !== excludeTaskId)
+          .slice(-100),
+      };
+      this.send(record, { type: "initialize", config });
       await Promise.race([
         ready,
         new Promise<never>((_, reject) => {

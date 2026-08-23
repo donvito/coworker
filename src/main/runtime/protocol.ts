@@ -14,6 +14,9 @@ export interface WorkerCoworkerConfig {
     | "enabledTools"
   >;
   modelApiKey?: string;
+  modelBaseUrl?: string;
+  modelSupportsImages?: boolean;
+  modelContextWindow?: number;
   recentMessages: unknown[];
 }
 

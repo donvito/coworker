@@ -69,6 +69,10 @@ describe("durable state and queue invariants", () => {
     await first.initialize();
     const seeded = first.database.listCoworkers();
     expect(seeded.map((coworker) => coworker.name).sort()).toEqual(["Ava", "Sarah"]);
+    for (const coworker of seeded) {
+      expect(coworker.enabledTools).toContain("schedules.create");
+      expect(coworker.policies["schedules.create"]).toBe("approval");
+    }
     for (const coworker of seeded) await first.removeCoworker(coworker.id);
     await first.shutdown();
 

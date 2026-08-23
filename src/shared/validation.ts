@@ -1,5 +1,10 @@
 import { z } from "zod";
-import { approvalStatuses, modelProviders, toolPolicies } from "./contracts";
+import {
+  approvalStatuses,
+  modelProviders,
+  remoteModelProviders,
+  toolPolicies,
+} from "./contracts";
 
 const identifier = z.string().min(1).max(128);
 const optionalText = z.string().trim().max(10_000).optional();
@@ -60,7 +65,7 @@ export const createScheduleSchema = z
     name: z.string().trim().min(1).max(160),
     scheduleType: z.enum(["cron", "once"]),
     cronExpression: z.string().trim().min(1).max(160).optional(),
-    runAt: z.string().datetime().optional(),
+    runAt: z.string().datetime({ offset: true }).optional(),
     timezone: z.string().trim().min(1).max(120),
     taskTemplate: taskTemplateSchema,
     enabled: z.boolean().optional(),
@@ -87,7 +92,7 @@ export const updateScheduleSchema = z
     name: z.string().trim().min(1).max(160).optional(),
     scheduleType: z.enum(["cron", "once"]).optional(),
     cronExpression: z.string().trim().min(1).max(160).nullable().optional(),
-    runAt: z.string().datetime().nullable().optional(),
+    runAt: z.string().datetime({ offset: true }).nullable().optional(),
     timezone: z.string().trim().min(1).max(120).optional(),
     taskTemplate: taskTemplateSchema.optional(),
     enabled: z.boolean().optional(),
@@ -188,15 +193,48 @@ export const configureEmailSchema = z.object({
   fromAddress: z.string().email().optional(),
 });
 
-export const configureModelSchema = z.object({
-  provider: z.enum(["anthropic", "openai", "google"]),
-  apiKey: z.string().trim().min(1).max(2_000),
-});
+const modelBaseUrlSchema = z
+  .string()
+  .trim()
+  .max(2_048)
+  .url()
+  .superRefine((value, context) => {
+    const url = new URL(value);
+    if (!["http:", "https:"].includes(url.protocol)) {
+      context.addIssue({ code: "custom", message: "Model URL must use HTTP or HTTPS" });
+    }
+    if (url.username || url.password) {
+      context.addIssue({
+        code: "custom",
+        message: "Put credentials in the API key field, not in the model URL",
+      });
+    }
+  });
+
+export const configureModelSchema = z
+  .object({
+    provider: z.enum(remoteModelProviders),
+    apiKey: z.string().trim().max(2_000).optional(),
+    baseUrl: modelBaseUrlSchema.optional(),
+  })
+  .superRefine((value, context) => {
+    if (value.provider === "openai-compatible" && !value.baseUrl) {
+      context.addIssue({
+        code: "custom",
+        message: "A base URL is required for an OpenAI-compatible provider",
+        path: ["baseUrl"],
+      });
+    }
+  });
 
 export const credentialKeySchema = z.enum([
   "model:anthropic",
   "model:openai",
   "model:google",
+  "model:openrouter",
+  "model:ollama",
+  "model:lmstudio",
+  "model:openai-compatible",
   "integration:email:resend",
 ]);
 

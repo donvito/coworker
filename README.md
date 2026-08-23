@@ -11,11 +11,11 @@ A local-first Electron application for running independent AI coworkers. Each co
 - Local image attachments sent to vision-capable models as multimodal context
 - Confined file, invoice, PDF/Word export, email-draft, and email-send tools
 - Durable approval inbox with editable decisions and idempotent resume
-- Persistent cron and one-time schedules with run-once missed-run recovery
+- Persistent cron and one-time schedules, with chat reminders routed to the approval-gated local scheduler instead of file exports
 - OS-backed encrypted model and integration credentials
 - Tray/background operation, launch-at-login controls, and electron-builder packaging
 
-The built-in demo coworkers use Pi's faux provider, so the complete Ava/Sarah milestone works without an API key. Open-ended coworkers can use Anthropic, OpenAI, or Google after a credential is stored in Settings.
+The built-in demo coworkers use Pi's faux provider, so the complete Ava/Sarah milestone works without an API key. Open-ended coworkers can use Anthropic, OpenAI, Google, OpenRouter, Ollama, LM Studio, or a custom OpenAI-compatible endpoint after the provider is verified in Settings. Ollama defaults to `http://127.0.0.1:11434/v1`, LM Studio defaults to `http://127.0.0.1:1234/v1`, and both can be configured without an API key.
 
 ## Development
 
@@ -37,6 +37,30 @@ pnpm dist
 ```
 
 `pnpm test` builds the production worker first, then verifies queue isolation, real concurrent Pi workers, approval pause/resume, idempotency, scheduler recovery, and workspace confinement.
+
+## Agent evals
+
+The dedicated Vitest Evals suite exercises production worker threads and controlled tools, not mocked agent facades. Offline cases cover tool selection, response contracts, approval pause/approve/reject behavior, idempotent side effects, scheduler-first reminders, path confinement, malformed tool input, and multimodal validation.
+
+```sh
+# Deterministic, keyless suite used by CI
+pnpm eval
+
+# Also write eval-results/latest.json for the report UI or CI checks
+pnpm eval:report
+pnpm eval:ui
+```
+
+Live-provider quality cases are opt-in. They use the same harness and remain skipped unless all required variables are present:
+
+```sh
+EVAL_PROVIDER=openai \
+EVAL_MODEL=gpt-4.1-mini \
+EVAL_API_KEY=... \
+pnpm eval
+```
+
+`EVAL_PROVIDER` supports `anthropic`, `openai`, `google`, and `openrouter`. The provider-specific `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY`, or `OPENROUTER_API_KEY` can be used instead of `EVAL_API_KEY`. Live evals may incur provider charges; the deterministic suite never makes remote model calls.
 
 ## Local data and security
 

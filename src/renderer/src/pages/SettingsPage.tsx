@@ -1,5 +1,11 @@
 import { useEffect, useState, type FormEvent } from "react";
-import type { AppSettings, Integration } from "@shared/contracts";
+import type { AppSettings, Integration, RemoteModelProvider } from "@shared/contracts";
+import {
+  getModelProviderDefinition,
+  modelProviderCredentialKey,
+  modelProviderName,
+  remoteModelProviderDefinitions,
+} from "@shared/model-providers";
 import { Icon } from "../components/Icon";
 import { PageHeader } from "../components/Primitives";
 
@@ -21,10 +27,16 @@ export function SettingsPage({
   const [notice, setNotice] = useState<string | null>(null);
   const [noticeKind, setNoticeKind] = useState<"success" | "error">("success");
   const [credentialStatus, setCredentialStatus] = useState<Record<string, boolean>>({});
+  const [modelProvider, setModelProvider] = useState<RemoteModelProvider>("anthropic");
 
   useEffect(() => {
     void Promise.all(
-      ["model:anthropic", "model:openai", "model:google", "integration:email:resend"].map(
+      [
+        ...remoteModelProviderDefinitions.map((provider) =>
+          modelProviderCredentialKey(provider.id),
+        ),
+        "integration:email:resend",
+      ].map(
         async (key) => [key, (await window.coworker.integrations.credentialStatus(key)).configured] as const,
       ),
     ).then((entries) => setCredentialStatus(Object.fromEntries(entries)));
@@ -44,18 +56,21 @@ export function SettingsPage({
     event.preventDefault();
     const form = event.currentTarget;
     const data = new FormData(form);
-    const provider = String(data.get("provider")) as "anthropic" | "openai" | "google";
+    const provider = String(data.get("provider")) as RemoteModelProvider;
+    const apiKey = String(data.get("apiKey") ?? "").trim();
+    const baseUrl = String(data.get("baseUrl") ?? "").trim();
     setWorking(true);
     setNotice(null);
     try {
       const result = await window.coworker.integrations.configureModel({
         provider,
-        apiKey: String(data.get("apiKey")),
+        apiKey: apiKey || undefined,
+        baseUrl: baseUrl || undefined,
       });
       setCredentialStatus((current) => ({ ...current, [result.key]: true }));
       form.reset();
       setNoticeKind("success");
-      setNotice(`${providerName(provider)} credential stored securely.`);
+      setNotice(`${modelProviderName(provider)} configuration stored securely.`);
     } catch (configureError) {
       setNoticeKind("error");
       setNotice(
@@ -163,23 +178,25 @@ export function SettingsPage({
               <span className="eyebrow">Reasoning providers</span>
               <h2>Model credentials</h2>
               <p>
-                Keys are encrypted through the operating system. They are never returned to the
-                renderer or written as plaintext in SQLite. Model access is verified before a key
-                is saved.
+                Keys and endpoint settings are encrypted through the operating system. They are
+                never returned to the renderer or written as plaintext in SQLite. Model access is
+                verified before the configuration is saved.
               </p>
               <div className="provider-grid">
-                {(["anthropic", "openai", "google"] as const).map((provider) => (
-                  <div className="provider-card" key={provider}>
-                    <span className="provider-monogram">{provider[0]?.toUpperCase()}</span>
+                {remoteModelProviderDefinitions.map((provider) => (
+                  <div className="provider-card" key={provider.id}>
+                    <span className="provider-monogram">{provider.label[0]?.toUpperCase()}</span>
                     <span>
-                      <strong>{providerName(provider)}</strong>
+                      <strong>{provider.label}</strong>
                       <small>
-                        {credentialStatus[`model:${provider}`] ? "Credential configured" : "Not connected"}
+                        {credentialStatus[modelProviderCredentialKey(provider.id)]
+                          ? "Connected"
+                          : "Not connected"}
                       </small>
                     </span>
                     <span
                       className={
-                        credentialStatus[`model:${provider}`]
+                        credentialStatus[modelProviderCredentialKey(provider.id)]
                           ? "connection-dot connected"
                           : "connection-dot"
                       }
@@ -188,14 +205,50 @@ export function SettingsPage({
                 ))}
               </div>
               <form className="inline-credential-form" onSubmit={configureModel}>
-                <select name="provider" aria-label="Model provider">
-                  <option value="anthropic">Anthropic</option>
-                  <option value="openai">OpenAI</option>
-                  <option value="google">Google</option>
+                <select
+                  name="provider"
+                  aria-label="Model provider"
+                  onChange={(event) =>
+                    setModelProvider(event.target.value as RemoteModelProvider)
+                  }
+                  value={modelProvider}
+                >
+                  {remoteModelProviderDefinitions.map((provider) => (
+                    <option key={provider.id} value={provider.id}>
+                      {provider.label}
+                    </option>
+                  ))}
                 </select>
-                <input name="apiKey" type="password" placeholder="Paste API key" required />
+                {getModelProviderDefinition(modelProvider).baseUrlMode !== "none" ? (
+                  <input
+                    key={modelProvider}
+                    name="baseUrl"
+                    type="url"
+                    placeholder={
+                      getModelProviderDefinition(modelProvider).defaultBaseUrl ??
+                      "https://models.example.com/v1"
+                    }
+                    defaultValue={getModelProviderDefinition(modelProvider).defaultBaseUrl}
+                    required={
+                      getModelProviderDefinition(modelProvider).baseUrlMode === "required"
+                    }
+                  />
+                ) : null}
+                <input
+                  name="apiKey"
+                  type="password"
+                  placeholder={
+                    credentialStatus[modelProviderCredentialKey(modelProvider)]
+                      ? "Stored — enter to replace"
+                      : getModelProviderDefinition(modelProvider).apiKeyPlaceholder
+                  }
+                  required={
+                    getModelProviderDefinition(modelProvider).apiKeyRequired &&
+                    !credentialStatus[modelProviderCredentialKey(modelProvider)]
+                  }
+                />
                 <button className="primary-button" disabled={working}>
-                  Store securely
+                  Verify and save
                 </button>
               </form>
             </section>
@@ -285,12 +338,4 @@ export function SettingsPage({
       </div>
     </div>
   );
-}
-
-function providerName(provider: "anthropic" | "openai" | "google"): string {
-  return provider === "openai"
-    ? "OpenAI"
-    : provider === "anthropic"
-      ? "Anthropic"
-      : "Google";
 }

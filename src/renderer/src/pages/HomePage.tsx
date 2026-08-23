@@ -1,6 +1,7 @@
 import type { AppSnapshot, Coworker } from "@shared/contracts";
 import { Icon } from "../components/Icon";
 import {
+  CoworkerModelBadge,
   EmptyState,
   PageHeader,
   StatusLabel,
@@ -64,6 +65,7 @@ export function HomePage({
                     <StatusLabel status={coworker.runtimeStatus} />
                   </span>
                   <small>{coworker.role}</small>
+                  <CoworkerModelBadge compact coworker={coworker} />
                   <span className="station-task">
                     {task?.title ?? "Ready for a new task"}
                   </span>

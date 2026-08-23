@@ -651,6 +651,48 @@ svg {
   white-space: nowrap;
 }
 
+.coworker-model-badge {
+  display: inline-flex;
+  width: fit-content;
+  max-width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 6px;
+  color: #465b82;
+  line-height: 1;
+  background: #f0f3fa;
+  border: 1px solid #d9dfed;
+  border-radius: 6px;
+}
+
+.coworker-model-badge > span {
+  flex: 0 0 auto;
+  font-size: 7px;
+  font-weight: 720;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.coworker-model-badge > code {
+  overflow: hidden;
+  min-width: 0;
+  color: #50617f;
+  font-family: var(--mono);
+  font-size: 7px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.coworker-model-badge.compact {
+  gap: 4px;
+  padding: 2px 5px;
+}
+
+.station-copy > .coworker-model-badge {
+  margin-top: 5px;
+}
+
 .station-arrow {
   width: 16px;
   color: var(--line-strong);
@@ -1086,6 +1128,10 @@ svg {
   text-overflow: ellipsis;
   text-transform: uppercase;
   white-space: nowrap;
+}
+
+.roster-meta > .coworker-model-badge {
+  align-self: flex-start;
 }
 
 .roster-arrow {
@@ -1992,6 +2038,17 @@ select:focus {
   border-radius: 10px;
 }
 
+.schedule-tool-card {
+  border-left-color: var(--amber);
+}
+
+.schedule-tool-card .schedule-tool-task {
+  display: block;
+  margin-top: 5px;
+  color: var(--ink-soft);
+  line-height: 1.45;
+}
+
 .tool-card-icon {
   display: grid;
   place-items: center;
@@ -2439,6 +2496,12 @@ select:focus {
   border-radius: 99px;
 }
 
+.conversation-roster-copy > .coworker-model-badge {
+  max-width: 100%;
+  align-self: flex-start;
+  justify-content: flex-start;
+}
+
 .conversation-roster-empty {
   padding: 25px 14px;
   color: var(--ink-soft);
@@ -2517,6 +2580,10 @@ select:focus {
 
 .conversation-identity .status-label {
   font-size: 7px;
+}
+
+.conversation-identity .coworker-model-badge {
+  margin-top: 3px;
 }
 
 .conversation-task-chip {
@@ -4334,9 +4401,21 @@ select:focus {
 }
 
 .inline-credential-form {
-  display: grid;
-  grid-template-columns: 140px 1fr auto;
+  display: flex;
+  flex-wrap: wrap;
   gap: 8px;
+}
+
+.inline-credential-form select {
+  flex: 0 1 170px;
+}
+
+.inline-credential-form input {
+  flex: 1 1 220px;
+}
+
+.inline-credential-form button {
+  flex: 0 0 auto;
 }
 
 .integration-form {

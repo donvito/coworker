@@ -5,6 +5,8 @@ import { z } from "zod";
 import type {
   Approval,
   Coworker,
+  CreateScheduleInput,
+  Schedule,
   Task,
   ToolCall,
   ToolPolicy,
@@ -18,6 +20,8 @@ import {
 import type { CredentialStore } from "@main/security/credential-store";
 import { createEmailDraft, sendEmail, type EmailPayload } from "@main/integrations/email";
 import { resolveWorkspacePath } from "./workspace-path";
+
+const localTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 
 const schemas = {
   "files.list": z.object({ path: z.string().min(1).max(2_000).default(".") }),
@@ -56,6 +60,36 @@ const schemas = {
     body: z.string().max(1_000_000),
     attachments: z.array(z.string().min(1).max(2_000)).max(25).optional(),
   }),
+  "schedules.create": z
+    .object({
+      name: z.string().trim().min(1).max(160),
+      scheduleType: z.enum(["cron", "once"]),
+      cronExpression: z.string().trim().min(1).max(160).optional(),
+      runAt: z.string().datetime({ offset: true }).optional(),
+      timezone: z.string().trim().min(1).max(120).default(localTimezone),
+      taskTemplate: z.object({
+        title: z.string().trim().min(1).max(240),
+        input: z.string().trim().min(1).max(100_000),
+        priority: z.number().int().min(-100).max(100).optional(),
+      }),
+      enabled: z.boolean().default(true),
+    })
+    .superRefine((value, context) => {
+      if (value.scheduleType === "cron" && !value.cronExpression) {
+        context.addIssue({
+          code: "custom",
+          message: "A cron expression is required for recurring schedules",
+          path: ["cronExpression"],
+        });
+      }
+      if (value.scheduleType === "once" && !value.runAt) {
+        context.addIssue({
+          code: "custom",
+          message: "A run time is required for one-time schedules",
+          path: ["runAt"],
+        });
+      }
+    }),
   "email.send": z.object({
     to: z.union([z.string().email(), z.array(z.string().email()).min(1).max(50)]),
     subject: z.string().trim().min(1).max(500),
@@ -68,6 +102,10 @@ export type ToolGatewayResult =
   | { kind: "completed"; toolCall: ToolCall; result: unknown }
   | { kind: "approval"; toolCall: ToolCall; approval: Approval }
   | { kind: "denied"; toolCall: ToolCall; reason: string };
+
+export interface ToolGatewayActions {
+  createSchedule?: (input: CreateScheduleInput) => Schedule;
+}
 
 function normalizeEmailPayload(input: z.infer<(typeof schemas)["email.send"]>): EmailPayload {
   return {
@@ -89,6 +127,16 @@ function approvalSummary(toolName: string, args: unknown): string {
     if (parsed.success) {
       const recipients = Array.isArray(parsed.data.to) ? parsed.data.to.join(", ") : parsed.data.to;
       return `Send “${parsed.data.subject}” to ${recipients}`;
+    }
+  }
+  if (toolName === "schedules.create") {
+    const parsed = schemas["schedules.create"].safeParse(args);
+    if (parsed.success) {
+      const timing =
+        parsed.data.scheduleType === "cron"
+          ? `${parsed.data.cronExpression} (${parsed.data.timezone})`
+          : new Date(parsed.data.runAt!).toLocaleString();
+      return `Create schedule “${parsed.data.name}” · ${timing}`;
     }
   }
   return `Allow ${toolName}`;
@@ -115,6 +163,7 @@ export class ToolGateway {
     private readonly database: CoworkerDatabase,
     private readonly credentials: CredentialStore,
     private readonly outboxPath: string,
+    private readonly actions: ToolGatewayActions = {},
   ) {}
 
   validateArguments(toolName: string, argumentsValue: unknown): unknown {
@@ -415,6 +464,40 @@ export class ToolGateway {
           path: relative(coworker.workspacePath, draft.filePath),
           artifactId: artifact.id,
           recipients: normalizeEmailPayload(args).to,
+        };
+      }
+      case "schedules.create": {
+        const args = schemas["schedules.create"].parse(rawArgs);
+        if (!this.actions.createSchedule) {
+          throw new Error("The local scheduler is unavailable");
+        }
+        if (
+          args.scheduleType === "once" &&
+          args.runAt &&
+          new Date(args.runAt).getTime() <= Date.now()
+        ) {
+          throw new Error("A one-time schedule must run in the future");
+        }
+        const schedule = this.actions.createSchedule({
+          coworkerId: coworker.id,
+          name: args.name,
+          scheduleType: args.scheduleType,
+          cronExpression: args.cronExpression,
+          runAt: args.runAt,
+          timezone: args.timezone,
+          taskTemplate: args.taskTemplate,
+          enabled: args.enabled,
+        });
+        return {
+          scheduleId: schedule.id,
+          name: schedule.name,
+          scheduleType: schedule.scheduleType,
+          cronExpression: schedule.cronExpression,
+          runAt: schedule.runAt,
+          timezone: schedule.timezone,
+          nextRunAt: schedule.nextRunAt,
+          taskTemplate: schedule.taskTemplate,
+          enabled: schedule.enabled,
         };
       }
       case "email.send": {

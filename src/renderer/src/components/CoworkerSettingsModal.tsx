@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
 import type { Coworker, ModelProvider } from "@shared/contracts";
+import { modelProviderDefinitions } from "@shared/model-providers";
 import { ModelSelector } from "./ModelSelector";
 
 export function CoworkerSettingsModal({
@@ -100,10 +101,11 @@ export function CoworkerSettingsModal({
                 }}
                 value={provider}
               >
-                <option value="demo">Built-in demo</option>
-                <option value="anthropic">Anthropic</option>
-                <option value="openai">OpenAI</option>
-                <option value="google">Google</option>
+                {modelProviderDefinitions.map((definition) => (
+                  <option key={definition.id} value={definition.id}>
+                    {definition.label}
+                  </option>
+                ))}
               </select>
             </label>
             <ModelSelector

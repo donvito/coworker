@@ -33,9 +33,18 @@ export const toolPolicies = ["automatic", "approval", "denied"] as const;
 export type ToolPolicy = (typeof toolPolicies)[number];
 export type RiskLevel = "low" | "medium" | "high";
 
-export const modelProviders = ["demo", "anthropic", "openai", "google"] as const;
+export const remoteModelProviders = [
+  "anthropic",
+  "openai",
+  "google",
+  "openrouter",
+  "ollama",
+  "lmstudio",
+  "openai-compatible",
+] as const;
+export const modelProviders = ["demo", ...remoteModelProviders] as const;
 export type ModelProvider = (typeof modelProviders)[number];
-export type RemoteModelProvider = Exclude<ModelProvider, "demo">;
+export type RemoteModelProvider = (typeof remoteModelProviders)[number];
 
 export interface ModelOption {
   id: string;
@@ -364,7 +373,8 @@ export interface DesktopApi {
     }): Promise<Integration>;
     configureModel(input: {
       provider: RemoteModelProvider;
-      apiKey: string;
+      apiKey?: string;
+      baseUrl?: string;
     }): Promise<CredentialStatus>;
     listModels(provider: ModelProvider): Promise<ModelOption[]>;
     modelCapabilities(

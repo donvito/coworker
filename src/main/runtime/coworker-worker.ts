@@ -15,12 +15,14 @@ import { getToolCatalogEntry } from "@shared/tool-catalog";
 import { anthropicProvider } from "@earendil-works/pi-ai/providers/anthropic";
 import { googleProvider } from "@earendil-works/pi-ai/providers/google";
 import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
+import { openrouterProvider } from "@earendil-works/pi-ai/providers/openrouter";
 import type {
   MainToWorkerMessage,
   WorkerCoworkerConfig,
   WorkerToMainMessage,
 } from "./protocol";
 import { toProviderToolName } from "./tool-names";
+import { createOpenAiCompatibleRuntimeProvider } from "./openai-compatible-provider";
 
 if (!parentPort) throw new Error("Coworker worker must run inside a worker thread");
 
@@ -133,6 +135,35 @@ const parameterSchemas: Record<string, ReturnType<typeof Type.Object>> = {
       },
     ),
   }),
+  "schedules.create": Type.Object({
+    name: Type.String({ description: "Short human-readable schedule name" }),
+    scheduleType: Type.Union([Type.Literal("cron"), Type.Literal("once")]),
+    cronExpression: Type.Optional(
+      Type.String({
+        description:
+          "Five-field cron expression for a recurring schedule, for example 0 9 * * 1 for Mondays at 09:00",
+      }),
+    ),
+    runAt: Type.Optional(
+      Type.String({
+        description: "ISO 8601 date-time with an offset for a one-time future run",
+      }),
+    ),
+    timezone: Type.Optional(
+      Type.String({
+        description: "IANA timezone such as America/New_York; omit to use the user's local timezone",
+      }),
+    ),
+    taskTemplate: Type.Object({
+      title: Type.String({ description: "Short title for each future task" }),
+      input: Type.String({
+        description:
+          "The work the coworker should perform when the schedule runs. Do not mention creating or managing a schedule.",
+      }),
+      priority: Type.Optional(Type.Number()),
+    }),
+    enabled: Type.Optional(Type.Boolean()),
+  }),
   "email.create_draft": Type.Object({
     to: Type.Union([Type.String(), Type.Array(Type.String())]),
     subject: Type.String(),
@@ -148,12 +179,19 @@ const parameterSchemas: Record<string, ReturnType<typeof Type.Object>> = {
 };
 
 function createProxyTool(controlledName: string, providerName: string): AgentTool<any> {
+  const catalogDescription =
+    getToolCatalogEntry(controlledName)?.description ??
+    `Execute the controlled ${controlledName} coworker tool.`;
+  const description =
+    controlledName === "schedules.create"
+      ? `${catalogDescription} Current time: ${new Date().toISOString()}. User timezone: ${
+          Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"
+        }.`
+      : catalogDescription;
   return {
     name: providerName,
     label: controlledName,
-    description:
-      getToolCatalogEntry(controlledName)?.description ??
-      `Execute the controlled ${controlledName} coworker tool.`,
+    description,
     parameters: parameterSchemas[controlledName] ?? Type.Object({}),
     executionMode: "sequential",
     execute: async (toolCallId, params) => {
@@ -250,7 +288,23 @@ async function initialize(workerConfig: WorkerCoworkerConfig): Promise<void> {
           ? openaiProvider()
           : workerConfig.coworker.modelProvider === "google"
             ? googleProvider()
-            : null;
+            : workerConfig.coworker.modelProvider === "openrouter"
+              ? openrouterProvider()
+              : ["ollama", "lmstudio", "openai-compatible"].includes(
+                    workerConfig.coworker.modelProvider,
+                  ) && workerConfig.modelBaseUrl
+                ? createOpenAiCompatibleRuntimeProvider({
+                    provider: workerConfig.coworker.modelProvider as
+                      | "ollama"
+                      | "lmstudio"
+                      | "openai-compatible",
+                    modelId: workerConfig.coworker.modelName,
+                    baseUrl: workerConfig.modelBaseUrl,
+                    apiKey: workerConfig.modelApiKey,
+                    supportsImages: workerConfig.modelSupportsImages ?? false,
+                    contextWindow: workerConfig.modelContextWindow ?? 32_768,
+                  })
+                : null;
     if (!provider) {
       throw new Error(`Unsupported model provider: ${workerConfig.coworker.modelProvider}`);
     }
@@ -280,11 +334,18 @@ async function initialize(workerConfig: WorkerCoworkerConfig): Promise<void> {
     controlledToolNamesByProviderName.set(providerName, controlledName);
     return createProxyTool(controlledName, providerName);
   });
+  const schedulingRule = workerConfig.coworker.enabledTools.includes("schedules.create")
+    ? "Scheduling rule: For requests to schedule work, set a reminder, follow up later, or run something at a date or time, use schedules.create by default. Do not create an ICS, Markdown, or other file instead unless the user explicitly asks for a file export."
+    : "";
   agent = new Agent({
     initialState: {
-      systemPrompt: history
-        ? `${workerConfig.coworker.systemPrompt}\n\nRecent durable conversation history:\n${history}`
-        : workerConfig.coworker.systemPrompt,
+      systemPrompt: [
+        workerConfig.coworker.systemPrompt,
+        schedulingRule,
+        history ? `Recent durable conversation history:\n${history}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n\n"),
       model,
       tools,
       messages: [],
@@ -315,6 +376,74 @@ function parseInvoicePrompt(input: string): {
   return { client, email, hours, rate, dueDays };
 }
 
+function parseDemoSchedule(input: string): Record<string, unknown> {
+  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  const timeMatch = input.match(/\bat\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/i);
+  let hour = Number(timeMatch?.[1] ?? 9);
+  const minute = Number(timeMatch?.[2] ?? 0);
+  const meridiem = timeMatch?.[3]?.toLowerCase();
+  if (meridiem === "pm" && hour < 12) hour += 12;
+  if (meridiem === "am" && hour === 12) hour = 0;
+
+  const taskInput =
+    input.match(/\bto\s+(.+)$/i)?.[1]?.trim() ??
+    input.match(/\bschedule\s+(.+?)\s+(?:every|tomorrow|in\s+\d+)/i)?.[1]?.trim() ??
+    "Review the current workspace and complete the requested scheduled work.";
+  const title = taskInput.length > 80 ? `${taskInput.slice(0, 77)}…` : taskInput;
+  const base = {
+    name: title,
+    timezone,
+    taskTemplate: { title, input: taskInput },
+    enabled: true,
+  };
+
+  const relative = input.match(/\bin\s+(\d+)\s+(minute|hour|day)s?\b/i);
+  if (relative) {
+    const amount = Number(relative[1]);
+    const unitMs =
+      relative[2]?.toLowerCase() === "day"
+        ? 86_400_000
+        : relative[2]?.toLowerCase() === "hour"
+          ? 3_600_000
+          : 60_000;
+    return {
+      ...base,
+      scheduleType: "once",
+      runAt: new Date(Date.now() + amount * unitMs).toISOString(),
+    };
+  }
+
+  if (/\btomorrow\b/i.test(input)) {
+    const runAt = new Date();
+    runAt.setDate(runAt.getDate() + 1);
+    runAt.setHours(hour, minute, 0, 0);
+    return { ...base, scheduleType: "once", runAt: runAt.toISOString() };
+  }
+
+  const dayNumbers: Record<string, number> = {
+    sunday: 0,
+    monday: 1,
+    tuesday: 2,
+    wednesday: 3,
+    thursday: 4,
+    friday: 5,
+    saturday: 6,
+  };
+  const day = Object.keys(dayNumbers).find((candidate) =>
+    new RegExp(`\\bevery\\s+${candidate}\\b`, "i").test(input),
+  );
+  const dayField = /\bevery\s+weekday\b/i.test(input)
+    ? "1-5"
+    : day
+      ? String(dayNumbers[day])
+      : "*";
+  return {
+    ...base,
+    scheduleType: "cron",
+    cronExpression: `${minute} ${hour} * * ${dayField}`,
+  };
+}
+
 function lastToolDetails(context: Context, toolName: string): unknown {
   const message = [...context.messages]
     .reverse()
@@ -329,6 +458,22 @@ function configureDemoResponses(input: string, resume: boolean): void {
       fauxAssistantMessage(
         "The approval decision has been applied and the task is complete. I recorded the outcome in the activity history.",
       ),
+    ]);
+    return;
+  }
+  if (
+    /\b(?:schedule|remind)\b|\bevery\s+(?:day|weekday|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b|\btomorrow\s+at\b/i.test(
+      input,
+    )
+  ) {
+    demo.setResponses([
+      fauxAssistantMessage(
+        fauxToolCall("schedules.create", parseDemoSchedule(input), {
+          id: `${activeRun.taskId}:schedule`,
+        }),
+        { stopReason: "toolUse" },
+      ),
+      fauxAssistantMessage("The schedule is active and will create future tasks at the approved time."),
     ]);
     return;
   }

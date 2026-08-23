@@ -1,8 +1,14 @@
 import { useState, type FormEvent } from "react";
 import type { Coworker, ModelProvider } from "@shared/contracts";
+import { modelProviderDefinitions } from "@shared/model-providers";
 import { Icon } from "../components/Icon";
 import { ModelSelector } from "../components/ModelSelector";
-import { PageHeader, StatusLabel, initials } from "../components/Primitives";
+import {
+  CoworkerModelBadge,
+  PageHeader,
+  StatusLabel,
+  initials,
+} from "../components/Primitives";
 
 type CoworkerView = "cards" | "list";
 
@@ -88,9 +94,7 @@ export function CoworkersPage({
                 <Icon name="settings" />
                 {coworker.enabledTools.length} tools
               </span>
-              <small>
-                {coworker.modelProvider} · {coworker.modelName}
-              </small>
+              <CoworkerModelBadge coworker={coworker} />
             </span>
             <Icon name="arrow" className="roster-arrow" />
           </button>
@@ -155,9 +159,10 @@ export function CreateCoworkerModal({
           "files.write",
           "documents.export",
           "email.create_draft",
+          "schedules.create",
           "email.send",
         ],
-        policies: { "email.send": "approval" },
+        policies: { "email.send": "approval", "schedules.create": "approval" },
       });
       onClose();
       await onChanged();
@@ -212,10 +217,11 @@ export function CreateCoworkerModal({
                 }}
                 value={provider}
               >
-                <option value="demo">Built-in demo</option>
-                <option value="anthropic">Anthropic</option>
-                <option value="openai">OpenAI</option>
-                <option value="google">Google</option>
+                {modelProviderDefinitions.map((definition) => (
+                  <option key={definition.id} value={definition.id}>
+                    {definition.label}
+                  </option>
+                ))}
               </select>
             </label>
             <ModelSelector

@@ -21,10 +21,17 @@ import type {
 } from "@shared/contracts";
 import { CoworkerDatabase } from "@main/db/database";
 import {
+  getModelCapabilities,
+  localModelCredentialMarker,
   listAvailableModels,
-  modelSupportsImageInput,
   queryProviderModels,
 } from "@main/integrations/model-catalog";
+import {
+  getModelProviderDefinition,
+  modelProviderBaseUrlKey,
+  modelProviderCredentialKey,
+  modelProviderName,
+} from "@shared/model-providers";
 import { deleteArtifactFile } from "@main/integrations/artifact-files";
 import {
   loadImageAttachments,
@@ -73,6 +80,9 @@ export class DesktopAppService {
       this.database,
       options.credentials,
       join(options.dataPath, "outbox"),
+      {
+        createSchedule: (input) => this.createSchedule(input),
+      },
     );
     this.runtime = new CoworkerRuntimeManager({
       database: this.database,
@@ -108,6 +118,7 @@ export class DesktopAppService {
     }
     await this.seedCoworkers();
     this.enableDocumentExports();
+    this.enableScheduleCreation();
     await this.options.onSettingsChanged?.(this.database.getSettings());
     await this.scheduler.start();
     for (const coworker of this.database.listCoworkers()) {
@@ -253,9 +264,14 @@ export class DesktopAppService {
     if (existing) return { runId: existing.runId, taskId: existing.id };
     const coworker = this.database.getCoworker(request.coworkerId);
     const prompt = parseAgentPrompt(request.input);
+    const capabilities = await getModelCapabilities(
+      coworker.modelProvider,
+      coworker.modelName,
+      this.options.credentials,
+    );
     if (
       prompt.images.length > 0 &&
-      !modelSupportsImageInput(coworker.modelProvider, coworker.modelName)
+      !capabilities.supportsImages
     ) {
       throw new Error(
         `${coworker.modelName} does not support image input. Choose a vision-capable model in coworker settings.`,
@@ -329,16 +345,38 @@ export class DesktopAppService {
 
   async configureModel(input: {
     provider: RemoteModelProvider;
-    apiKey: string;
+    apiKey?: string;
+    baseUrl?: string;
   }) {
-    const availableModels = await queryProviderModels(input.provider, input.apiKey);
+    const definition = getModelProviderDefinition(input.provider);
+    const key = modelProviderCredentialKey(input.provider);
+    const storedApiKey = await this.options.credentials.get(key);
+    const submittedApiKey = input.apiKey?.trim();
+    const apiKey =
+      submittedApiKey ||
+      storedApiKey ||
+      (definition.apiKeyRequired ? "" : localModelCredentialMarker);
+    if (!apiKey) {
+      throw new Error(`A ${modelProviderName(input.provider)} API key is required`);
+    }
+    const storedBaseUrl =
+      definition.baseUrlMode === "none"
+        ? undefined
+        : await this.options.credentials.get(modelProviderBaseUrlKey(input.provider));
+    const baseUrl = input.baseUrl?.trim() || storedBaseUrl || definition.defaultBaseUrl;
+    if (definition.baseUrlMode === "required" && !baseUrl) {
+      throw new Error(`A base URL is required for ${modelProviderName(input.provider)}`);
+    }
+    const availableModels = await queryProviderModels(input.provider, apiKey, fetch, { baseUrl });
     if (availableModels.length === 0) {
       throw new Error(
-        `This ${input.provider} credential has no models supported by the local runtime`,
+        `${modelProviderName(input.provider)} returned no compatible chat models`,
       );
     }
-    const key = `model:${input.provider}`;
-    await this.options.credentials.set(key, input.apiKey);
+    await this.options.credentials.set(key, apiKey);
+    if (definition.baseUrlMode !== "none" && baseUrl) {
+      await this.options.credentials.set(modelProviderBaseUrlKey(input.provider), baseUrl);
+    }
     return { key, configured: true };
   }
 
@@ -347,7 +385,7 @@ export class DesktopAppService {
   }
 
   modelCapabilities(provider: ModelProvider, modelId: string) {
-    return { supportsImages: modelSupportsImageInput(provider, modelId) };
+    return getModelCapabilities(provider, modelId, this.options.credentials);
   }
 
   async updateSettings(input: Partial<AppSettings>): Promise<AppSettings> {
@@ -406,6 +444,23 @@ export class DesktopAppService {
     this.database.setMetadata(migrationKey, "true");
   }
 
+  private enableScheduleCreation(): void {
+    const migrationKey = "schedule-create-tool-enabled-v1";
+    if (this.database.getMetadata(migrationKey) === "true") return;
+    for (const coworker of this.database.listCoworkers()) {
+      this.database.updateCoworker(coworker.id, {
+        enabledTools: coworker.enabledTools.includes("schedules.create")
+          ? coworker.enabledTools
+          : [...coworker.enabledTools, "schedules.create"],
+        policies: {
+          ...coworker.policies,
+          "schedules.create": coworker.policies["schedules.create"] ?? "approval",
+        },
+      });
+    }
+    this.database.setMetadata(migrationKey, "true");
+  }
+
   private async seedCoworkers(): Promise<void> {
     if (this.database.getMetadata("default-coworkers-seeded") === "true") return;
     const names = new Set(this.database.listCoworkers().map((coworker) => coworker.name));
@@ -425,9 +480,10 @@ export class DesktopAppService {
           "invoice.create",
           "documents.export",
           "email.create_draft",
+          "schedules.create",
           "email.send",
         ],
-        policies: { "email.send": "approval" },
+        policies: { "email.send": "approval", "schedules.create": "approval" },
       });
     }
     if (!names.has("Sarah")) {
@@ -445,9 +501,10 @@ export class DesktopAppService {
           "files.write",
           "documents.export",
           "email.create_draft",
+          "schedules.create",
           "email.send",
         ],
-        policies: { "email.send": "approval" },
+        policies: { "email.send": "approval", "schedules.create": "approval" },
       });
     }
     this.database.setMetadata("default-coworkers-seeded", "true");

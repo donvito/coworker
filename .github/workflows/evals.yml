@@ -1,0 +1,38 @@
+name: Evals
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  checks: write
+
+jobs:
+  deterministic-evals:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Run offline evals
+        run: pnpm eval:report
+      - name: Publish eval check
+        if: always()
+        uses: getsentry/vitest-evals@v0
+        with:
+          results: eval-results/latest.json
+          publish-check: true
+          fail-on-failures: true
+      - name: Upload eval report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coworker-eval-report
+          path: eval-results/latest.json

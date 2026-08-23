@@ -25,7 +25,12 @@ import {
 } from "../components/ArtifactActions";
 import { CoworkerSettingsModal } from "../components/CoworkerSettingsModal";
 import { Icon } from "../components/Icon";
-import { StatusLabel, formatRelativeTime, initials } from "../components/Primitives";
+import {
+  CoworkerModelBadge,
+  StatusLabel,
+  formatRelativeTime,
+  initials,
+} from "../components/Primitives";
 import { CreateCoworkerModal } from "./CoworkersPage";
 
 const invoiceSchema = z.object({
@@ -53,6 +58,19 @@ const fileSchema = z.object({ path: z.string(), content: z.string() });
 const documentExportSchema = z.object({
   sourcePath: z.string(),
   formats: z.array(z.enum(["pdf", "docx"])),
+});
+const scheduleCreateSchema = z.object({
+  name: z.string(),
+  scheduleType: z.enum(["cron", "once"]),
+  cronExpression: z.string().optional(),
+  runAt: z.string().optional(),
+  timezone: z.string().optional(),
+  taskTemplate: z.object({
+    title: z.string(),
+    input: z.string(),
+    priority: z.number().optional(),
+  }),
+  enabled: z.boolean().optional(),
 });
 
 const acceptedImageTypes = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
@@ -353,7 +371,12 @@ function CoworkerSurface({
   }, [imageAttachments]);
   const visibleCoworkers = coworkers.filter((item) => {
     const query = search.trim().toLowerCase();
-    return !query || `${item.name} ${item.role}`.toLowerCase().includes(query);
+    return (
+      !query ||
+      `${item.name} ${item.role} ${item.modelProvider} ${item.modelName}`
+        .toLowerCase()
+        .includes(query)
+    );
   });
   const sortedArtifacts = [...artifacts].sort((left, right) =>
     right.createdAt.localeCompare(left.createdAt),
@@ -522,6 +545,36 @@ function CoworkerSurface({
       );
     },
   });
+  useRenderTool({
+    name: "schedules.create",
+    parameters: scheduleCreateSchema,
+    render: ({ status, parameters }) => {
+      const timing =
+        parameters.scheduleType === "cron"
+          ? parameters.cronExpression || "Recurring schedule"
+          : parameters.runAt
+            ? new Date(parameters.runAt).toLocaleString()
+            : "One-time schedule";
+      return (
+        <div className="tool-card conversation-tool-card schedule-tool-card">
+          <span className="tool-card-icon">
+            <Icon name="clock" />
+          </span>
+          <span>
+            <small>{status === "complete" ? "Schedule created" : "Schedule proposal"}</small>
+            <strong>{parameters.name || "New schedule"}</strong>
+            <span>
+              {timing}
+              {parameters.timezone ? ` · ${parameters.timezone}` : ""}
+            </span>
+            {parameters.taskTemplate?.input ? (
+              <span className="schedule-tool-task">{parameters.taskTemplate.input}</span>
+            ) : null}
+          </span>
+        </div>
+      );
+    },
+  });
 
   async function attachImages(files: FileList | null) {
     if (!files?.length) return;
@@ -669,6 +722,7 @@ function CoworkerSurface({
                     </small>
                     {waiting > 0 ? <b>{waiting}</b> : null}
                   </span>
+                  <CoworkerModelBadge compact coworker={item} />
                 </span>
               </button>
             );
@@ -690,6 +744,7 @@ function CoworkerSurface({
             <span>
               <strong>{coworker.name}</strong>
               <small>{coworker.role}</small>
+              <CoworkerModelBadge compact coworker={coworker} />
             </span>
             <StatusLabel status={coworker.runtimeStatus} />
           </span>

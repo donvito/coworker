@@ -53,6 +53,14 @@ export const toolCatalog = [
     defaultPolicy: "automatic",
   },
   {
+    name: "schedules.create",
+    label: "Create schedule",
+    description:
+      "Create a durable one-time reminder or recurring schedule in the app's local scheduler. Use this by default whenever the user asks to schedule work, set a reminder, follow up later, or run something at a date or time. Do not create an ICS, Markdown, or other file for scheduling unless the user explicitly asks for a file export. The future task input must describe the work itself, not ask to create another schedule.",
+    risk: "medium",
+    defaultPolicy: "approval",
+  },
+  {
     name: "email.send",
     label: "Send email",
     description: "Send an email through the configured email integration.",

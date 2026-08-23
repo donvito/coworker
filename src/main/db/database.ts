@@ -710,6 +710,15 @@ export class CoworkerDatabase {
     return toolCallFromRow(row);
   }
 
+  listToolCalls(taskId?: string): ToolCall[] {
+    const rows = taskId
+      ? this.database
+          .prepare("SELECT * FROM tool_calls WHERE task_id = ? ORDER BY created_at ASC")
+          .all(taskId)
+      : this.database.prepare("SELECT * FROM tool_calls ORDER BY created_at ASC").all();
+    return (rows as Row[]).map(toolCallFromRow);
+  }
+
   updateToolCall(
     id: string,
     status: ToolCall["status"],

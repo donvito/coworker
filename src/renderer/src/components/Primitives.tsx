@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
-import type { RuntimeStatus, TaskStatus } from "@shared/contracts";
+import type { Coworker, RuntimeStatus, TaskStatus } from "@shared/contracts";
+import { modelProviderName } from "@shared/model-providers";
 import { Icon, type IconName } from "./Icon";
 
 export function PageHeader({
@@ -38,6 +39,27 @@ export function StatusLabel({
     <span className={`status-label status-${status.toLowerCase().replaceAll("_", "-")}`}>
       <span className="status-dot" />
       {label}
+    </span>
+  );
+}
+
+export function CoworkerModelBadge({
+  coworker,
+  compact = false,
+}: {
+  coworker: Pick<Coworker, "modelProvider" | "modelName">;
+  compact?: boolean;
+}) {
+  const provider = modelProviderName(coworker.modelProvider);
+  const label = `${provider} · ${coworker.modelName}`;
+  return (
+    <span
+      aria-label={`Configured model: ${label}`}
+      className={compact ? "coworker-model-badge compact" : "coworker-model-badge"}
+      title={`Configured model: ${label}`}
+    >
+      <span>{provider}</span>
+      <code>{coworker.modelName}</code>
     </span>
   );
 }
