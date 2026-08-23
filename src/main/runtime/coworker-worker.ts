@@ -63,6 +63,7 @@ interface RecordedTurn {
 }
 
 let recordedTurns: RecordedTurn[] = [];
+let recordedTaskId: string | null = null;
 
 let config: WorkerCoworkerConfig | null = null;
 let agent: Agent | null = null;
@@ -818,7 +819,10 @@ async function runTask(message: Extract<MainToWorkerMessage, { type: "run" }>): 
     } else {
       agent.state.messages = [];
     }
-    if (!message.resume) recordedTurns = [];
+    if (message.taskId !== recordedTaskId) {
+      recordedTaskId = message.taskId;
+      recordedTurns = [];
+    }
     configureDemoResponses(message.input, Boolean(message.resume));
     emit({
       type: EventType.RUN_STARTED,
