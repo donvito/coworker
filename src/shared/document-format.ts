@@ -26,14 +26,3 @@ export function hasExplicitDocumentFormat(input: string): boolean {
 export function requestsDocumentCreation(input: string): boolean {
   return documentCreationPattern.test(input);
 }
-
-export function requiresDocumentFormatClarification(
-  taskInput: string,
-  toolName: string,
-): boolean {
-  if (hasExplicitDocumentFormat(taskInput)) return false;
-  return (
-    ["invoice.create", "documents.export", "files.write"].includes(toolName) &&
-    requestsDocumentCreation(taskInput)
-  );
-}

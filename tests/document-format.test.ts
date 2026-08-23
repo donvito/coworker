@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  documentFormatInstruction,
   hasExplicitDocumentFormat,
   requestsDocumentCreation,
-  requiresDocumentFormatClarification,
 } from "@shared/document-format";
 import { bundledDocumentAuthoringSkill } from "@main/integrations/skills";
 
@@ -37,16 +37,11 @@ describe("document format requirement", () => {
     expect(hasExplicitDocumentFormat(input)).toBe(false);
   });
 
-  it("guards document tools but does not interfere with ordinary workspace files", () => {
-    expect(requiresDocumentFormatClarification("Create an invoice", "invoice.create")).toBe(true);
-    expect(
-      requiresDocumentFormatClarification("Create a PDF invoice", "invoice.create"),
-    ).toBe(false);
-    expect(
-      requiresDocumentFormatClarification("Update the application config", "files.write"),
-    ).toBe(false);
-    expect(
-      requiresDocumentFormatClarification("Write a project report", "files.write"),
-    ).toBe(true);
+  it("states the format rule for the model instead of enforcing it in the gateway", () => {
+    // The gateway used to deny file-creating tools by pattern-matching the task
+    // input. The model is told the rule and decides; application code no longer
+    // overrides that judgement.
+    expect(documentFormatInstruction).toContain("confirm that the user explicitly chose");
+    expect(documentFormatInstruction).toContain("Never choose Markdown");
   });
 });

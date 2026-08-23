@@ -208,7 +208,7 @@ describe("local document generation", () => {
     }
   });
 
-  it("blocks document creation until the user chooses a format", async () => {
+  it("honors the format the model chose instead of re-deciding from the task text", async () => {
     const root = await mkdtemp(join(tmpdir(), "coworker-document-format-"));
     temporaryPaths.push(root);
     const workspace = join(root, "workspace");
@@ -255,11 +255,15 @@ describe("local document generation", () => {
         },
       });
 
-      expect(response.kind).toBe("denied");
-      if (response.kind === "denied") {
-        expect(response.reason).toMatch(/ask whether.*Word.*PDF.*Markdown.*plain text/i);
-      }
-      expect(database.listArtifacts(coworker.id)).toEqual([]);
+      // The task text names no format, but the model chose PDF. The gateway
+      // used to pattern-match the task text and deny the call anyway, which
+      // overrode a decision the model had already made. Asking for a format is
+      // now the model's job, driven by documentFormatInstruction in the system
+      // prompt; the gateway executes what it was given.
+      expect(response.kind).toBe("completed");
+      const artifacts = database.listArtifacts(coworker.id);
+      expect(artifacts).toHaveLength(1);
+      expect(artifacts[0]?.name.endsWith(".pdf")).toBe(true);
     } finally {
       database.close();
     }
