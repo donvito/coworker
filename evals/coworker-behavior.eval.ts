@@ -4,6 +4,7 @@ import {
   coworkerHarness,
   type CoworkerEvalInput,
 } from "./harness/coworker-harness";
+import { hasRecording, liveModel, recordingPath } from "./harness/model-transcript";
 import { coworkerJudges } from "./judges";
 
 const scenarios: CoworkerEvalInput[] = [
@@ -98,15 +99,33 @@ const scenarios: CoworkerEvalInput[] = [
   },
 ];
 
+// These scenarios grade model judgment: which controlled tool the coworker
+// reaches for, and in what order. That is only meaningful against a real
+// model, so each one runs against a live provider when EVAL_PROVIDER,
+// EVAL_MODEL and a key are set — recording its turns — and otherwise replays
+// the recording committed under evals/recordings. A scenario with neither is
+// skipped rather than graded against a stand-in, because a scripted response
+// would only measure the script.
+const live = liveModel();
+
+const runnable = scenarios
+  .filter((scenario) => live !== null || hasRecording(scenario.name))
+  .map((scenario) => ({
+    ...scenario,
+    transcriptPath: recordingPath(scenario.name),
+    ...(live ? { model: live } : {}),
+  }));
+
 describeEval(
   "coworker behavior",
   {
     harness: coworkerHarness,
     judges: [...coworkerJudges],
     judgeThreshold: 1,
+    skipIf: () => runnable.length === 0,
   },
   (it) => {
-    it.for(scenarios)("$name", async (scenario, { run }) => {
+    it.for(runnable)("$name", async (scenario, { run }) => {
       const result = await run(scenario);
       expect(result.output.error).toBeNull();
     });

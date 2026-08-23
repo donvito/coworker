@@ -23,7 +23,7 @@ To connect a real model, open **Settings → Providers**, add credentials, and v
 | `pnpm typecheck` | TypeScript check, no emit |
 | `pnpm build` | Typecheck + production build |
 | `pnpm test` | Build, then run the integration suite |
-| `pnpm eval` | Run the deterministic agent evals |
+| `pnpm eval:contract` | Run the deterministic agent evals |
 | `pnpm package` | Build an unpacked app into `release/` |
 | `pnpm dist` | Build installers (dmg/zip, nsis, AppImage) |
 
@@ -64,24 +64,30 @@ To connect a real model, open **Settings → Providers**, add credentials, and v
 
 ## Agent evals
 
-The Vitest Evals suite exercises production worker threads and controlled tools, not mocked agent facades. Offline cases cover tool selection, response contracts, approval behavior, idempotent side effects, scheduler-first reminders, path confinement, malformed tool input, and multimodal validation.
+The Vitest Evals suite exercises production worker threads and controlled tools, not mocked agent facades. It is split by what each suite can honestly measure.
+
+**Contract evals** (`evals/tool-safety`, `evals/multimodal`) assert deterministic policy: path confinement, malformed tool input, approval gating, idempotent side effects, and image validation. No model is involved, so these gate every push.
 
 ```sh
-pnpm eval          # deterministic, keyless suite used by CI
-pnpm eval:report   # also writes eval-results/latest.json
-pnpm eval:ui       # browse the report
+pnpm eval:contract      # keyless, deterministic — the CI gate
+pnpm eval:report:contract   # also writes eval-results/latest.json
+pnpm eval:ui            # browse the report
 ```
 
-Live-provider quality cases are opt-in and stay skipped unless every required variable is set:
+**Behavior evals** (`evals/coworker-behavior`) assert model judgment: which controlled tool the coworker reaches for, and in what order. Grading that against a scripted stand-in would only measure the script, so each scenario runs against a real provider once and replays the recorded turns afterwards. Recordings live in `evals/recordings/` and are committed, so CI replays real model decisions without a key or per-run cost.
 
 ```sh
+pnpm eval:behavior      # replay the committed recordings
+
 EVAL_PROVIDER=openai \
 EVAL_MODEL=gpt-4.1-mini \
 EVAL_API_KEY=... \
-pnpm eval
+pnpm eval:record        # re-record against a live provider
 ```
 
-`EVAL_PROVIDER` accepts `anthropic`, `openai`, `google`, or `openrouter`. A provider-specific key (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY`, `OPENROUTER_API_KEY`) can be used instead of `EVAL_API_KEY`. Live evals may incur provider charges; the deterministic suite never makes remote calls.
+A scenario with no recording and no live provider is skipped, never graded against a stand-in. Re-record whenever a prompt, tool surface, or system prompt changes — a stale recording is a stale claim about the model.
+
+`EVAL_PROVIDER` accepts `anthropic`, `openai`, `google`, or `openrouter`. A provider-specific key (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY`, `OPENROUTER_API_KEY`) can be used instead of `EVAL_API_KEY`. Live runs may incur provider charges; the contract suite never makes remote calls.
 
 ## Data and security
 

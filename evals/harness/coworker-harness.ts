@@ -39,6 +39,12 @@ export interface CoworkerEvalInput {
   policies?: Record<string, ToolPolicy>;
   approvalDecision?: "approve" | "reject" | "none";
   replayAfterCompletion?: boolean;
+  /**
+   * Model transcript for this scenario. A real provider records its turns
+   * here; the demo provider replays them, so the eval grades the recorded
+   * model decisions rather than a scripted stand-in.
+   */
+  transcriptPath?: string;
   model?: {
     provider: ModelProvider;
     id: string;
@@ -150,6 +156,8 @@ function transcriptEvents(
 export const coworkerHarness = createHarness<CoworkerEvalInput, CoworkerEvalOutput>({
   name: "desktop-coworker",
   run: async ({ input, signal, setArtifact }) => {
+    const previousTranscript = process.env.COWORKER_MODEL_TRANSCRIPT;
+    if (input.transcriptPath) process.env.COWORKER_MODEL_TRANSCRIPT = input.transcriptPath;
     const root = await mkdtemp(join(tmpdir(), "coworker-eval-"));
     const workspace = join(root, "workspace");
     const outbox = join(root, "outbox");
@@ -297,6 +305,8 @@ export const coworkerHarness = createHarness<CoworkerEvalInput, CoworkerEvalOutp
       await manager?.stopAll().catch(() => undefined);
       database.close();
       await rm(root, { recursive: true, force: true });
+      if (previousTranscript === undefined) delete process.env.COWORKER_MODEL_TRANSCRIPT;
+      else process.env.COWORKER_MODEL_TRANSCRIPT = previousTranscript;
     }
   },
 });

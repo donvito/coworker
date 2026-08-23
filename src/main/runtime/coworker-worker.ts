@@ -1,3 +1,5 @@
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { parentPort } from "node:worker_threads";
 import { EventType, type BaseEvent } from "@ag-ui/core";
 import { Agent, type AgentMessage, type AgentTool } from "@earendil-works/pi-agent-core";
@@ -46,6 +48,21 @@ interface ActiveRun {
     toolName: string;
   } | null;
 }
+
+// Model-transcript seam for the behavior evals. Those evals assert model
+// judgment, so they run once against a real provider to capture its turns and
+// replay them afterwards, rather than grading a scripted stand-in. Recording
+// happens whenever a real provider runs with the path set; replay happens when
+// the demo provider runs and the file already exists.
+const modelTranscriptPath = process.env.COWORKER_MODEL_TRANSCRIPT || null;
+
+interface RecordedTurn {
+  text: string;
+  toolCalls: Array<{ name: string; arguments: Record<string, unknown> }>;
+  stopReason: string;
+}
+
+let recordedTurns: RecordedTurn[] = [];
 
 let config: WorkerCoworkerConfig | null = null;
 let agent: Agent | null = null;
@@ -524,8 +541,78 @@ function lastToolDetails(context: Context, toolName: string): unknown {
   return message?.role === "toolResult" ? message.details : null;
 }
 
+function recordAssistantTurn(message: { content: unknown; stopReason?: unknown }): void {
+  if (!modelTranscriptPath || !config || config.coworker.modelProvider === "demo") return;
+  const blocks = Array.isArray(message.content) ? message.content : [];
+  const turn: RecordedTurn = {
+    text: blocks
+      .filter((block): block is { type: "text"; text: string } => block?.type === "text")
+      .map((block) => block.text)
+      .join(""),
+    toolCalls: blocks
+      .filter(
+        (block): block is { type: "toolCall"; name: string; arguments: Record<string, unknown> } =>
+          block?.type === "toolCall",
+      )
+      .map((block) => ({
+        // Recordings are replayed through the controlled tool surface, so store
+        // the portable name the gateway will receive rather than the provider's.
+        name: controlledToolNamesByProviderName.get(block.name) ?? block.name,
+        arguments: block.arguments,
+      })),
+    stopReason: typeof message.stopReason === "string" ? message.stopReason : "endTurn",
+  };
+  recordedTurns.push(turn);
+  mkdirSync(dirname(modelTranscriptPath), { recursive: true });
+  writeFileSync(
+    modelTranscriptPath,
+    `${JSON.stringify(
+      {
+        provider: config.coworker.modelProvider,
+        model: config.coworker.modelName,
+        recordedAt: new Date().toISOString(),
+        turns: recordedTurns,
+      },
+      null,
+      2,
+    )}\n`,
+  );
+}
+
+function replayRecordedTurns(resume: boolean): boolean {
+  if (!demo || !activeRun || !modelTranscriptPath || !existsSync(modelTranscriptPath)) {
+    return false;
+  }
+  // A resumed run continues consuming the same recording, so only prime the
+  // provider when nothing is left over from the run that hit the approval.
+  if (resume && demo.getPendingResponseCount() > 0) return true;
+  let turns: RecordedTurn[];
+  try {
+    turns = JSON.parse(readFileSync(modelTranscriptPath, "utf8")).turns ?? [];
+  } catch {
+    return false;
+  }
+  if (turns.length === 0) return false;
+  demo.setResponses(
+    turns.map((turn, index) =>
+      turn.toolCalls.length > 0
+        ? fauxAssistantMessage(
+            turn.toolCalls.map((call) =>
+              fauxToolCall(call.name, call.arguments, {
+                id: `${activeRun!.taskId}:replay:${index}:${call.name}`,
+              }),
+            ),
+            { stopReason: "toolUse" },
+          )
+        : fauxAssistantMessage(turn.text),
+    ),
+  );
+  return true;
+}
+
 function configureDemoResponses(input: string, resume: boolean): void {
   if (!demo || !activeRun) return;
+  if (replayRecordedTurns(resume)) return;
   if (resume) {
     demo.setResponses([
       fauxAssistantMessage(
@@ -664,6 +751,7 @@ function handleAgentEvent(event: Parameters<Agent["subscribe"]>[0] extends (
     return;
   }
   if (event.type === "message_end" && event.message.role === "assistant") {
+    recordAssistantTurn(event.message);
     if (activeRun.assistantMessageId) {
       emit({
         type: EventType.TEXT_MESSAGE_END,
@@ -730,6 +818,7 @@ async function runTask(message: Extract<MainToWorkerMessage, { type: "run" }>): 
     } else {
       agent.state.messages = [];
     }
+    if (!message.resume) recordedTurns = [];
     configureDemoResponses(message.input, Boolean(message.resume));
     emit({
       type: EventType.RUN_STARTED,
