@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import appIcon from "../assets/app-icon.png";
 import type { PageId } from "../navigation";
 import { Icon, type IconName } from "./Icon";
 
@@ -30,10 +31,7 @@ export function AppShell({
         <aside className="sidebar">
           <div className="window-drag-region" />
           <button className="brand" onClick={() => onNavigate("home")}>
-            <span className="brand-mark" aria-hidden="true">
-              <span />
-              <span />
-            </span>
+            <img className="brand-mark" src={appIcon} alt="" />
             <span>
               <strong>Workroom</strong>
               <small>Local coworker desk</small>
@@ -66,13 +64,6 @@ export function AppShell({
             <Icon name="settings" />
             <span>Settings</span>
           </button>
-          <div className="local-seal">
-            <Icon name="shield" />
-            <span>
-              <strong>Local by design</strong>
-              <small>State stays on this computer</small>
-            </span>
-          </div>
         </aside>
       ) : null}
       <main className="main-stage">{children}</main>

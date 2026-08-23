@@ -1,12 +1,12 @@
 import type { AppSnapshot, Coworker } from "@shared/contracts";
 import { Icon } from "../components/Icon";
 import {
+  CoworkerAvatar,
   CoworkerModelBadge,
   EmptyState,
   PageHeader,
   StatusLabel,
   formatRelativeTime,
-  initials,
 } from "../components/Primitives";
 
 export function HomePage({
@@ -56,21 +56,24 @@ export function HomePage({
                 onClick={() => onOpenCoworker(coworker)}
                 style={{ "--station-index": index } as React.CSSProperties}
               >
-                <span className={`station-node station-${coworker.runtimeStatus.toLowerCase()}`}>
-                  <span>{initials(coworker.name)}</span>
-                </span>
-                <span className="station-copy">
-                  <span className="station-title">
+                <span className="station-head">
+                  <CoworkerAvatar
+                    className={`station-node station-${coworker.runtimeStatus.toLowerCase()}`}
+                    coworker={coworker}
+                  />
+                  <span className="station-id">
                     <strong>{coworker.name}</strong>
-                    <StatusLabel status={coworker.runtimeStatus} />
+                    <small>{coworker.role}</small>
                   </span>
-                  <small>{coworker.role}</small>
-                  <CoworkerModelBadge compact coworker={coworker} />
-                  <span className="station-task">
-                    {task?.title ?? "Ready for a new task"}
-                  </span>
+                  <StatusLabel status={coworker.runtimeStatus} />
                 </span>
-                <Icon name="arrow" className="station-arrow" />
+                <span className={task ? "station-task active" : "station-task"}>
+                  {task?.title ?? "Ready for a new task"}
+                </span>
+                <span className="station-foot">
+                  <CoworkerModelBadge compact coworker={coworker} />
+                  <Icon name="arrow" className="station-arrow" />
+                </span>
               </button>
             );
           })}
@@ -104,7 +107,11 @@ export function HomePage({
                 );
                 return (
                   <button key={approval.id} className="decision-row" onClick={onOpenApprovals}>
-                    <span className="decision-avatar">{initials(coworker?.name ?? "?")}</span>
+                    {coworker ? (
+                      <CoworkerAvatar className="decision-avatar" coworker={coworker} />
+                    ) : (
+                      <span className="decision-avatar">?</span>
+                    )}
                     <span>
                       <small>{coworker?.name ?? "Coworker"} asks</small>
                       <strong>{approval.summary}</strong>

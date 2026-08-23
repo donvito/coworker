@@ -2,11 +2,11 @@ import { useEffect, useState, type FormEvent } from "react";
 import type { Approval, Coworker } from "@shared/contracts";
 import { Icon } from "../components/Icon";
 import {
+  CoworkerAvatar,
   EmptyState,
   PageHeader,
   StatusLabel,
   formatRelativeTime,
-  initials,
 } from "../components/Primitives";
 
 export function ApprovalsPage({
@@ -97,7 +97,11 @@ export function ApprovalsPage({
             return (
               <article className="approval-card" key={approval.id}>
                 <div className="approval-card-head">
-                  <span className="decision-avatar">{initials(coworker?.name ?? "?")}</span>
+                  {coworker ? (
+                    <CoworkerAvatar className="decision-avatar" coworker={coworker} />
+                  ) : (
+                    <span className="decision-avatar">?</span>
+                  )}
                   <span>
                     <small>
                       {coworker?.name ?? "Coworker"} · {coworker?.role ?? "Coworker"}
@@ -178,7 +182,11 @@ export function ApprovalsPage({
             const coworker = coworkers.find((item) => item.id === approval.coworkerId);
             return (
               <div className="history-row" key={approval.id}>
-                <span className="decision-avatar small">{initials(coworker?.name ?? "?")}</span>
+                {coworker ? (
+                  <CoworkerAvatar className="decision-avatar small" coworker={coworker} />
+                ) : (
+                  <span className="decision-avatar small">?</span>
+                )}
                 <span>
                   <strong>{approval.summary}</strong>
                   <small>

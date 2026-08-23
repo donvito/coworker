@@ -1,7 +1,12 @@
 import { useMemo, useState } from "react";
 import type { ActivityItem, Coworker } from "@shared/contracts";
 import { Icon } from "../components/Icon";
-import { EmptyState, PageHeader, formatRelativeTime, initials } from "../components/Primitives";
+import {
+  CoworkerAvatar,
+  EmptyState,
+  PageHeader,
+  formatRelativeTime,
+} from "../components/Primitives";
 
 export function ActivityPage({
   activity,
@@ -64,9 +69,16 @@ export function ActivityPage({
                   );
                   return (
                     <article className="activity-entry" key={item.id}>
-                      <span className={`activity-symbol event-${eventFamily(item.type)}`}>
-                        {coworker ? initials(coworker.name) : <Icon name="activity" />}
-                      </span>
+                      {coworker ? (
+                        <CoworkerAvatar
+                          className={`activity-symbol event-${eventFamily(item.type)}`}
+                          coworker={coworker}
+                        />
+                      ) : (
+                        <span className={`activity-symbol event-${eventFamily(item.type)}`}>
+                          <Icon name="activity" />
+                        </span>
+                      )}
                       <span className="activity-copy">
                         <strong>{item.summary}</strong>
                         <small>

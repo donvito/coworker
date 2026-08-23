@@ -2,10 +2,10 @@ import { useState, type FormEvent } from "react";
 import type { Coworker, Schedule } from "@shared/contracts";
 import { Icon } from "../components/Icon";
 import {
+  CoworkerAvatar,
   EmptyState,
   PageHeader,
   formatRelativeTime,
-  initials,
 } from "../components/Primitives";
 
 export function SchedulesPage({
@@ -134,7 +134,11 @@ export function SchedulesPage({
                 className={schedule.enabled ? "schedule-card" : "schedule-card disabled"}
                 key={schedule.id}
               >
-                <span className="schedule-avatar">{initials(coworker?.name ?? "?")}</span>
+                {coworker ? (
+                  <CoworkerAvatar className="schedule-avatar" coworker={coworker} />
+                ) : (
+                  <span className="schedule-avatar">?</span>
+                )}
                 <div className="schedule-main">
                   <span>
                     <small>{coworker?.name ?? "Coworker"}</small>

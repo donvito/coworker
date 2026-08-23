@@ -4,10 +4,10 @@ import { remoteModelProviderDefinitions } from "@shared/model-providers";
 import { Icon } from "../components/Icon";
 import { ModelSelector } from "../components/ModelSelector";
 import {
+  CoworkerAvatar,
   CoworkerModelBadge,
   PageHeader,
   StatusLabel,
-  initials,
 } from "../components/Primitives";
 
 type CoworkerView = "cards" | "list";
@@ -82,7 +82,7 @@ export function CoworkersPage({
       <div className={`coworker-roster ${view}`}>
         {coworkers.map((coworker) => (
           <button className="roster-card" key={coworker.id} onClick={() => onOpen(coworker)}>
-            <span className="large-avatar">{initials(coworker.name)}</span>
+            <CoworkerAvatar className="large-avatar" coworker={coworker} />
             <span className="roster-copy">
               <span className="roster-name">
                 <strong>{coworker.name}</strong>
