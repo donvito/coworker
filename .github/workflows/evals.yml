@@ -1,9 +1,10 @@
 name: Evals
 
+# Automatic runs are disabled for now: CI's pnpm 11 (from packageManager) no
+# longer reads pnpm.patchedDependencies from package.json, so the frozen
+# install fails against the lockfile written by pnpm 9. Re-enable pull_request
+# and push triggers once the patch config and pnpm versions are aligned.
 on:
-  pull_request:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 permissions:

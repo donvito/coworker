@@ -16,6 +16,11 @@ export default function App() {
   const { snapshot, loading, error, refresh, lastEvent } = useAppData();
   const [page, setPage] = useState<PageId>("home");
   const [selectedCoworkerId, setSelectedCoworkerId] = useState<string | null>(null);
+  const theme = snapshot?.settings.theme ?? "graphite";
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+  }, [theme]);
 
   useEffect(() => {
     if (lastEvent?.type === "navigation.requested") {

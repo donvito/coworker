@@ -1,0 +1,41 @@
+diff --git a/dist/api/openai-completions.js b/dist/api/openai-completions.js
+index c5a9f5da3f822a601091bb2ee8d2a30db41dd422..a18db803a1e28d59c18f5f4f86ab623090099385 100644
+--- a/dist/api/openai-completions.js
++++ b/dist/api/openai-completions.js
+@@ -375,6 +375,36 @@ export const stream = (model, context, options) => {
+                             });
+                         }
+                     }
++                    else if (Array.isArray(deltaFields.reasoning_details)) {
++                        // Some OpenRouter routes (e.g. Google Gemini) stream reasoning
++                        // only as reasoning_details entries of type "reasoning.text",
++                        // with no plain reasoning string field, so thinking would never
++                        // surface. Used as a fallback because routes that do send a
++                        // string (e.g. DeepSeek) repeat the same text here.
++                        //
++                        // The signature is deliberately empty: thinkingSignature names
++                        // the request field this text is echoed back in, and reasoning
++                        // must not be echoed as a bare string into reasoning_details,
++                        // which is where Gemini's encrypted thought signatures travel.
++                        // Those are round-tripped separately, per tool call, below.
++                        const detailText = deltaFields.reasoning_details
++                            .filter((detail) => typeof detail === "object" &&
++                            detail !== null &&
++                            detail.type === "reasoning.text" &&
++                            typeof detail.text === "string")
++                            .map((detail) => detail.text)
++                            .join("");
++                        if (detailText.length > 0) {
++                            const block = ensureThinkingBlock("");
++                            block.thinking += detailText;
++                            stream.push({
++                                type: "thinking_delta",
++                                contentIndex: getContentIndex(block),
++                                delta: detailText,
++                                partial: output,
++                            });
++                        }
++                    }
+                     if (choice?.delta?.tool_calls) {
+                         for (const toolCall of choice.delta.tool_calls) {
+                             const block = ensureToolCallBlock(toolCall);

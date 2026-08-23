@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { Artifact } from "@shared/contracts";
@@ -77,6 +78,31 @@ describe("coworker response Markdown", () => {
 
     expect(html).not.toContain("<a ");
     expect(html).not.toContain("javascript:");
+  });
+
+  it("keeps single newlines as line breaks", () => {
+    const html = renderToStaticMarkup(
+      <ChatMarkdown>{"Line one\nLine two\n\nA new paragraph."}</ChatMarkdown>,
+    );
+
+    // Without remark-breaks a soft break would collapse into a space.
+    expect(html).toContain("<br/>");
+    expect(html).toContain("<p>A new paragraph.</p>");
+  });
+
+  it("does not let the bubble's pre-wrap turn block separators into blank lines", () => {
+    // react-markdown emits a newline text node between block elements, and the
+    // chat bubble sets white-space: pre-wrap for plain text, so .chat-markdown
+    // has to opt out or every block renders an extra blank line.
+    const html = renderToStaticMarkup(<ChatMarkdown>{"One\n\nTwo"}</ChatMarkdown>);
+    expect(html).toContain("</p>\n<p>");
+
+    const styles = readFileSync(
+      new URL("../src/renderer/src/styles.css", import.meta.url),
+      "utf8",
+    );
+    const rule = styles.slice(styles.indexOf(".chat-markdown {"));
+    expect(rule.slice(0, rule.indexOf("}"))).toContain("white-space: normal");
   });
 
   it("keeps the file card nestable inside a Markdown paragraph", () => {

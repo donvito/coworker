@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import type {
   AppSettings,
+  AppTheme,
   Coworker,
   Integration,
   ProviderErrorDiagnostic,
@@ -22,6 +23,14 @@ import { PageHeader } from "../components/Primitives";
 import { readableError } from "../lib/errors";
 
 type SettingsTab = "general" | "models" | "skills" | "integrations" | "data";
+
+const themeOptions: Array<{ id: AppTheme; label: string; description: string }> = [
+  { id: "graphite", label: "Graphite", description: "Neutral monochrome, the default" },
+  { id: "forest", label: "Forest", description: "Deep green" },
+  { id: "ocean", label: "Ocean", description: "Calm navy blue" },
+  { id: "plum", label: "Plum", description: "Muted violet" },
+  { id: "clay", label: "Clay", description: "Warm terracotta" },
+];
 
 function bytesToBase64(buffer: ArrayBuffer): string {
   const bytes = new Uint8Array(buffer);
@@ -501,6 +510,50 @@ export function SettingsPage({
                     <span />
                   </span>
                 </label>
+                <label className="settings-row">
+                  <span>
+                    <strong>Show model reasoning</strong>
+                    <small>
+                      Display a collapsible “Thinking” block in chats when a model streams its
+                      reasoning before answering.
+                    </small>
+                  </span>
+                  <span className="toggle">
+                    <input
+                      type="checkbox"
+                      checked={settings.showReasoning}
+                      disabled={working}
+                      onChange={(event) =>
+                        void patchSettings({ showReasoning: event.target.checked })
+                      }
+                    />
+                    <span />
+                  </span>
+                </label>
+              </div>
+              <div className="theme-settings">
+                <span className="eyebrow">Appearance</span>
+                <h2>Color theme</h2>
+                <p>Retints the whole app. The change applies immediately.</p>
+                <div className="theme-picker" role="group" aria-label="Color theme">
+                  {themeOptions.map((option) => (
+                    <button
+                      aria-pressed={settings.theme === option.id}
+                      className="theme-option"
+                      data-theme={option.id}
+                      disabled={working}
+                      key={option.id}
+                      onClick={() => void patchSettings({ theme: option.id })}
+                      type="button"
+                    >
+                      <span className="theme-option-swatch" aria-hidden="true" />
+                      <span>
+                        <strong>{option.label}</strong>
+                        <small>{option.description}</small>
+                      </span>
+                    </button>
+                  ))}
+                </div>
               </div>
               <form className="global-instructions-form" onSubmit={saveGlobalInstructions}>
                 <span>
