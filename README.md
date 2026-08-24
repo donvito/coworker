@@ -2,6 +2,25 @@
 
 A local-first Electron app for running independent AI coworkers. Each coworker has its own durable task queue, an isolated worker runtime, a confined workspace, and policy-controlled tools — so it can do real work (documents, invoices, email drafts, scheduled reminders) without arbitrary code execution.
 
+## Download
+
+Prebuilt installers for macOS, Windows and Linux are attached to every
+[GitHub release](https://github.com/donvito/coworker/releases/latest).
+
+| Platform | File |
+| --- | --- |
+| macOS (Apple silicon) | `Coworker-<version>-mac-arm64.dmg` |
+| macOS (Intel) | `Coworker-<version>-mac-x64.dmg` |
+| Windows | `Coworker-<version>-win-x64-setup.exe` (also `arm64`) |
+| Linux | `Coworker-<version>-linux-x64.AppImage` or `.deb` |
+
+The builds are not code-signed yet, so the OS warns on first launch:
+
+- **macOS** — right-click the app and choose *Open*, or run
+  `xattr -dr com.apple.quarantine "/Applications/Coworker.app"`.
+- **Windows** — SmartScreen: *More info* → *Run anyway*.
+- **Linux** — `chmod +x Coworker-*.AppImage` before running it.
+
 ## Screenshots
 
 **Workroom home** — every coworker's runtime status, the decision queue, and a live desk log.
@@ -43,7 +62,8 @@ To connect a real model, open **Settings → Providers**, add credentials, and v
 | `pnpm test` | Build, then run the integration suite |
 | `pnpm eval:contract` | Run the deterministic agent evals |
 | `pnpm package` | Build an unpacked app into `release/` |
-| `pnpm dist` | Build installers (dmg/zip, nsis, AppImage) |
+| `pnpm dist` | Build installers for the current platform into `release/` |
+| `pnpm dist:mac` / `dist:win` / `dist:linux` | Build installers for one platform |
 
 `pnpm test` builds the production worker first, then verifies queue isolation, concurrent workers, approval pause/resume, idempotency, scheduler recovery, and workspace confinement.
 
@@ -118,6 +138,26 @@ State lives under Electron's user-data directory. Model and email API keys are e
 The renderer runs with context isolation, sandboxing, no Node integration, a restrictive CSP, and a narrow preload API. Workers cannot touch SQLite or credentials directly. File tools resolve paths against the coworker's workspace and reject traversal or escaping symlinks. Attached images are validated and capped at four images / 20 MB per message. Remote skill downloads reject credential-bearing, local, and private-network URLs, and bundled skills cannot be overwritten. There is deliberately no shell, Python, or code-execution tool.
 
 Provider, catalog, startup, inference, and runtime-exit failures are written as redacted JSON Lines to `logs/provider-errors.jsonl` in the same directory (provider/model and task/run IDs, no prompts or credentials; rotates at 5 MB). Recent entries are viewable in **Settings → Data**, where a redacted support report can be copied or exported.
+
+## Releasing
+
+Installers are built by [`.github/workflows/release.yml`](.github/workflows/release.yml)
+on a matrix of macOS, Windows and Ubuntu runners, then attached to a GitHub release.
+
+```sh
+# bump "version" in package.json first
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+Pushing a `v*` tag builds all three platforms and publishes the release. Re-running the
+workflow manually (**Actions → Release → Run workflow**) with an existing tag rebuilds it
+and re-uploads the assets to the same release.
+
+Nothing in the dependency tree is native — the database is `node:sqlite` — so each runner
+packages its own platform without a rebuild toolchain. Signing is not configured: add
+`CSC_LINK`/`CSC_KEY_PASSWORD` (macOS) and `WIN_CSC_LINK`/`WIN_CSC_KEY_PASSWORD` (Windows)
+as repository secrets, and drop `identity: null` from `build.mac`, once certificates exist.
 
 ## Contributing
 

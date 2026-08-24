@@ -1,0 +1,103 @@
+name: Release
+
+# Tagging v* builds installers for macOS, Windows and Linux and attaches them
+# to a GitHub release. workflow_dispatch rebuilds an existing tag on demand.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build and publish (e.g. v0.1.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            platform: mac
+          - os: windows-latest
+            platform: win
+          - os: ubuntu-latest
+            platform: linux
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build installers
+        env:
+          # No Developer ID certificate yet, so keep electron-builder from
+          # picking up an unrelated keychain identity and failing the build.
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: pnpm dist:${{ matrix.platform }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coworker-${{ matrix.platform }}
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            release/*.dmg
+            release/*.zip
+            release/*.exe
+            release/*.AppImage
+            release/*.deb
+
+  publish:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: List artifacts
+        run: ls -lh dist
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          cat > notes.md <<'NOTES'
+          ## Downloads
+
+          | Platform | File |
+          | --- | --- |
+          | macOS (Apple silicon) | `Coworker-*-mac-arm64.dmg` |
+          | macOS (Intel) | `Coworker-*-mac-x64.dmg` |
+          | Windows | `Coworker-*-win-x64-setup.exe` (or `arm64`) |
+          | Linux | `Coworker-*-linux-x64.AppImage` / `.deb` |
+
+          These builds are **not code-signed**.
+
+          - macOS: the first launch is blocked by Gatekeeper. Right-click the app and
+            choose *Open*, or run `xattr -dr com.apple.quarantine "/Applications/Coworker.app"`.
+          - Windows: SmartScreen shows "Windows protected your PC" — choose
+            *More info* → *Run anyway*.
+          - Linux: `chmod +x Coworker-*.AppImage` before running it.
+          NOTES
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+          else
+            gh release create "$TAG" dist/* \
+              --title "Coworker $TAG" \
+              --notes-file notes.md \
+              --generate-notes
+          fi
