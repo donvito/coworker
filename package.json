@@ -8,7 +8,7 @@
   "author": "Coworker",
   "license": "UNLICENSED",
   "private": true,
-  "packageManager": "pnpm@11.18.0",
+  "packageManager": "pnpm@9.15.0",
   "engines": {
     "node": ">=22.12.0"
   },
@@ -28,35 +28,92 @@
     "eval:report:contract": "node -e \"require('node:fs').mkdirSync('eval-results',{recursive:true})\" && pnpm build && vitest run --config vitest.evals.config.ts evals/tool-safety.eval.ts evals/multimodal.eval.ts --reporter=vitest-evals/reporter --reporter=json --outputFile.json=eval-results/latest.json",
     "eval:ui": "vitest-evals serve eval-results",
     "package": "pnpm build && electron-builder --dir",
-    "dist": "pnpm build && electron-builder"
+    "dist": "pnpm build && electron-builder --publish never",
+    "dist:mac": "pnpm build && electron-builder --mac --publish never",
+    "dist:win": "pnpm build && electron-builder --win --publish never",
+    "dist:linux": "pnpm build && electron-builder --linux --publish never"
   },
   "build": {
     "appId": "com.localcoworker.desktop",
     "productName": "Coworker",
     "directories": {
-      "output": "release"
+      "output": "release",
+      "buildResources": "build"
     },
     "files": [
       "out/**/*",
       "build/icon.png",
       "package.json"
     ],
+    "npmRebuild": false,
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "donvito",
+        "repo": "coworker"
+      }
+    ],
     "mac": {
       "icon": "build/icon.png",
+      "category": "public.app-category.productivity",
       "target": [
-        "dmg",
-        "zip"
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
       ],
-      "category": "public.app-category.productivity"
+      "artifactName": "${productName}-${version}-mac-${arch}.${ext}",
+      "darkModeSupport": true,
+      "identity": null,
+      "notarize": false
     },
     "win": {
       "icon": "build/icon.png",
-      "target": "nsis"
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "${productName}-${version}-win-${arch}-setup.${ext}"
     },
     "linux": {
       "icon": "build/icon.png",
-      "target": "AppImage",
-      "category": "Utility"
+      "category": "Utility",
+      "maintainer": "donvito <melvindave@gmail.com>",
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "deb",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "${productName}-${version}-linux-${arch}.${ext}"
     }
   },
   "dependencies": {
