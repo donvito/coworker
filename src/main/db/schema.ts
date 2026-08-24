@@ -1,299 +1,428 @@
-export const schemaSql = `
-PRAGMA journal_mode = WAL;
-PRAGMA foreign_keys = ON;
-PRAGMA busy_timeout = 5000;
+import { sql } from "drizzle-orm";
+import {
+  blob,
+  check,
+  index,
+  integer,
+  primaryKey,
+  sqliteTable,
+  text,
+  uniqueIndex,
+} from "drizzle-orm/sqlite-core";
 
-CREATE TABLE IF NOT EXISTS schema_migrations (
-  version INTEGER PRIMARY KEY,
-  applied_at TEXT NOT NULL
+const taskStatuses = [
+  "QUEUED",
+  "RUNNING",
+  "WAITING_FOR_APPROVAL",
+  "COMPLETED",
+  "FAILED",
+  "CANCELLED",
+] as const;
+
+const approvalStatuses = [
+  "PENDING",
+  "APPROVED",
+  "REJECTED",
+  "EDITED",
+  "EXPIRED",
+] as const;
+
+const toolCallStatuses = [
+  "REQUESTED",
+  "WAITING_FOR_APPROVAL",
+  "RUNNING",
+  "COMPLETED",
+  "FAILED",
+  "DENIED",
+] as const;
+
+export const schemaMigrations = sqliteTable("schema_migrations", {
+  version: integer("version").primaryKey(),
+  appliedAt: text("applied_at").notNull(),
+});
+
+export const coworkers = sqliteTable(
+  "coworkers",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    role: text("role").notNull(),
+    description: text("description"),
+    systemPrompt: text("system_prompt").notNull(),
+    modelProvider: text("model_provider").notNull(),
+    modelName: text("model_name").notNull(),
+    status: text("status", { enum: ["active", "paused"] }).notNull().default("active"),
+    runtimeStatus: text("runtime_status", {
+      enum: ["STOPPED", "STARTING", "IDLE", "WORKING", "WAITING_FOR_APPROVAL", "ERROR"],
+    })
+      .notNull()
+      .default("STOPPED"),
+    workspacePath: text("workspace_path").notNull(),
+    enabledToolsJson: text("enabled_tools_json").notNull().default("[]"),
+    policiesJson: text("policies_json").notNull().default("{}"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    check("coworkers_status_check", sql`${table.status} in ('active', 'paused')`),
+    check(
+      "coworkers_runtime_status_check",
+      sql`${table.runtimeStatus} in ('STOPPED', 'STARTING', 'IDLE', 'WORKING', 'WAITING_FOR_APPROVAL', 'ERROR')`,
+    ),
+  ],
 );
 
-CREATE TABLE IF NOT EXISTS coworkers (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL,
-  role TEXT NOT NULL,
-  description TEXT,
-  system_prompt TEXT NOT NULL,
-  model_provider TEXT NOT NULL,
-  model_name TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'active',
-  runtime_status TEXT NOT NULL DEFAULT 'STOPPED',
-  workspace_path TEXT NOT NULL,
-  enabled_tools_json TEXT NOT NULL DEFAULT '[]',
-  policies_json TEXT NOT NULL DEFAULT '{}',
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  CHECK (status IN ('active', 'paused')),
-  CHECK (runtime_status IN ('STOPPED', 'STARTING', 'IDLE', 'WORKING', 'WAITING_FOR_APPROVAL', 'ERROR'))
+export const schedules = sqliteTable(
+  "schedules",
+  {
+    id: text("id").primaryKey(),
+    coworkerId: text("coworker_id")
+      .notNull()
+      .references(() => coworkers.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    scheduleType: text("schedule_type", { enum: ["cron", "once"] }).notNull(),
+    cronExpression: text("cron_expression"),
+    runAt: text("run_at"),
+    timezone: text("timezone").notNull(),
+    taskTemplateJson: text("task_template_json").notNull(),
+    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    lastRunAt: text("last_run_at"),
+    nextRunAt: text("next_run_at"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    check("schedules_type_check", sql`${table.scheduleType} in ('cron', 'once')`),
+    check("schedules_enabled_check", sql`${table.enabled} in (0, 1)`),
+  ],
 );
 
-CREATE TABLE IF NOT EXISTS schedules (
-  id TEXT PRIMARY KEY,
-  coworker_id TEXT NOT NULL,
-  name TEXT NOT NULL,
-  schedule_type TEXT NOT NULL,
-  cron_expression TEXT,
-  run_at TEXT,
-  timezone TEXT NOT NULL,
-  task_template_json TEXT NOT NULL,
-  enabled INTEGER NOT NULL DEFAULT 1,
-  last_run_at TEXT,
-  next_run_at TEXT,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  FOREIGN KEY (coworker_id) REFERENCES coworkers(id) ON DELETE CASCADE,
-  CHECK (schedule_type IN ('cron', 'once')),
-  CHECK (enabled IN (0, 1))
+export const conversations = sqliteTable(
+  "conversations",
+  {
+    id: text("id").primaryKey(),
+    coworkerId: text("coworker_id")
+      .notNull()
+      .references(() => coworkers.id, { onDelete: "cascade" }),
+    title: text("title").notNull(),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    index("conversations_coworker_updated_idx").on(
+      table.coworkerId,
+      sql`${table.updatedAt} desc`,
+    ),
+  ],
 );
 
-CREATE TABLE IF NOT EXISTS conversations (
-  id TEXT PRIMARY KEY,
-  coworker_id TEXT NOT NULL,
-  title TEXT NOT NULL,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  FOREIGN KEY (coworker_id) REFERENCES coworkers(id) ON DELETE CASCADE
+export const tasks = sqliteTable(
+  "tasks",
+  {
+    id: text("id").primaryKey(),
+    coworkerId: text("coworker_id")
+      .notNull()
+      .references(() => coworkers.id, { onDelete: "cascade" }),
+    scheduleId: text("schedule_id").references(() => schedules.id, { onDelete: "set null" }),
+    runId: text("run_id"),
+    threadId: text("thread_id"),
+    title: text("title").notNull(),
+    input: text("input").notNull(),
+    status: text("status", { enum: taskStatuses }).notNull(),
+    source: text("source", { enum: ["manual", "schedule", "recovery"] })
+      .notNull()
+      .default("manual"),
+    priority: integer("priority").notNull().default(0),
+    result: text("result"),
+    error: text("error"),
+    createdAt: text("created_at").notNull(),
+    startedAt: text("started_at"),
+    completedAt: text("completed_at"),
+  },
+  (table) => [
+    check(
+      "tasks_status_check",
+      sql`${table.status} in ('QUEUED', 'RUNNING', 'WAITING_FOR_APPROVAL', 'COMPLETED', 'FAILED', 'CANCELLED')`,
+    ),
+    check("tasks_source_check", sql`${table.source} in ('manual', 'schedule', 'recovery')`),
+    uniqueIndex("tasks_run_id_idx").on(table.runId).where(sql`${table.runId} is not null`),
+    index("tasks_coworker_queue_idx").on(
+      table.coworkerId,
+      table.status,
+      sql`${table.priority} desc`,
+      sql`${table.createdAt} asc`,
+    ),
+  ],
 );
 
-CREATE INDEX IF NOT EXISTS conversations_coworker_updated_idx
-  ON conversations(coworker_id, updated_at DESC);
-
-CREATE TABLE IF NOT EXISTS tasks (
-  id TEXT PRIMARY KEY,
-  coworker_id TEXT NOT NULL,
-  schedule_id TEXT,
-  run_id TEXT,
-  thread_id TEXT,
-  title TEXT NOT NULL,
-  input TEXT NOT NULL,
-  status TEXT NOT NULL,
-  source TEXT NOT NULL DEFAULT 'manual',
-  priority INTEGER NOT NULL DEFAULT 0,
-  result TEXT,
-  error TEXT,
-  created_at TEXT NOT NULL,
-  started_at TEXT,
-  completed_at TEXT,
-  FOREIGN KEY (coworker_id) REFERENCES coworkers(id) ON DELETE CASCADE,
-  FOREIGN KEY (schedule_id) REFERENCES schedules(id) ON DELETE SET NULL,
-  CHECK (status IN ('QUEUED', 'RUNNING', 'WAITING_FOR_APPROVAL', 'COMPLETED', 'FAILED', 'CANCELLED')),
-  CHECK (source IN ('manual', 'schedule', 'recovery'))
+export const taskImageAttachments = sqliteTable(
+  "task_image_attachments",
+  {
+    id: text("id").primaryKey(),
+    taskId: text("task_id")
+      .notNull()
+      .references(() => tasks.id, { onDelete: "cascade" }),
+    coworkerId: text("coworker_id")
+      .notNull()
+      .references(() => coworkers.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    mimeType: text("mime_type").notNull(),
+    relativePath: text("relative_path").notNull(),
+    size: integer("size").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    check("task_image_attachments_size_check", sql`${table.size} > 0`),
+    index("task_image_attachments_task_idx").on(
+      table.taskId,
+      sql`${table.createdAt} asc`,
+    ),
+  ],
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS tasks_run_id_idx
-  ON tasks(run_id)
-  WHERE run_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS tasks_coworker_queue_idx
-  ON tasks(coworker_id, status, priority DESC, created_at ASC);
-
-CREATE TABLE IF NOT EXISTS task_image_attachments (
-  id TEXT PRIMARY KEY,
-  task_id TEXT NOT NULL,
-  coworker_id TEXT NOT NULL,
-  name TEXT NOT NULL,
-  mime_type TEXT NOT NULL,
-  relative_path TEXT NOT NULL,
-  size INTEGER NOT NULL,
-  created_at TEXT NOT NULL,
-  FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
-  FOREIGN KEY (coworker_id) REFERENCES coworkers(id) ON DELETE CASCADE,
-  CHECK (size > 0)
+export const messages = sqliteTable(
+  "messages",
+  {
+    id: text("id").primaryKey(),
+    coworkerId: text("coworker_id")
+      .notNull()
+      .references(() => coworkers.id, { onDelete: "cascade" }),
+    taskId: text("task_id").references(() => tasks.id, { onDelete: "cascade" }),
+    role: text("role", { enum: ["user", "assistant", "system", "tool"] }).notNull(),
+    content: text("content").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    check("messages_role_check", sql`${table.role} in ('user', 'assistant', 'system', 'tool')`),
+    index("messages_coworker_created_idx").on(
+      table.coworkerId,
+      sql`${table.createdAt} asc`,
+    ),
+  ],
 );
 
-CREATE INDEX IF NOT EXISTS task_image_attachments_task_idx
-  ON task_image_attachments(task_id, created_at ASC);
+export const taskCheckpoints = sqliteTable("task_checkpoints", {
+  taskId: text("task_id")
+    .primaryKey()
+    .references(() => tasks.id, { onDelete: "cascade" }),
+  messagesJson: text("messages_json").notNull().default("[]"),
+  pendingToolJson: text("pending_tool_json"),
+  updatedAt: text("updated_at").notNull(),
+});
 
-CREATE TABLE IF NOT EXISTS messages (
-  id TEXT PRIMARY KEY,
-  coworker_id TEXT NOT NULL,
-  task_id TEXT,
-  role TEXT NOT NULL,
-  content TEXT NOT NULL,
-  created_at TEXT NOT NULL,
-  FOREIGN KEY (coworker_id) REFERENCES coworkers(id) ON DELETE CASCADE,
-  FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
-  CHECK (role IN ('user', 'assistant', 'system', 'tool'))
+export const toolCalls = sqliteTable(
+  "tool_calls",
+  {
+    id: text("id").primaryKey(),
+    taskId: text("task_id")
+      .notNull()
+      .references(() => tasks.id, { onDelete: "cascade" }),
+    coworkerId: text("coworker_id")
+      .notNull()
+      .references(() => coworkers.id, { onDelete: "cascade" }),
+    toolName: text("tool_name").notNull(),
+    argumentsJson: text("arguments_json"),
+    resultJson: text("result_json"),
+    status: text("status", { enum: toolCallStatuses }).notNull(),
+    idempotencyKey: text("idempotency_key").notNull().unique(),
+    createdAt: text("created_at").notNull(),
+    completedAt: text("completed_at"),
+  },
+  (table) => [
+    check(
+      "tool_calls_status_check",
+      sql`${table.status} in ('REQUESTED', 'WAITING_FOR_APPROVAL', 'RUNNING', 'COMPLETED', 'FAILED', 'DENIED')`,
+    ),
+  ],
 );
 
-CREATE INDEX IF NOT EXISTS messages_coworker_created_idx
-  ON messages(coworker_id, created_at ASC);
-
-CREATE TABLE IF NOT EXISTS task_checkpoints (
-  task_id TEXT PRIMARY KEY,
-  messages_json TEXT NOT NULL DEFAULT '[]',
-  pending_tool_json TEXT,
-  updated_at TEXT NOT NULL,
-  FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+export const approvals = sqliteTable(
+  "approvals",
+  {
+    id: text("id").primaryKey(),
+    taskId: text("task_id")
+      .notNull()
+      .references(() => tasks.id, { onDelete: "cascade" }),
+    coworkerId: text("coworker_id")
+      .notNull()
+      .references(() => coworkers.id, { onDelete: "cascade" }),
+    toolCallId: text("tool_call_id")
+      .notNull()
+      .unique()
+      .references(() => toolCalls.id, { onDelete: "cascade" }),
+    actionType: text("action_type").notNull(),
+    summary: text("summary").notNull(),
+    proposedPayloadJson: text("proposed_payload_json"),
+    decidedPayloadJson: text("decided_payload_json"),
+    riskLevel: text("risk_level", { enum: ["low", "medium", "high"] }).notNull(),
+    status: text("status", { enum: approvalStatuses }).notNull(),
+    createdAt: text("created_at").notNull(),
+    decidedAt: text("decided_at"),
+  },
+  (table) => [
+    check("approvals_risk_level_check", sql`${table.riskLevel} in ('low', 'medium', 'high')`),
+    check(
+      "approvals_status_check",
+      sql`${table.status} in ('PENDING', 'APPROVED', 'REJECTED', 'EDITED', 'EXPIRED')`,
+    ),
+    index("approvals_status_created_idx").on(table.status, sql`${table.createdAt} asc`),
+  ],
 );
 
-CREATE TABLE IF NOT EXISTS tool_calls (
-  id TEXT PRIMARY KEY,
-  task_id TEXT NOT NULL,
-  coworker_id TEXT NOT NULL,
-  tool_name TEXT NOT NULL,
-  arguments_json TEXT,
-  result_json TEXT,
-  status TEXT NOT NULL,
-  idempotency_key TEXT NOT NULL UNIQUE,
-  created_at TEXT NOT NULL,
-  completed_at TEXT,
-  FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
-  FOREIGN KEY (coworker_id) REFERENCES coworkers(id) ON DELETE CASCADE,
-  CHECK (status IN ('REQUESTED', 'WAITING_FOR_APPROVAL', 'RUNNING', 'COMPLETED', 'FAILED', 'DENIED'))
+export const artifacts = sqliteTable(
+  "artifacts",
+  {
+    id: text("id").primaryKey(),
+    taskId: text("task_id").references(() => tasks.id, { onDelete: "set null" }),
+    coworkerId: text("coworker_id")
+      .notNull()
+      .references(() => coworkers.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    mimeType: text("mime_type").notNull(),
+    filePath: text("file_path").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("artifacts_task_path_idx")
+      .on(table.taskId, table.filePath)
+      .where(sql`${table.taskId} is not null`),
+  ],
 );
 
-CREATE TABLE IF NOT EXISTS approvals (
-  id TEXT PRIMARY KEY,
-  task_id TEXT NOT NULL,
-  coworker_id TEXT NOT NULL,
-  tool_call_id TEXT NOT NULL UNIQUE,
-  action_type TEXT NOT NULL,
-  summary TEXT NOT NULL,
-  proposed_payload_json TEXT,
-  decided_payload_json TEXT,
-  risk_level TEXT NOT NULL,
-  status TEXT NOT NULL,
-  created_at TEXT NOT NULL,
-  decided_at TEXT,
-  FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
-  FOREIGN KEY (coworker_id) REFERENCES coworkers(id) ON DELETE CASCADE,
-  FOREIGN KEY (tool_call_id) REFERENCES tool_calls(id) ON DELETE CASCADE,
-  CHECK (risk_level IN ('low', 'medium', 'high')),
-  CHECK (status IN ('PENDING', 'APPROVED', 'REJECTED', 'EDITED', 'EXPIRED'))
+export const activity = sqliteTable(
+  "activity",
+  {
+    id: text("id").primaryKey(),
+    coworkerId: text("coworker_id").references(() => coworkers.id, { onDelete: "set null" }),
+    taskId: text("task_id").references(() => tasks.id, { onDelete: "set null" }),
+    type: text("type").notNull(),
+    summary: text("summary").notNull(),
+    metadataJson: text("metadata_json"),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    index("activity_created_idx").on(sql`${table.createdAt} desc`),
+  ],
 );
 
-CREATE INDEX IF NOT EXISTS approvals_status_created_idx
-  ON approvals(status, created_at ASC);
-
-CREATE TABLE IF NOT EXISTS artifacts (
-  id TEXT PRIMARY KEY,
-  task_id TEXT,
-  coworker_id TEXT NOT NULL,
-  name TEXT NOT NULL,
-  mime_type TEXT NOT NULL,
-  file_path TEXT NOT NULL,
-  created_at TEXT NOT NULL,
-  FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE SET NULL,
-  FOREIGN KEY (coworker_id) REFERENCES coworkers(id) ON DELETE CASCADE
+export const integrations = sqliteTable(
+  "integrations",
+  {
+    id: text("id").primaryKey(),
+    type: text("type", { enum: ["email"] }).notNull(),
+    name: text("name").notNull(),
+    mode: text("mode", { enum: ["local-outbox", "resend"] }).notNull(),
+    status: text("status", { enum: ["connected", "disconnected", "error"] }).notNull(),
+    credentialKey: text("credential_key"),
+    configJson: text("config_json").notNull().default("{}"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    check("integrations_type_check", sql`${table.type} = 'email'`),
+    check("integrations_mode_check", sql`${table.mode} in ('local-outbox', 'resend')`),
+    check(
+      "integrations_status_check",
+      sql`${table.status} in ('connected', 'disconnected', 'error')`,
+    ),
+  ],
 );
 
-DELETE FROM artifacts
-WHERE task_id IS NOT NULL
-  AND rowid NOT IN (
-    SELECT MIN(rowid)
-    FROM artifacts
-    WHERE task_id IS NOT NULL
-    GROUP BY task_id, file_path
-  );
-CREATE UNIQUE INDEX IF NOT EXISTS artifacts_task_path_idx
-  ON artifacts(task_id, file_path)
-  WHERE task_id IS NOT NULL;
-
-CREATE TABLE IF NOT EXISTS activity (
-  id TEXT PRIMARY KEY,
-  coworker_id TEXT,
-  task_id TEXT,
-  type TEXT NOT NULL,
-  summary TEXT NOT NULL,
-  metadata_json TEXT,
-  created_at TEXT NOT NULL,
-  FOREIGN KEY (coworker_id) REFERENCES coworkers(id) ON DELETE SET NULL,
-  FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE SET NULL
+export const sideEffects = sqliteTable(
+  "side_effects",
+  {
+    idempotencyKey: text("idempotency_key").primaryKey(),
+    toolCallId: text("tool_call_id")
+      .notNull()
+      .references(() => toolCalls.id, { onDelete: "cascade" }),
+    status: text("status", { enum: ["RUNNING", "COMPLETED", "FAILED"] }).notNull(),
+    resultJson: text("result_json"),
+    createdAt: text("created_at").notNull(),
+    completedAt: text("completed_at"),
+  },
+  (table) => [
+    check("side_effects_status_check", sql`${table.status} in ('RUNNING', 'COMPLETED', 'FAILED')`),
+  ],
 );
 
-CREATE INDEX IF NOT EXISTS activity_created_idx ON activity(created_at DESC);
+export const settings = sqliteTable("settings", {
+  key: text("key").primaryKey(),
+  valueJson: text("value_json").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
 
-CREATE TABLE IF NOT EXISTS integrations (
-  id TEXT PRIMARY KEY,
-  type TEXT NOT NULL,
-  name TEXT NOT NULL,
-  mode TEXT NOT NULL,
-  status TEXT NOT NULL,
-  credential_key TEXT,
-  config_json TEXT NOT NULL DEFAULT '{}',
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  CHECK (type IN ('email')),
-  CHECK (mode IN ('local-outbox', 'resend')),
-  CHECK (status IN ('connected', 'disconnected', 'error'))
+export const appMetadata = sqliteTable("app_metadata", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
+export const skills = sqliteTable(
+  "skills",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull().unique(),
+    description: text("description").notNull(),
+    content: text("content").notNull(),
+    sourceUrl: text("source_url"),
+    bundled: integer("bundled", { mode: "boolean" }).notNull().default(false),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    check("skills_bundled_check", sql`${table.bundled} in (0, 1)`),
+  ],
 );
 
-CREATE TABLE IF NOT EXISTS side_effects (
-  idempotency_key TEXT PRIMARY KEY,
-  tool_call_id TEXT NOT NULL,
-  status TEXT NOT NULL,
-  result_json TEXT,
-  created_at TEXT NOT NULL,
-  completed_at TEXT,
-  FOREIGN KEY (tool_call_id) REFERENCES tool_calls(id) ON DELETE CASCADE,
-  CHECK (status IN ('RUNNING', 'COMPLETED', 'FAILED'))
+export const coworkerSkills = sqliteTable(
+  "coworker_skills",
+  {
+    coworkerId: text("coworker_id")
+      .notNull()
+      .references(() => coworkers.id, { onDelete: "cascade" }),
+    skillId: text("skill_id")
+      .notNull()
+      .references(() => skills.id, { onDelete: "cascade" }),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.coworkerId, table.skillId] }),
+  ],
 );
 
-CREATE TABLE IF NOT EXISTS settings (
-  key TEXT PRIMARY KEY,
-  value_json TEXT NOT NULL,
-  updated_at TEXT NOT NULL
+export const skillResources = sqliteTable(
+  "skill_resources",
+  {
+    skillId: text("skill_id")
+      .notNull()
+      .references(() => skills.id, { onDelete: "cascade" }),
+    path: text("path").notNull(),
+    mimeType: text("mime_type").notNull(),
+    content: blob("content", { mode: "buffer" }).notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.skillId, table.path] }),
+  ],
 );
 
-CREATE TABLE IF NOT EXISTS app_metadata (
-  key TEXT PRIMARY KEY,
-  value TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS skills (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL UNIQUE,
-  description TEXT NOT NULL,
-  content TEXT NOT NULL,
-  source_url TEXT,
-  bundled INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  CHECK (bundled IN (0, 1))
-);
-
-CREATE TABLE IF NOT EXISTS coworker_skills (
-  coworker_id TEXT NOT NULL,
-  skill_id TEXT NOT NULL,
-  created_at TEXT NOT NULL,
-  PRIMARY KEY (coworker_id, skill_id),
-  FOREIGN KEY (coworker_id) REFERENCES coworkers(id) ON DELETE CASCADE,
-  FOREIGN KEY (skill_id) REFERENCES skills(id) ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS skill_resources (
-  skill_id TEXT NOT NULL,
-  path TEXT NOT NULL,
-  mime_type TEXT NOT NULL,
-  content BLOB NOT NULL,
-  PRIMARY KEY (skill_id, path),
-  FOREIGN KEY (skill_id) REFERENCES skills(id) ON DELETE CASCADE
-);
-
-INSERT OR IGNORE INTO conversations(id, coworker_id, title, created_at, updated_at)
-SELECT
-  tasks.thread_id,
-  tasks.coworker_id,
-  MIN(tasks.title),
-  MIN(tasks.created_at),
-  MAX(COALESCE(tasks.completed_at, tasks.started_at, tasks.created_at))
-FROM tasks
-WHERE tasks.thread_id IS NOT NULL AND tasks.thread_id <> ''
-GROUP BY tasks.thread_id, tasks.coworker_id;
-
-INSERT OR IGNORE INTO conversations(id, coworker_id, title, created_at, updated_at)
-SELECT
-  'coworker:' || coworkers.id,
-  coworkers.id,
-  'New conversation',
-  coworkers.created_at,
-  coworkers.updated_at
-FROM coworkers
-WHERE NOT EXISTS (
-  SELECT 1 FROM conversations WHERE conversations.coworker_id = coworkers.id
-);
-
-INSERT OR IGNORE INTO schema_migrations(version, applied_at)
-VALUES (1, datetime('now'));
-`;
+export const databaseSchema = {
+  schemaMigrations,
+  coworkers,
+  schedules,
+  conversations,
+  tasks,
+  taskImageAttachments,
+  messages,
+  taskCheckpoints,
+  toolCalls,
+  approvals,
+  artifacts,
+  activity,
+  integrations,
+  sideEffects,
+  settings,
+  appMetadata,
+  skills,
+  coworkerSkills,
+  skillResources,
+};

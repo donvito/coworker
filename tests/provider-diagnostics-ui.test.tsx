@@ -23,9 +23,16 @@ describe("provider diagnostics settings", () => {
       },
     ]);
     const copyProviderReport = vi.fn().mockResolvedValue({ count: 1 });
+    const exportSupportBundle = vi.fn().mockResolvedValue("/tmp/Coworker-Support.zip");
+    const exportDataBackup = vi.fn().mockResolvedValue("/tmp/Coworker-All-Data.zip");
     Object.defineProperty(window, "coworker", {
       configurable: true,
       value: {
+        app: {
+          exportDataBackup,
+          openDataFolder: vi.fn(),
+          backup: vi.fn().mockResolvedValue(null),
+        },
         integrations: {
           credentialStatus: vi.fn().mockResolvedValue({ configured: false }),
         },
@@ -33,6 +40,7 @@ describe("provider diagnostics settings", () => {
           listProviderErrors,
           copyProviderReport,
           exportProviderReport: vi.fn().mockResolvedValue(null),
+          exportSupportBundle,
         },
       },
     });
@@ -54,17 +62,27 @@ describe("provider diagnostics settings", () => {
           defaultModelName: null,
         }}
         skills={[]}
+        version="1.2.3"
       />,
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Data" }));
     expect(await screen.findByText("404: No compatible endpoint")).toBeTruthy();
     expect(listProviderErrors).toHaveBeenCalledWith(50);
+    expect(screen.getByText("1.2.3")).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Copy report" }));
     await waitFor(() => expect(copyProviderReport).toHaveBeenCalledOnce());
     expect(screen.getByRole("status").textContent).toContain(
       "Copied a redacted report with 1 provider error.",
     );
+
+    fireEvent.click(screen.getByRole("button", { name: /Download support ZIP/ }));
+    await waitFor(() => expect(exportSupportBundle).toHaveBeenCalledOnce());
+    expect(screen.getByRole("status").textContent).toContain("Support bundle saved");
+
+    fireEvent.click(screen.getByRole("button", { name: /Export all data/ }));
+    await waitFor(() => expect(exportDataBackup).toHaveBeenCalledOnce());
+    expect(screen.getByRole("status").textContent).toContain("Complete data backup saved");
   });
 });

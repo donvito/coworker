@@ -348,6 +348,7 @@ export interface AppSnapshot {
   skills: Skill[];
   settings: AppSettings;
   dataPath: string;
+  version: string;
 }
 
 export type EntityName =
@@ -400,6 +401,7 @@ export interface DesktopApi {
     bootstrap(): Promise<AppSnapshot>;
     openDataFolder(): Promise<void>;
     backup(): Promise<string | null>;
+    exportDataBackup(): Promise<string | null>;
     getSettings(): Promise<AppSettings>;
     updateSettings(settings: Partial<AppSettings>): Promise<AppSettings>;
   };
@@ -411,6 +413,7 @@ export interface DesktopApi {
   };
   conversations: {
     list(coworkerId?: string): Promise<Conversation[]>;
+    search(coworkerId: string, query: string): Promise<Conversation[]>;
     create(input: CreateConversationInput): Promise<Conversation>;
   };
   tasks: {
@@ -420,6 +423,7 @@ export interface DesktopApi {
   };
   messages: {
     list(coworkerId: string, taskId?: string): Promise<Message[]>;
+    listConversation(coworkerId: string, conversationId: string): Promise<Message[]>;
   };
   approvals: {
     list(status?: ApprovalStatus): Promise<Approval[]>;
@@ -447,6 +451,7 @@ export interface DesktopApi {
     listProviderErrors(limit?: number): Promise<ProviderErrorDiagnostic[]>;
     copyProviderReport(): Promise<{ count: number }>;
     exportProviderReport(): Promise<string | null>;
+    exportSupportBundle(): Promise<string | null>;
   };
   integrations: {
     list(): Promise<Integration[]>;

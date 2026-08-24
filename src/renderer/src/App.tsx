@@ -166,6 +166,7 @@ export default function App() {
           skills={snapshot.skills}
           coworkers={snapshot.coworkers}
           dataPath={snapshot.dataPath}
+          version={snapshot.version}
           onChanged={refresh}
         />
       ) : null}

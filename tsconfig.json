@@ -25,6 +25,7 @@
     "types": ["node", "vite/client", "vitest/globals"]
   },
   "include": [
+    "drizzle.config.ts",
     "electron.vite.config.ts",
     "vitest.config.ts",
     "vitest.evals.config.ts",

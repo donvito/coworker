@@ -1,6 +1,6 @@
 {
   "name": "coworker",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A local-first desktop app for independent AI coworkers.",
   "type": "module",
   "productName": "Coworker",
@@ -16,6 +16,8 @@
     "dev": "node scripts/dev-app-name.js && electron-vite dev",
     "postinstall": "install-electron && node scripts/dev-app-name.js",
     "build": "pnpm typecheck && electron-vite build",
+    "db:generate": "drizzle-kit generate",
+    "db:check": "drizzle-kit check",
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "pnpm build && vitest run",
@@ -44,6 +46,15 @@
       "out/**/*",
       "build/icon.png",
       "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "drizzle",
+        "to": "drizzle",
+        "filter": [
+          "**/*"
+        ]
+      }
     ],
     "npmRebuild": false,
     "publish": [
@@ -123,8 +134,10 @@
     "@earendil-works/pi-agent-core": "^0.84.2",
     "@earendil-works/pi-ai": "^0.84.2",
     "@sinclair/typebox": "^0.34.52",
+    "archiver": "^8.0.0",
     "cron-parser": "^5.10.0",
     "docx": "^9.7.1",
+    "drizzle-orm": "1.0.0-rc.4",
     "exceljs": "^4.4.0",
     "jszip": "^3.10.1",
     "pdf-lib": "^1.17.1",
@@ -139,10 +152,12 @@
   "devDependencies": {
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.6",
+    "@types/archiver": "^8.0.0",
     "@types/node": "^26.2.0",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
     "@vitejs/plugin-react": "^5.2.0",
+    "drizzle-kit": "1.0.0-rc.4",
     "electron": "^43.4.1",
     "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0",

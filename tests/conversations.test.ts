@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -120,6 +120,50 @@ describe("durable coworker conversations", () => {
     }
   });
 
+  it("searches the complete stored conversation history beyond bootstrap limits", async () => {
+    const root = await mkdtemp(join(tmpdir(), "coworker-conversation-search-"));
+    temporaryPaths.push(root);
+    const database = new CoworkerDatabase(join(root, "coworker.db"));
+    try {
+      const ava = createCoworker(database, root, "Ava");
+      const [conversation] = database.listConversations(ava.id);
+      const task = database.createTask({
+        coworkerId: ava.id,
+        threadId: conversation!.id,
+        title: "Long-running account review",
+        input: "Review the account.",
+      });
+      for (let index = 0; index < 500; index += 1) {
+        database.addMessage({
+          coworkerId: ava.id,
+          taskId: task.id,
+          role: "assistant",
+          content: `Routine update ${index}`,
+        });
+      }
+      database.addMessage({
+        coworkerId: ava.id,
+        taskId: task.id,
+        role: "assistant",
+        content: "The hidden renewal code is ORCHID-742.",
+      });
+
+      expect(database.listMessages(ava.id).some((message) => message.content.includes("ORCHID"))).toBe(
+        false,
+      );
+      expect(database.searchConversations(ava.id, "orchid-742")).toEqual([
+        expect.objectContaining({ id: conversation!.id }),
+      ]);
+      expect(
+        database
+          .listConversationMessages(ava.id, conversation!.id, Number.MAX_SAFE_INTEGER)
+          .some((message) => message.content.includes("ORCHID")),
+      ).toBe(true);
+    } finally {
+      database.close();
+    }
+  });
+
   it("backfills conversation history for databases created before conversations existed", async () => {
     const root = await mkdtemp(join(tmpdir(), "coworker-conversation-backfill-"));
     temporaryPaths.push(root);
@@ -152,5 +196,129 @@ describe("durable coworker conversations", () => {
     } finally {
       migrated.close();
     }
+  });
+
+  it("upgrades a partial legacy schema without losing durable data", async () => {
+    const root = await mkdtemp(join(tmpdir(), "coworker-drizzle-baseline-"));
+    temporaryPaths.push(root);
+    const databasePath = join(root, "coworker.db");
+    const legacy = new DatabaseSync(databasePath);
+    legacy.exec(`
+      CREATE TABLE schema_migrations (
+        version INTEGER PRIMARY KEY,
+        applied_at TEXT NOT NULL
+      );
+      CREATE TABLE coworkers (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        role TEXT NOT NULL,
+        description TEXT,
+        system_prompt TEXT NOT NULL,
+        model_provider TEXT NOT NULL,
+        model_name TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active',
+        runtime_status TEXT NOT NULL DEFAULT 'STOPPED',
+        workspace_path TEXT NOT NULL,
+        enabled_tools_json TEXT NOT NULL DEFAULT '[]',
+        policies_json TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE tasks (
+        id TEXT PRIMARY KEY,
+        coworker_id TEXT NOT NULL,
+        schedule_id TEXT,
+        run_id TEXT,
+        thread_id TEXT,
+        title TEXT NOT NULL,
+        input TEXT NOT NULL,
+        status TEXT NOT NULL,
+        source TEXT NOT NULL DEFAULT 'manual',
+        priority INTEGER NOT NULL DEFAULT 0,
+        result TEXT,
+        error TEXT,
+        created_at TEXT NOT NULL,
+        started_at TEXT,
+        completed_at TEXT
+      );
+      INSERT INTO schema_migrations(version, applied_at)
+      VALUES (1, datetime('now'));
+      INSERT INTO coworkers(
+        id, name, role, system_prompt, model_provider, model_name,
+        workspace_path, created_at, updated_at
+      ) VALUES (
+        'legacy-coworker', 'Legacy', 'General Coworker', 'Preserve state.',
+        'demo', 'faux-1', '${root.replaceAll("'", "''")}/legacy',
+        '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'
+      );
+      INSERT INTO tasks(
+        id, coworker_id, run_id, thread_id, title, input, status, created_at
+      ) VALUES (
+        'legacy-task', 'legacy-coworker', 'legacy-run', 'coworker:legacy-coworker',
+        'Preserve this task', 'Keep my durable state.', 'COMPLETED',
+        '2026-01-01T00:01:00.000Z'
+      );
+    `);
+    legacy.close();
+
+    const migrated = new CoworkerDatabase(databasePath);
+    try {
+      expect(migrated.getCoworker("legacy-coworker")).toMatchObject({
+        id: "legacy-coworker",
+        name: "Legacy",
+      });
+      expect(migrated.getTask("legacy-task")).toMatchObject({
+        id: "legacy-task",
+        input: "Keep my durable state.",
+      });
+      expect(migrated.getConversation("coworker:legacy-coworker")).toMatchObject({
+        title: "Preserve this task",
+      });
+      expect(migrated.listSkills()).toEqual([]);
+    } finally {
+      migrated.close();
+    }
+
+    const backupFiles = await readdir(join(root, "backups"));
+    expect(backupFiles).toHaveLength(1);
+    expect(backupFiles[0]).toMatch(/^coworker-before-\d{14}_initial-[a-f0-9]{12}\.db$/);
+    const backup = new DatabaseSync(join(root, "backups", backupFiles[0]!));
+    try {
+      expect(
+        backup.prepare("SELECT name FROM coworkers WHERE id = 'legacy-coworker'").get(),
+      ).toEqual({ name: "Legacy" });
+      expect(
+        backup
+          .prepare(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = '__drizzle_migrations'",
+          )
+          .get(),
+      ).toBeUndefined();
+    } finally {
+      backup.close();
+    }
+
+    const restarted = new CoworkerDatabase(databasePath);
+    restarted.close();
+    expect(await readdir(join(root, "backups"))).toEqual(backupFiles);
+
+    const verified = new DatabaseSync(databasePath);
+    try {
+      const migrationCount = verified
+        .prepare("SELECT count(*) AS count FROM __drizzle_migrations")
+        .get() as { count: number };
+      expect(migrationCount.count).toBe(1);
+    } finally {
+      verified.close();
+    }
+  });
+
+  it("does not create a migration backup for a new empty database", async () => {
+    const root = await mkdtemp(join(tmpdir(), "coworker-drizzle-new-"));
+    temporaryPaths.push(root);
+    const database = new CoworkerDatabase(join(root, "coworker.db"));
+    database.close();
+
+    await expect(readdir(join(root, "backups"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 });

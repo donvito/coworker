@@ -7,6 +7,7 @@ const api: DesktopApi = {
     bootstrap: () => ipcRenderer.invoke(ipcChannels.bootstrap),
     openDataFolder: () => ipcRenderer.invoke(ipcChannels.openDataFolder),
     backup: () => ipcRenderer.invoke(ipcChannels.backup),
+    exportDataBackup: () => ipcRenderer.invoke(ipcChannels.exportDataBackup),
     getSettings: () => ipcRenderer.invoke(ipcChannels.getSettings),
     updateSettings: (settings) => ipcRenderer.invoke(ipcChannels.updateSettings, settings),
   },
@@ -18,6 +19,8 @@ const api: DesktopApi = {
   },
   conversations: {
     list: (coworkerId) => ipcRenderer.invoke(ipcChannels.conversationsList, coworkerId),
+    search: (coworkerId, query) =>
+      ipcRenderer.invoke(ipcChannels.conversationsSearch, coworkerId, query),
     create: (input) => ipcRenderer.invoke(ipcChannels.conversationsCreate, input),
   },
   tasks: {
@@ -28,6 +31,8 @@ const api: DesktopApi = {
   messages: {
     list: (coworkerId, taskId) =>
       ipcRenderer.invoke(ipcChannels.messagesList, coworkerId, taskId),
+    listConversation: (coworkerId, conversationId) =>
+      ipcRenderer.invoke(ipcChannels.messagesListConversation, coworkerId, conversationId),
   },
   approvals: {
     list: (status) => ipcRenderer.invoke(ipcChannels.approvalsList, status),
@@ -56,6 +61,7 @@ const api: DesktopApi = {
       ipcRenderer.invoke(ipcChannels.diagnosticsProviderErrorsList, limit),
     copyProviderReport: () => ipcRenderer.invoke(ipcChannels.diagnosticsProviderReportCopy),
     exportProviderReport: () => ipcRenderer.invoke(ipcChannels.diagnosticsProviderReportExport),
+    exportSupportBundle: () => ipcRenderer.invoke(ipcChannels.diagnosticsSupportBundleExport),
   },
   integrations: {
     list: () => ipcRenderer.invoke(ipcChannels.integrationsList),

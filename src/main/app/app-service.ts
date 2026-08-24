@@ -49,6 +49,7 @@ import { SchedulerService } from "@main/scheduler/scheduler-service";
 import { ToolGateway } from "@main/tools/tool-gateway";
 import { CoworkerRuntimeManager } from "@main/runtime/runtime-manager";
 import { ProviderErrorLogger } from "@main/runtime/provider-error-logger";
+import type { ApplicationLogger } from "@main/runtime/application-logger";
 import {
   bundledSkills,
   installSkillFromUrl,
@@ -56,10 +57,13 @@ import {
   parseSkillPackage,
   skillUrlFromPrompt,
 } from "@main/integrations/skills";
+import { createDataBackup } from "@main/integrations/archives";
 import { webSearchCredentialKey } from "@main/integrations/web-search";
 
 export interface DesktopAppServiceOptions {
   dataPath: string;
+  appVersion?: string;
+  applicationLogger?: ApplicationLogger;
   database?: CoworkerDatabase;
   credentials: CredentialStore;
   onSettingsChanged?: (settings: AppSettings) => void | Promise<void>;
@@ -100,6 +104,9 @@ export class DesktopAppService {
   readonly providerErrors: ProviderErrorLogger;
   private readonly listeners = new Set<(event: DesktopEvent) => void>();
   private initialized = false;
+  private dataExportInProgress = false;
+  private activeDataMutations = 0;
+  private readonly dataMutationWaiters = new Set<() => void>();
 
   constructor(private readonly options: DesktopAppServiceOptions) {
     this.database = options.database ?? new CoworkerDatabase(join(options.dataPath, "coworker.db"));
@@ -120,13 +127,14 @@ export class DesktopAppService {
       credentials: options.credentials,
       emit: (event) => this.emit(event),
       providerErrors: this.providerErrors,
+      applicationErrors: options.applicationLogger,
     });
     this.scheduler = new SchedulerService(this.database, async (task) => {
       this.emit({ type: "entity.changed", entity: "tasks", id: task.id });
       this.emit({ type: "entity.changed", entity: "schedules" });
       this.emit({ type: "entity.changed", entity: "activity" });
       this.runtime.enqueueTask(task.coworkerId);
-    });
+    }, (error) => options.applicationLogger?.error("scheduler", error));
   }
 
   async initialize(): Promise<void> {
@@ -199,6 +207,7 @@ export class DesktopAppService {
       skills: this.database.listSkills(),
       settings: this.database.getSettings(),
       dataPath: this.options.dataPath,
+      version: this.options.appVersion ?? "development",
     };
   }
 
@@ -605,6 +614,65 @@ export class DesktopAppService {
         `Coworker-Backup-${new Date().toISOString().replaceAll(":", "-")}.db`,
       );
     return this.database.backup(path);
+  }
+
+  async exportDataBackup(destinationPath: string): Promise<string> {
+    if (this.dataExportInProgress) throw new Error("A complete data backup is already running");
+    this.dataExportInProgress = true;
+    this.runtime.pauseDispatch();
+    this.scheduler.stop();
+    try {
+      const runningTasks = this.database
+        .listTasks(undefined, Number.MAX_SAFE_INTEGER)
+        .filter((task) => task.status === "RUNNING");
+      if (runningTasks.length > 0) {
+        throw new Error("Wait for active coworker tasks to finish before exporting all data");
+      }
+      await this.waitForDataMutations();
+      await this.runtime.stopAll();
+      const path = await createDataBackup({
+        destinationPath,
+        dataPath: this.options.dataPath,
+        coworkers: this.database.listCoworkers(),
+        createDatabaseSnapshot: (path) => this.database.backup(path),
+        appVersion: this.options.appVersion ?? "development",
+      });
+      await this.options.applicationLogger?.info("data.export", "Complete data backup created");
+      return path;
+    } catch (error) {
+      await this.options.applicationLogger?.error("data.export", error);
+      throw error;
+    } finally {
+      this.dataExportInProgress = false;
+      if (this.initialized) await this.scheduler.start();
+      this.runtime.resumeDispatch();
+    }
+  }
+
+  assertDataMutationAllowed(): void {
+    if (this.dataExportInProgress) {
+      throw new Error("Coworker data is temporarily read-only while a complete backup is created");
+    }
+  }
+
+  beginDataMutation(): () => void {
+    this.assertDataMutationAllowed();
+    this.activeDataMutations += 1;
+    let finished = false;
+    return () => {
+      if (finished) return;
+      finished = true;
+      this.activeDataMutations = Math.max(0, this.activeDataMutations - 1);
+      if (this.activeDataMutations === 0) {
+        for (const resolve of this.dataMutationWaiters) resolve();
+        this.dataMutationWaiters.clear();
+      }
+    };
+  }
+
+  private waitForDataMutations(): Promise<void> {
+    if (this.activeDataMutations === 0) return Promise.resolve();
+    return new Promise((resolve) => this.dataMutationWaiters.add(resolve));
   }
 
   private emit(event: DesktopEvent): void {
