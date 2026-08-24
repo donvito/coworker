@@ -93,6 +93,7 @@
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
+      "buildUniversalInstaller": false,
       "artifactName": "${productName}-${version}-win-${arch}-setup.${ext}"
     },
     "linux": {
