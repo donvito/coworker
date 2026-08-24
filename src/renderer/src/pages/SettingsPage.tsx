@@ -47,6 +47,7 @@ export function SettingsPage({
   skills,
   coworkers,
   dataPath,
+  version = "development",
   onChanged,
 }: {
   settings: AppSettings;
@@ -54,6 +55,7 @@ export function SettingsPage({
   skills: Skill[];
   coworkers: Coworker[];
   dataPath: string;
+  version?: string;
   onChanged: () => Promise<void>;
 }) {
   const [tab, setTab] = useState<SettingsTab>("general");
@@ -159,6 +161,30 @@ export function SettingsPage({
       if (!path) return;
       setNoticeKind("success");
       setNotice(`Provider report saved to ${path}`);
+    } catch (exportError) {
+      setNoticeKind("error");
+      setNotice(exportError instanceof Error ? exportError.message : String(exportError));
+    }
+  }
+
+  async function exportSupportBundle() {
+    try {
+      const path = await window.coworker.diagnostics.exportSupportBundle();
+      if (!path) return;
+      setNoticeKind("success");
+      setNotice(`Support bundle saved to ${path}`);
+    } catch (exportError) {
+      setNoticeKind("error");
+      setNotice(exportError instanceof Error ? exportError.message : String(exportError));
+    }
+  }
+
+  async function exportDataBackup() {
+    try {
+      const path = await window.coworker.app.exportDataBackup();
+      if (!path) return;
+      setNoticeKind("success");
+      setNotice(`Complete data backup saved to ${path}`);
     } catch (exportError) {
       setNoticeKind("error");
       setNotice(exportError instanceof Error ? exportError.message : String(exportError));
@@ -935,7 +961,10 @@ export function SettingsPage({
           {tab === "data" ? (
             <section className="settings-section">
               <span className="eyebrow">Local data</span>
-              <h2>Your workroom lives here</h2>
+              <h2>Your workspace lives here</h2>
+              <p>
+                Coworker version <strong>{version}</strong>
+              </p>
               <p>SQLite, artifacts, encrypted credential blobs, logs, and the local email outbox.</p>
               <p>
                 Provider failures are recorded in <code>logs/provider-errors.jsonl</code>. API keys
@@ -962,14 +991,23 @@ export function SettingsPage({
                 >
                   Back up database
                 </button>
+                <button
+                  className="primary-button"
+                  onClick={() => void exportDataBackup()}
+                  type="button"
+                >
+                  <Icon name="download" /> Export all data
+                </button>
               </div>
 
               <div className="provider-diagnostics">
                 <header>
                   <span>
                     <span className="eyebrow">Diagnostics</span>
-                    <h3>Provider error reports</h3>
-                    <small>Recent redacted errors from model setup and coworker runs.</small>
+                    <h3>Diagnostics and support</h3>
+                    <small>
+                      Download redacted application and provider logs to send with a support request.
+                    </small>
                   </span>
                   <div>
                     <button
@@ -994,8 +1032,19 @@ export function SettingsPage({
                     >
                       <Icon name="download" /> Export report
                     </button>
+                    <button
+                      className="primary-button"
+                      onClick={() => void exportSupportBundle()}
+                      type="button"
+                    >
+                      <Icon name="download" /> Download support ZIP
+                    </button>
                   </div>
                 </header>
+                <p className="diagnostics-privacy-note">
+                  Credentials and account names are redacted where recognized. Review the ZIP
+                  before sending it because technical logs can contain file names and error context.
+                </p>
 
                 {diagnosticsLoading ? (
                   <div className="provider-diagnostics-empty">Loading provider logs…</div>

@@ -38,6 +38,7 @@ export class SchedulerService {
   constructor(
     private readonly database: CoworkerDatabase,
     private readonly onTaskCreated: (task: Task) => void | Promise<void>,
+    private readonly onError?: (error: unknown) => void | Promise<void>,
   ) {}
 
   async start(): Promise<void> {
@@ -134,6 +135,7 @@ export class SchedulerService {
     this.timer = setTimeout(() => {
       void this.processDueSchedules()
         .catch((error) => {
+          void this.onError?.(error);
           this.database.addActivity({
             type: "scheduler.error",
             summary: error instanceof Error ? error.message : String(error),

@@ -59,6 +59,8 @@ To connect a real model, open **Settings → Providers**, add credentials, and v
 | `pnpm dev` | Run the app in development |
 | `pnpm typecheck` | TypeScript check, no emit |
 | `pnpm build` | Typecheck + production build |
+| `pnpm db:generate` | Generate a versioned SQLite migration from the Drizzle schema |
+| `pnpm db:check` | Validate the Drizzle migration history |
 | `pnpm test` | Build, then run the integration suite |
 | `pnpm eval:contract` | Run the deterministic agent evals |
 | `pnpm package` | Build an unpacked app into `release/` |
@@ -72,6 +74,8 @@ To connect a real model, open **Settings → Providers**, add credentials, and v
 **Coworkers and chat**
 - Multiple coworkers, each with its own role, system prompt, tool set, and workspace
 - Multiple named conversations per coworker, persisted across restarts
+- Search conversation titles and message contents, with messages grouped and timestamped by day
+- Right-click any coworker in the chat sidebar to open their settings
 - Streaming, Markdown-rendered replies with typed tool call rendering
 - Image attachments via picker or drag-and-drop, sent to vision-capable models
 - Searchable live model catalogs with OpenRouter pricing and quick per-coworker model switching
@@ -99,6 +103,8 @@ To connect a real model, open **Settings → Providers**, add credentials, and v
 - Tray/background operation and launch-at-login controls
 - electron-builder packaging for macOS, Windows, and Linux
 - OS-backed encrypted model and integration credentials
+- Redacted application diagnostics with downloadable ZIP support bundles
+- Complete ZIP backups of conversations, database state, coworker workspaces, and outbox files
 
 ## Agent evals
 

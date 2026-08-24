@@ -11,6 +11,7 @@ import {
 } from "electron";
 import { DesktopAppService } from "@main/app/app-service";
 import { registerIpc } from "@main/ipc/register-ipc";
+import { ApplicationLogger } from "@main/runtime/application-logger";
 import { SecureCredentialStore } from "@main/security/credential-store";
 import { ipcChannels } from "@shared/ipc";
 
@@ -33,6 +34,15 @@ let unregisterIpc: (() => void) | null = null;
 let isQuitting = false;
 let shutdownStarted = false;
 let runInBackground = true;
+let applicationLogger: ApplicationLogger | null = null;
+
+process.on("uncaughtExceptionMonitor", (error, origin) => {
+  applicationLogger?.emergency("main.uncaught_exception", error, { origin });
+});
+process.on("unhandledRejection", (reason) => {
+  applicationLogger?.emergency("main.unhandled_rejection", reason);
+  throw reason instanceof Error ? reason : new Error(String(reason));
+});
 
 function createMainWindow(): BrowserWindow {
   const window = new BrowserWindow({
@@ -70,6 +80,42 @@ function createMainWindow(): BrowserWindow {
   });
   window.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => {
     callback(false);
+  });
+  window.webContents.on("console-message", (details) => {
+    if (details.level !== "error" && details.level !== "warning") return;
+    const logDetails = {
+      lineNumber: details.lineNumber,
+      sourceId: details.sourceId,
+    };
+    if (details.level === "error") {
+      void applicationLogger?.error(
+        "renderer.console.error",
+        new Error(details.message),
+        logDetails,
+      );
+    } else {
+      void applicationLogger?.warning(
+        "renderer.console.warning",
+        details.message,
+        logDetails,
+      );
+    }
+  });
+  window.webContents.on("render-process-gone", (_event, details) => {
+    void applicationLogger?.error(
+      "renderer.process_gone",
+      new Error(`Renderer process exited: ${details.reason}`),
+      { exitCode: details.exitCode, reason: details.reason },
+    );
+  });
+  window.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL) => {
+    void applicationLogger?.error("renderer.load", new Error(errorDescription), {
+      errorCode,
+      url: validatedURL,
+    });
+  });
+  window.on("unresponsive", () => {
+    void applicationLogger?.warning("renderer.unresponsive", "The main window became unresponsive");
   });
   window.on("close", (event) => {
     if (!isQuitting && runInBackground) {
@@ -154,9 +200,17 @@ function rebuildTrayMenu(): void {
 
 async function start(): Promise<void> {
   const dataPath = process.env.COWORKER_DATA_PATH || app.getPath("userData");
+  applicationLogger = new ApplicationLogger(join(dataPath, "logs", "app.jsonl"));
+  await applicationLogger.info("app.lifecycle", "Starting Coworker", {
+    version: app.getVersion(),
+    packaged: app.isPackaged,
+    platform: `${process.platform} ${process.arch}`,
+  });
   const credentials = new SecureCredentialStore(join(dataPath, "credentials"));
   service = new DesktopAppService({
     dataPath,
+    appVersion: app.getVersion(),
+    applicationLogger,
     credentials,
     onSettingsChanged: async (settings) => {
       runInBackground = settings.runInBackground;
@@ -174,6 +228,7 @@ async function start(): Promise<void> {
     service,
     credentials,
     getMainWindow: () => mainWindow,
+    logger: applicationLogger,
   });
   if (process.platform === "darwin" && !app.isPackaged) {
     const icon = appIcon();
@@ -198,7 +253,10 @@ async function start(): Promise<void> {
 
 app.whenReady().then(start).catch((error) => {
   console.error("Failed to start Coworker", error);
-  app.exit(1);
+  void applicationLogger
+    ?.error("app.startup", error)
+    .finally(() => app.exit(1));
+  if (!applicationLogger) app.exit(1);
 });
 
 app.on("second-instance", () => {
@@ -236,6 +294,13 @@ app.on("before-quit", (event) => {
   tray = null;
   void service
     .shutdown()
-    .catch((error) => console.error("Failed to shut down Coworker cleanly", error))
-    .finally(() => app.quit());
+    .then(() => applicationLogger?.info("app.lifecycle", "Coworker shut down cleanly"))
+    .catch(async (error) => {
+      console.error("Failed to shut down Coworker cleanly", error);
+      await applicationLogger?.error("app.shutdown", error);
+    })
+    .finally(async () => {
+      await applicationLogger?.flush();
+      app.quit();
+    });
 });

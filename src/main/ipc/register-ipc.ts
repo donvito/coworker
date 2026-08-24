@@ -19,6 +19,7 @@ import {
   configureModelSchema,
   configureWebSearchSchema,
   credentialKeySchema,
+  conversationSearchSchema,
   createCoworkerSchema,
   createScheduleSchema,
   createTaskSchema,
@@ -34,13 +35,42 @@ import {
   updateScheduleSchema,
 } from "@shared/validation";
 import type { DesktopAppService } from "@main/app/app-service";
+import { createSupportBundle } from "@main/integrations/archives";
 import { resolveArtifactFile } from "@main/integrations/artifact-files";
+import type { ApplicationLogger } from "@main/runtime/application-logger";
 import type { CredentialStore } from "@main/security/credential-store";
+
+const mutationChannels = new Set<string>([
+  ipcChannels.updateSettings,
+  ipcChannels.coworkersCreate,
+  ipcChannels.coworkersUpdate,
+  ipcChannels.coworkersRemove,
+  ipcChannels.conversationsCreate,
+  ipcChannels.tasksCreate,
+  ipcChannels.tasksCancel,
+  ipcChannels.approvalsDecide,
+  ipcChannels.artifactsRemove,
+  ipcChannels.schedulesCreate,
+  ipcChannels.schedulesUpdate,
+  ipcChannels.schedulesRemove,
+  ipcChannels.schedulesRunNow,
+  ipcChannels.integrationsConfigureEmail,
+  ipcChannels.integrationsConfigureModel,
+  ipcChannels.integrationsRemoveCredential,
+  ipcChannels.integrationsConfigureWebSearch,
+  ipcChannels.skillsInstallFromUrl,
+  ipcChannels.skillsInstallFromContent,
+  ipcChannels.skillsInstallFromPackage,
+  ipcChannels.skillsRemove,
+  ipcChannels.agentsRun,
+  ipcChannels.agentsAbort,
+]);
 
 export function registerIpc(input: {
   service: DesktopAppService;
   credentials: CredentialStore;
   getMainWindow: () => BrowserWindow | null;
+  logger?: ApplicationLogger;
 }): () => void {
   const channels: string[] = [];
   const handle = (
@@ -48,9 +78,20 @@ export function registerIpc(input: {
     listener: (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown,
   ) => {
     channels.push(channel);
-    ipcMain.handle(channel, (event, ...args) => {
+    ipcMain.handle(channel, async (event, ...args) => {
       assertTrustedSender(event, input.getMainWindow());
-      return listener(event, ...args);
+      let finishMutation: (() => void) | null = null;
+      try {
+        if (mutationChannels.has(channel)) {
+          finishMutation = input.service.beginDataMutation();
+        }
+        return await listener(event, ...args);
+      } catch (error) {
+        await input.logger?.error("ipc", error, { channel });
+        throw error;
+      } finally {
+        finishMutation?.();
+      }
     });
   };
 
@@ -70,6 +111,19 @@ export function registerIpc(input: {
       : await dialog.showSaveDialog(options);
     if (result.canceled) return null;
     return input.service.backup(result.filePath);
+  });
+  handle(ipcChannels.exportDataBackup, async () => {
+    const window = input.getMainWindow();
+    const options = {
+      title: "Export all Coworker data",
+      defaultPath: `Coworker-All-Data-${new Date().toISOString().slice(0, 10)}.zip`,
+      filters: [{ name: "ZIP archive", extensions: ["zip"] }],
+    };
+    const result = window
+      ? await dialog.showSaveDialog(window, options)
+      : await dialog.showSaveDialog(options);
+    if (result.canceled || !result.filePath) return null;
+    return input.service.exportDataBackup(result.filePath);
   });
   handle(ipcChannels.getSettings, () => input.service.database.getSettings());
   handle(ipcChannels.updateSettings, (_event, patch) =>
@@ -95,6 +149,12 @@ export function registerIpc(input: {
       coworkerId === undefined ? undefined : idSchema.parse(coworkerId),
     ),
   );
+  handle(ipcChannels.conversationsSearch, (_event, coworkerId, query) =>
+    input.service.database.searchConversations(
+      idSchema.parse(coworkerId),
+      conversationSearchSchema.parse(query),
+    ),
+  );
   handle(ipcChannels.conversationsCreate, (_event, value) =>
     input.service.createConversation(createConversationSchema.parse(value)),
   );
@@ -114,6 +174,13 @@ export function registerIpc(input: {
     input.service.database.listMessages(
       idSchema.parse(coworkerId),
       taskId === undefined ? undefined : idSchema.parse(taskId),
+    ),
+  );
+  handle(ipcChannels.messagesListConversation, (_event, coworkerId, conversationId) =>
+    input.service.database.listConversationMessages(
+      idSchema.parse(coworkerId),
+      idSchema.parse(conversationId),
+      Number.MAX_SAFE_INTEGER,
     ),
   );
 
@@ -221,6 +288,35 @@ export function registerIpc(input: {
     if (result.canceled || !result.filePath) return null;
     await writeFile(result.filePath, report.text, { encoding: "utf8", mode: 0o600 });
     return result.filePath;
+  });
+  handle(ipcChannels.diagnosticsSupportBundleExport, async () => {
+    const window = input.getMainWindow();
+    const result = window
+      ? await dialog.showSaveDialog(window, {
+          title: "Export Coworker support bundle",
+          defaultPath: `Coworker-Support-${new Date().toISOString().slice(0, 10)}.zip`,
+          filters: [{ name: "ZIP archive", extensions: ["zip"] }],
+        })
+      : await dialog.showSaveDialog({
+          title: "Export Coworker support bundle",
+          defaultPath: `Coworker-Support-${new Date().toISOString().slice(0, 10)}.zip`,
+          filters: [{ name: "ZIP archive", extensions: ["zip"] }],
+        });
+    if (result.canceled || !result.filePath) return null;
+    if (!input.logger) {
+      throw new Error("Application diagnostics are not available");
+    }
+    return createSupportBundle({
+      destinationPath: result.filePath,
+      logger: input.logger,
+      providerLogger: input.service.providerErrors,
+      metadata: {
+        "App version": app.getVersion(),
+        Platform: `${process.platform} ${process.arch}`,
+        Electron: process.versions.electron,
+        Node: process.versions.node,
+      },
+    });
   });
   handle(ipcChannels.integrationsList, () => input.service.database.listIntegrations());
   handle(ipcChannels.integrationsConfigureEmail, (_event, value) =>

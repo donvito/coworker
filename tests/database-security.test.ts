@@ -62,6 +62,21 @@ afterEach(async () => {
 });
 
 describe("durable state and queue invariants", () => {
+  it("exposes the running application version in snapshots", async () => {
+    const root = await temporaryDirectory("coworker-version-");
+    const service = new DesktopAppService({
+      dataPath: root,
+      appVersion: "9.8.7",
+      credentials: memoryCredentials(),
+    });
+    try {
+      await service.initialize();
+      expect(service.snapshot().version).toBe("9.8.7");
+    } finally {
+      await service.shutdown();
+    }
+  });
+
   it("persists the global default model without coercing string settings", async () => {
     const root = await temporaryDirectory("coworker-settings-");
     const path = join(root, "coworker.db");

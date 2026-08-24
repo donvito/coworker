@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import type { ImageInputContent, ToolMessage, UserMessage } from "@ag-ui/core";
 import {
   UseAgentUpdate,
@@ -30,6 +30,11 @@ import { CoworkerSettingsModal } from "../components/CoworkerSettingsModal";
 import { ChatMarkdown } from "../components/ChatMarkdown";
 import { QuickModelSwitcher } from "../components/QuickModelSwitcher";
 import { Icon } from "../components/Icon";
+import {
+  filterConversations,
+  messageDayKey,
+  messageDayLabel,
+} from "../lib/conversation-utils";
 import {
   CoworkerAvatar,
   CoworkerModelBadge,
@@ -264,8 +269,14 @@ export function CoworkerDetailPage({
   onRemoved: () => void;
   onSelectCoworker: (coworker: Coworker) => void;
 }) {
-  const [managing, setManaging] = useState(false);
+  const [managingCoworkerId, setManagingCoworkerId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [loadedConversationHistory, setLoadedConversationHistory] = useState<{
+    conversationId: string;
+    messages: StoredMessage[];
+  } | null>(null);
+  const managingCoworker =
+    coworkers.find((candidate) => candidate.id === managingCoworkerId) ?? null;
   const latestConversation = conversations.reduce<Conversation | null>(
     (latest, conversation) =>
       !latest || conversation.updatedAt > latest.updatedAt ? conversation : latest,
@@ -282,9 +293,15 @@ export function CoworkerDetailPage({
       .filter((task) => task.coworkerId === coworker.id && task.threadId === activeConversationId)
       .map((task) => task.id),
   );
-  const conversationMessages = messages.filter(
+  const boundedConversationMessages = messages.filter(
     (message) => message.taskId && conversationTaskIds.has(message.taskId),
   );
+  const conversationMessages =
+    loadedConversationHistory?.conversationId === activeConversationId
+      ? loadedConversationHistory.messages
+      : boundedConversationMessages;
+  const conversationHistoryReady =
+    loadedConversationHistory?.conversationId === activeConversationId;
 
   useEffect(() => {
     const next = conversations.reduce<Conversation | null>(
@@ -294,6 +311,32 @@ export function CoworkerDetailPage({
     );
     setSelectedConversationId(next?.id ?? `coworker:${coworker.id}`);
   }, [coworker.id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoadedConversationHistory(null);
+    void window.coworker.messages
+      .listConversation(coworker.id, activeConversationId)
+      .then((history) => {
+        if (!cancelled) {
+          setLoadedConversationHistory({
+            conversationId: activeConversationId,
+            messages: history,
+          });
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setLoadedConversationHistory({
+            conversationId: activeConversationId,
+            messages: boundedConversationMessages,
+          });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [coworker.id, activeConversationId]);
 
   async function createConversation() {
     const conversation = await window.coworker.conversations.create({ coworkerId: coworker.id });
@@ -315,45 +358,60 @@ export function CoworkerDetailPage({
             content: message.content,
           })),
       }),
-    [coworker.id, activeConversationId],
+    [coworker.id, activeConversationId, conversationHistoryReady],
   );
 
   return (
     <>
-      <LocalCopilotProvider
-        agentId={coworker.id}
-        agent={agent}
-        key={`${coworker.id}:${activeConversationId}`}
-      >
-        <CoworkerSurface
-          coworker={coworker}
-          coworkers={coworkers}
-          conversations={conversations}
-          conversationId={activeConversationId}
-          selectedConversation={selectedConversation}
-          tasks={tasks}
-          approvals={approvals}
-          artifacts={artifacts}
-          storedMessages={conversationMessages}
-          imageAttachments={imageAttachments}
-          showReasoning={settings.showReasoning}
-          onBack={onBack}
-          onChanged={onChanged}
-          onCreate={() => setCreating(true)}
-          onManage={() => setManaging(true)}
-          onNewConversation={createConversation}
-          onOpenApprovals={onOpenApprovals}
-          onSelectCoworker={onSelectCoworker}
-          onSelectConversation={setSelectedConversationId}
-        />
-      </LocalCopilotProvider>
-      {managing ? (
+      {conversationHistoryReady ? (
+        <LocalCopilotProvider
+          agentId={coworker.id}
+          agent={agent}
+          key={`${coworker.id}:${activeConversationId}`}
+        >
+          <CoworkerSurface
+            coworker={coworker}
+            coworkers={coworkers}
+            conversations={conversations}
+            conversationId={activeConversationId}
+            selectedConversation={selectedConversation}
+            tasks={tasks}
+            approvals={approvals}
+            artifacts={artifacts}
+            allMessages={messages}
+            storedMessages={conversationMessages}
+            imageAttachments={imageAttachments}
+            showReasoning={settings.showReasoning}
+            onBack={onBack}
+            onChanged={onChanged}
+            onCreate={() => setCreating(true)}
+            onManageCoworker={(target) => setManagingCoworkerId(target.id)}
+            onNewConversation={createConversation}
+            onOpenApprovals={onOpenApprovals}
+            onSelectCoworker={onSelectCoworker}
+            onSelectConversation={setSelectedConversationId}
+          />
+        </LocalCopilotProvider>
+      ) : (
+        <div className="conversation-history-loading" aria-live="polite">
+          <span className="workroom-running">
+            <span />
+            <span />
+            <span />
+          </span>
+          Loading conversation…
+        </div>
+      )}
+      {managingCoworker ? (
         <CoworkerSettingsModal
-          coworker={coworker}
+          coworker={managingCoworker}
           skills={skills}
           onChanged={onChanged}
-          onClose={() => setManaging(false)}
-          onRemoved={onRemoved}
+          onClose={() => setManagingCoworkerId(null)}
+          onRemoved={() => {
+            setManagingCoworkerId(null);
+            if (managingCoworker.id === coworker.id) onRemoved();
+          }}
         />
       ) : null}
       {creating ? (
@@ -368,6 +426,52 @@ export function CoworkerDetailPage({
   );
 }
 
+export function CoworkerRosterItem({
+  coworker,
+  latestTask,
+  waiting,
+  selected,
+  onSelect,
+  onOpenContextMenu,
+}: {
+  coworker: Coworker;
+  latestTask?: Task;
+  waiting: number;
+  selected: boolean;
+  onSelect: () => void;
+  onOpenContextMenu: (position: { x: number; y: number }) => void;
+}) {
+  return (
+    <button
+      aria-current={selected ? "page" : undefined}
+      className={selected ? "conversation-roster-item selected" : "conversation-roster-item"}
+      onClick={onSelect}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        onOpenContextMenu({
+          x: Math.min(event.clientX, window.innerWidth - 190),
+          y: Math.min(event.clientY, window.innerHeight - 80),
+        });
+      }}
+    >
+      <CoworkerAvatar className="conversation-avatar" coworker={coworker} />
+      <span className="conversation-roster-copy">
+        <span>
+          <strong>{coworker.name}</strong>
+          <time>{latestTask ? formatRosterTime(latestTask.createdAt) : "New"}</time>
+        </span>
+        <span>
+          <small>
+            {latestTask?.title || coworker.description || `${coworker.role} is ready to help.`}
+          </small>
+          {waiting > 0 ? <b>{waiting}</b> : null}
+        </span>
+        <CoworkerModelBadge compact coworker={coworker} />
+      </span>
+    </button>
+  );
+}
+
 function CoworkerSurface({
   coworker,
   coworkers,
@@ -377,13 +481,14 @@ function CoworkerSurface({
   tasks,
   approvals,
   artifacts,
+  allMessages,
   storedMessages,
   imageAttachments,
   showReasoning,
   onBack,
   onChanged,
   onCreate,
-  onManage,
+  onManageCoworker,
   onNewConversation,
   onOpenApprovals,
   onSelectCoworker,
@@ -397,13 +502,14 @@ function CoworkerSurface({
   tasks: Task[];
   approvals: Approval[];
   artifacts: Artifact[];
+  allMessages: StoredMessage[];
   storedMessages: StoredMessage[];
   imageAttachments: TaskImageAttachmentSummary[];
   showReasoning: boolean;
   onBack: () => void;
   onChanged: () => Promise<void>;
   onCreate: () => void;
-  onManage: () => void;
+  onManageCoworker: (coworker: Coworker) => void;
   onNewConversation: () => Promise<void>;
   onOpenApprovals: () => void;
   onSelectCoworker: (coworker: Coworker) => void;
@@ -434,7 +540,17 @@ function CoworkerSurface({
   const [draggingImages, setDraggingImages] = useState(false);
   const [supportsImageInput, setSupportsImageInput] = useState<boolean | null>(null);
   const [search, setSearch] = useState("");
+  const [conversationSearch, setConversationSearch] = useState("");
+  const [conversationSearchResults, setConversationSearchResults] = useState<
+    Conversation[] | null
+  >(null);
+  const [conversationSearchLoading, setConversationSearchLoading] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [coworkerMenu, setCoworkerMenu] = useState<{
+    coworker: Coworker;
+    x: number;
+    y: number;
+  } | null>(null);
   const [conversationBusy, setConversationBusy] = useState(false);
   const [conversationError, setConversationError] = useState<string | null>(null);
   const [approvalInFlight, setApprovalInFlight] = useState<string | null>(null);
@@ -446,6 +562,7 @@ function CoworkerSurface({
   const historyRef = useRef<HTMLDivElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const imageDragDepth = useRef(0);
+  const liveMessageTimes = useRef(new Map<string, string>());
   const messageTimes = useMemo(
     () => new Map(storedMessages.map((message) => [message.id, message.createdAt])),
     [storedMessages],
@@ -481,9 +598,19 @@ function CoworkerSurface({
     if (task.coworkerId !== coworker.id) continue;
     conversationTaskCounts.set(task.threadId, (conversationTaskCounts.get(task.threadId) ?? 0) + 1);
   }
-  const sortedConversations = [...conversations].sort((left, right) =>
-    right.updatedAt.localeCompare(left.updatedAt),
+  const locallyFilteredConversations = filterConversations(
+    [...conversations].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
+    tasks.filter((task) => task.coworkerId === coworker.id),
+    allMessages,
+    conversationSearch,
   );
+  const sortedConversations = conversationSearch.trim()
+    ? (conversationSearchResults ?? locallyFilteredConversations)
+    : locallyFilteredConversations;
+
+  useEffect(() => {
+    liveMessageTimes.current.clear();
+  }, [conversationId]);
 
   useEffect(() => {
     transcriptRef.current?.scrollTo({
@@ -500,6 +627,51 @@ function CoworkerSurface({
     document.addEventListener("pointerdown", close);
     return () => document.removeEventListener("pointerdown", close);
   }, [historyOpen]);
+
+  useEffect(() => {
+    const query = conversationSearch.trim();
+    if (!query) {
+      setConversationSearchResults(null);
+      setConversationSearchLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setConversationSearchResults(null);
+    setConversationSearchLoading(true);
+    const timer = setTimeout(() => {
+      void window.coworker.conversations
+        .search(coworker.id, query)
+        .then((results) => {
+          if (!cancelled) setConversationSearchResults(results);
+        })
+        .catch((error) => {
+          if (!cancelled) {
+            setConversationError(error instanceof Error ? error.message : String(error));
+          }
+        })
+        .finally(() => {
+          if (!cancelled) setConversationSearchLoading(false);
+        });
+    }, 150);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [conversationSearch, coworker.id]);
+
+  useEffect(() => {
+    if (!coworkerMenu) return;
+    const close = () => setCoworkerMenu(null);
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") close();
+    };
+    document.addEventListener("pointerdown", close);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", close);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [coworkerMenu]);
 
   async function startNewConversation() {
     if (agent.isRunning || conversationBusy) return;
@@ -816,6 +988,8 @@ function CoworkerSurface({
     }
   }
 
+  let previousMessageDay: string | null = null;
+
   return (
     <div className="coworker-detail conversation-layout">
       <div className="conversation-window-drag" />
@@ -843,40 +1017,50 @@ function CoworkerSurface({
               .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0];
             const waiting = pending.filter((approval) => approval.coworkerId === item.id).length;
             return (
-              <button
-                aria-current={item.id === coworker.id ? "page" : undefined}
-                className={
-                  item.id === coworker.id
-                    ? "conversation-roster-item selected"
-                    : "conversation-roster-item"
-                }
+              <CoworkerRosterItem
+                coworker={item}
                 key={item.id}
-                onClick={() => onSelectCoworker(item)}
-              >
-                <CoworkerAvatar className="conversation-avatar" coworker={item} />
-                <span className="conversation-roster-copy">
-                  <span>
-                    <strong>{item.name}</strong>
-                    <time>{latestTask ? formatRosterTime(latestTask.createdAt) : "New"}</time>
-                  </span>
-                  <span>
-                    <small>
-                      {latestTask?.title || item.description || `${item.role} is ready to help.`}
-                    </small>
-                    {waiting > 0 ? <b>{waiting}</b> : null}
-                  </span>
-                  <CoworkerModelBadge compact coworker={item} />
-                </span>
-              </button>
+                latestTask={latestTask}
+                onOpenContextMenu={({ x, y }) => {
+                  setCoworkerMenu({
+                    coworker: item,
+                    x,
+                    y,
+                  });
+                }}
+                onSelect={() => onSelectCoworker(item)}
+                selected={item.id === coworker.id}
+                waiting={waiting}
+              />
             );
           })}
           {visibleCoworkers.length === 0 ? (
             <p className="conversation-roster-empty">No coworkers match “{search}”.</p>
           ) : null}
         </nav>
+        {coworkerMenu ? (
+          <div
+            className="coworker-context-menu"
+            onPointerDown={(event) => event.stopPropagation()}
+            role="menu"
+            style={{ left: coworkerMenu.x, top: coworkerMenu.y }}
+          >
+            <button
+              onClick={() => {
+                onManageCoworker(coworkerMenu.coworker);
+                setCoworkerMenu(null);
+              }}
+              role="menuitem"
+              type="button"
+            >
+              <Icon name="settings" />
+              Open {coworkerMenu.coworker.name} settings
+            </button>
+          </div>
+        ) : null}
         <button className="conversation-workroom-link" onClick={onBack}>
           <Icon name="home" />
-          <span>Back to workroom</span>
+          <span>Back to workspace</span>
         </button>
       </aside>
 
@@ -954,6 +1138,15 @@ function CoworkerSurface({
                       <Icon name="plus" />
                     </button>
                   </header>
+                  <label className="conversation-history-search">
+                    <Icon name="search" />
+                    <input
+                      aria-label="Search conversations"
+                      onChange={(event) => setConversationSearch(event.target.value)}
+                      placeholder="Search titles and messages"
+                      value={conversationSearch}
+                    />
+                  </label>
                   <div className="conversation-history-list">
                     {sortedConversations.map((conversation) => (
                       <button
@@ -977,6 +1170,13 @@ function CoworkerSurface({
                         {conversation.id === conversationId ? <Icon name="check" /> : null}
                       </button>
                     ))}
+                    {conversationSearchLoading ? (
+                      <p className="conversation-history-empty">Searching all messages…</p>
+                    ) : sortedConversations.length === 0 ? (
+                      <p className="conversation-history-empty">
+                        No conversations match “{conversationSearch}”.
+                      </p>
+                    ) : null}
                   </div>
                 </div>
               ) : null}
@@ -992,7 +1192,7 @@ function CoworkerSurface({
             </button>
             <button
               className="conversation-icon-button"
-              onClick={onManage}
+              onClick={() => onManageCoworker(coworker)}
               aria-label={`Configure ${coworker.name}`}
               title={`Configure ${coworker.name}`}
             >
@@ -1056,11 +1256,6 @@ function CoworkerSurface({
 
           <div className="workroom-chat">
             <div className="workroom-messages" ref={transcriptRef}>
-              {agent.messages.length > 0 ? (
-                <div className="conversation-date-divider">
-                  <span>Today</span>
-                </div>
-              ) : null}
               {agent.messages.map((message) => {
                 if (message.role === "reasoning") {
                   if (!showReasoning) return null;
@@ -1077,6 +1272,14 @@ function CoworkerSurface({
                   );
                 }
                 if (message.role !== "user" && message.role !== "assistant") return null;
+                let timestamp = messageTimes.get(message.id) ?? liveMessageTimes.current.get(message.id);
+                if (!timestamp) {
+                  timestamp = new Date().toISOString();
+                  liveMessageTimes.current.set(message.id, timestamp);
+                }
+                const dayKey = messageDayKey(timestamp);
+                const showDayDivider = dayKey !== previousMessageDay;
+                previousMessageDay = dayKey;
                 const content = textFromMessageContent(message.content);
                 const messageImages = imagesFromMessageContent(message.content);
                 const storedMessage = storedMessagesById.get(message.id);
@@ -1087,11 +1290,16 @@ function CoworkerSurface({
                 const imageCount = messageImages.length + persistedImages.length;
                 const toolCalls = message.role === "assistant" ? (message.toolCalls ?? []) : [];
                 return (
-                  <div
-                    className={`workroom-turn workroom-turn-${message.role}`}
-                    data-message-role={message.role}
-                    key={message.id}
-                  >
+                  <Fragment key={message.id}>
+                    {showDayDivider ? (
+                      <div className="conversation-date-divider">
+                        <span>{messageDayLabel(timestamp)}</span>
+                      </div>
+                    ) : null}
+                    <div
+                      className={`workroom-turn workroom-turn-${message.role}`}
+                      data-message-role={message.role}
+                    >
                     {content || imageCount > 0 ? (
                       <div
                         className={`workroom-bubble${imageCount > 0 ? " workroom-bubble-with-images" : ""}`}
@@ -1148,13 +1356,14 @@ function CoworkerSurface({
                         </div>
                       );
                     })}
-                    {content || imageCount > 0 ? (
-                      <small className="workroom-message-meta">
-                        {message.role === "assistant" ? coworker.name : "You"} ·{" "}
-                        {formatMessageTime(messageTimes.get(message.id))}
-                      </small>
-                    ) : null}
-                  </div>
+                      {content || imageCount > 0 ? (
+                        <small className="workroom-message-meta">
+                          {message.role === "assistant" ? coworker.name : "You"} ·{" "}
+                          {formatMessageTime(timestamp)}
+                        </small>
+                      ) : null}
+                    </div>
+                  </Fragment>
                 );
               })}
               {latestTask?.status === "FAILED" && latestTask.error ? (

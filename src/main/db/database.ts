@@ -1,7 +1,20 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { existsSync, mkdirSync } from "node:fs";
+import { basename, dirname, extname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  inArray,
+  isNotNull,
+  lte,
+  sql,
+} from "drizzle-orm";
+import { readMigrationFiles } from "drizzle-orm/migrator";
+import { drizzle, type NodeSQLiteDatabase } from "drizzle-orm/node-sqlite";
+import { migrate } from "drizzle-orm/node-sqlite/migrator";
 import { appThemes, remoteModelProviders } from "@shared/contracts";
 import type {
   ActivityItem,
@@ -28,10 +41,28 @@ import type {
   UpdateCoworkerInput,
   UpdateScheduleInput,
 } from "@shared/contracts";
-import { schemaSql } from "./schema";
+import {
+  activity,
+  appMetadata,
+  approvals,
+  artifacts,
+  conversations,
+  coworkerSkills,
+  coworkers,
+  integrations,
+  messages,
+  schedules,
+  settings,
+  sideEffects,
+  skillResources,
+  skills,
+  taskCheckpoints,
+  taskImageAttachments,
+  tasks,
+  toolCalls,
+} from "./schema";
 
-type Row = Record<string, unknown>;
-type SqlValue = null | number | bigint | string | NodeJS.ArrayBufferView;
+type DrizzleDatabase = NodeSQLiteDatabase;
 
 const defaultSettings: AppSettings = {
   runInBackground: true,
@@ -62,237 +93,322 @@ function json(value: unknown): string {
   return JSON.stringify(value ?? null);
 }
 
-function coworkerFromRow(row: Row): Coworker {
+function coworkerFromRow(row: typeof coworkers.$inferSelect): Coworker {
   return {
-    id: String(row.id),
-    name: String(row.name),
-    role: String(row.role),
-    description: row.description === null ? null : String(row.description),
-    systemPrompt: String(row.system_prompt),
-    modelProvider: String(row.model_provider) as Coworker["modelProvider"],
-    modelName: String(row.model_name),
-    status: row.status as Coworker["status"],
-    runtimeStatus: row.runtime_status as RuntimeStatus,
-    workspacePath: String(row.workspace_path),
-    enabledTools: parseJson<string[]>(row.enabled_tools_json, []),
+    id: row.id,
+    name: row.name,
+    role: row.role,
+    description: row.description,
+    systemPrompt: row.systemPrompt,
+    modelProvider: row.modelProvider as Coworker["modelProvider"],
+    modelName: row.modelName,
+    status: row.status,
+    runtimeStatus: row.runtimeStatus as RuntimeStatus,
+    workspacePath: row.workspacePath,
+    enabledTools: parseJson<string[]>(row.enabledToolsJson, []),
     enabledSkillIds: [],
-    policies: parseJson<Coworker["policies"]>(row.policies_json, {}),
-    createdAt: String(row.created_at),
-    updatedAt: String(row.updated_at),
+    policies: parseJson<Coworker["policies"]>(row.policiesJson, {}),
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
   };
 }
 
-function skillFromRow(row: Row): Skill {
+function skillFromRow(row: typeof skills.$inferSelect): Skill {
   return {
-    id: String(row.id),
-    name: String(row.name),
-    description: String(row.description),
-    content: String(row.content),
-    sourceUrl: row.source_url === null ? null : String(row.source_url),
-    bundled: Number(row.bundled) === 1,
-    createdAt: String(row.created_at),
-    updatedAt: String(row.updated_at),
+    id: row.id,
+    name: row.name,
+    description: row.description,
+    content: row.content,
+    sourceUrl: row.sourceUrl,
+    bundled: row.bundled,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
   };
 }
 
-function taskFromRow(row: Row): Task {
+function taskFromRow(row: typeof tasks.$inferSelect): Task {
   return {
-    id: String(row.id),
-    coworkerId: String(row.coworker_id),
-    scheduleId: row.schedule_id === null ? null : String(row.schedule_id),
-    runId: String(row.run_id),
-    threadId: String(row.thread_id),
-    title: String(row.title),
-    input: String(row.input),
+    id: row.id,
+    coworkerId: row.coworkerId,
+    scheduleId: row.scheduleId,
+    runId: String(row.runId),
+    threadId: String(row.threadId),
+    title: row.title,
+    input: row.input,
     status: row.status as TaskStatus,
-    source: row.source as Task["source"],
-    priority: Number(row.priority),
-    result: row.result === null ? null : String(row.result),
-    error: row.error === null ? null : String(row.error),
-    createdAt: String(row.created_at),
-    startedAt: row.started_at === null ? null : String(row.started_at),
-    completedAt: row.completed_at === null ? null : String(row.completed_at),
+    source: row.source,
+    priority: row.priority,
+    result: row.result,
+    error: row.error,
+    createdAt: row.createdAt,
+    startedAt: row.startedAt,
+    completedAt: row.completedAt,
   };
 }
 
-function conversationFromRow(row: Row): Conversation {
+function conversationFromRow(row: typeof conversations.$inferSelect): Conversation {
   return {
-    id: String(row.id),
-    coworkerId: String(row.coworker_id),
-    title: String(row.title),
-    createdAt: String(row.created_at),
-    updatedAt: String(row.updated_at),
+    id: row.id,
+    coworkerId: row.coworkerId,
+    title: row.title,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
   };
 }
 
-function taskImageAttachmentFromRow(row: Row): TaskImageAttachment {
+function taskImageAttachmentFromRow(
+  row: typeof taskImageAttachments.$inferSelect,
+): TaskImageAttachment {
   return {
-    id: String(row.id),
-    taskId: String(row.task_id),
-    coworkerId: String(row.coworker_id),
-    name: String(row.name),
-    mimeType: String(row.mime_type),
-    relativePath: String(row.relative_path),
-    size: Number(row.size),
-    createdAt: String(row.created_at),
+    id: row.id,
+    taskId: row.taskId,
+    coworkerId: row.coworkerId,
+    name: row.name,
+    mimeType: row.mimeType,
+    relativePath: row.relativePath,
+    size: row.size,
+    createdAt: row.createdAt,
   };
 }
 
-function messageFromRow(row: Row): Message {
+function messageFromRow(row: typeof messages.$inferSelect): Message {
   return {
-    id: String(row.id),
-    coworkerId: String(row.coworker_id),
-    taskId: row.task_id === null ? null : String(row.task_id),
-    role: row.role as Message["role"],
-    content: String(row.content),
-    createdAt: String(row.created_at),
+    id: row.id,
+    coworkerId: row.coworkerId,
+    taskId: row.taskId,
+    role: row.role,
+    content: row.content,
+    createdAt: row.createdAt,
   };
 }
 
-function toolCallFromRow(row: Row): ToolCall {
+function toolCallFromRow(row: typeof toolCalls.$inferSelect): ToolCall {
   return {
-    id: String(row.id),
-    taskId: String(row.task_id),
-    coworkerId: String(row.coworker_id),
-    toolName: String(row.tool_name),
-    arguments: parseJson(row.arguments_json, null),
-    result: parseJson(row.result_json, null),
-    status: row.status as ToolCall["status"],
-    idempotencyKey: String(row.idempotency_key),
-    createdAt: String(row.created_at),
-    completedAt: row.completed_at === null ? null : String(row.completed_at),
+    id: row.id,
+    taskId: row.taskId,
+    coworkerId: row.coworkerId,
+    toolName: row.toolName,
+    arguments: parseJson(row.argumentsJson, null),
+    result: parseJson(row.resultJson, null),
+    status: row.status,
+    idempotencyKey: row.idempotencyKey,
+    createdAt: row.createdAt,
+    completedAt: row.completedAt,
   };
 }
 
-function approvalFromRow(row: Row): Approval {
+function approvalFromRow(row: typeof approvals.$inferSelect): Approval {
   return {
-    id: String(row.id),
-    taskId: String(row.task_id),
-    coworkerId: String(row.coworker_id),
-    toolCallId: String(row.tool_call_id),
-    actionType: String(row.action_type),
-    summary: String(row.summary),
-    proposedPayload: parseJson(row.proposed_payload_json, null),
-    decidedPayload: parseJson(row.decided_payload_json, null),
-    riskLevel: row.risk_level as Approval["riskLevel"],
+    id: row.id,
+    taskId: row.taskId,
+    coworkerId: row.coworkerId,
+    toolCallId: row.toolCallId,
+    actionType: row.actionType,
+    summary: row.summary,
+    proposedPayload: parseJson(row.proposedPayloadJson, null),
+    decidedPayload: parseJson(row.decidedPayloadJson, null),
+    riskLevel: row.riskLevel,
     status: row.status as ApprovalStatus,
-    createdAt: String(row.created_at),
-    decidedAt: row.decided_at === null ? null : String(row.decided_at),
+    createdAt: row.createdAt,
+    decidedAt: row.decidedAt,
   };
 }
 
-function scheduleFromRow(row: Row): Schedule {
+function scheduleFromRow(row: typeof schedules.$inferSelect): Schedule {
   return {
-    id: String(row.id),
-    coworkerId: String(row.coworker_id),
-    name: String(row.name),
-    scheduleType: row.schedule_type as Schedule["scheduleType"],
-    cronExpression: row.cron_expression === null ? null : String(row.cron_expression),
-    runAt: row.run_at === null ? null : String(row.run_at),
-    timezone: String(row.timezone),
-    taskTemplate: parseJson<Schedule["taskTemplate"]>(row.task_template_json, {
+    id: row.id,
+    coworkerId: row.coworkerId,
+    name: row.name,
+    scheduleType: row.scheduleType,
+    cronExpression: row.cronExpression,
+    runAt: row.runAt,
+    timezone: row.timezone,
+    taskTemplate: parseJson<Schedule["taskTemplate"]>(row.taskTemplateJson, {
       title: "Scheduled task",
       input: "",
     }),
-    enabled: Number(row.enabled) === 1,
-    lastRunAt: row.last_run_at === null ? null : String(row.last_run_at),
-    nextRunAt: row.next_run_at === null ? null : String(row.next_run_at),
-    createdAt: String(row.created_at),
-    updatedAt: String(row.updated_at),
+    enabled: row.enabled,
+    lastRunAt: row.lastRunAt,
+    nextRunAt: row.nextRunAt,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
   };
 }
 
-function artifactFromRow(row: Row): Artifact {
+function artifactFromRow(row: typeof artifacts.$inferSelect): Artifact {
   return {
-    id: String(row.id),
-    taskId: row.task_id === null ? null : String(row.task_id),
-    coworkerId: String(row.coworker_id),
-    name: String(row.name),
-    mimeType: String(row.mime_type),
-    filePath: String(row.file_path),
-    createdAt: String(row.created_at),
+    id: row.id,
+    taskId: row.taskId,
+    coworkerId: row.coworkerId,
+    name: row.name,
+    mimeType: row.mimeType,
+    filePath: row.filePath,
+    createdAt: row.createdAt,
   };
 }
 
-function activityFromRow(row: Row): ActivityItem {
+function activityFromRow(row: typeof activity.$inferSelect): ActivityItem {
   return {
-    id: String(row.id),
-    coworkerId: row.coworker_id === null ? null : String(row.coworker_id),
-    taskId: row.task_id === null ? null : String(row.task_id),
-    type: String(row.type),
-    summary: String(row.summary),
-    metadata: parseJson(row.metadata_json, null),
-    createdAt: String(row.created_at),
+    id: row.id,
+    coworkerId: row.coworkerId,
+    taskId: row.taskId,
+    type: row.type,
+    summary: row.summary,
+    metadata: parseJson(row.metadataJson, null),
+    createdAt: row.createdAt,
   };
 }
 
-function integrationFromRow(row: Row): Integration {
+function integrationFromRow(row: typeof integrations.$inferSelect): Integration {
   return {
-    id: String(row.id),
-    type: row.type as Integration["type"],
-    name: String(row.name),
-    mode: row.mode as Integration["mode"],
-    status: row.status as Integration["status"],
-    credentialKey: row.credential_key === null ? null : String(row.credential_key),
-    config: parseJson(row.config_json, {}),
-    createdAt: String(row.created_at),
-    updatedAt: String(row.updated_at),
+    id: row.id,
+    type: row.type,
+    name: row.name,
+    mode: row.mode,
+    status: row.status,
+    credentialKey: row.credentialKey,
+    config: parseJson(row.configJson, {}),
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
   };
+}
+
+function resolveMigrationsFolder(): string {
+  const resourcesPath = Reflect.get(process, "resourcesPath");
+  if (typeof resourcesPath === "string") {
+    const packaged = join(resourcesPath, "drizzle");
+    if (existsSync(packaged)) return packaged;
+  }
+  const development = join(process.cwd(), "drizzle");
+  if (existsSync(development)) return development;
+  throw new Error(`Drizzle migrations were not found at ${development}`);
 }
 
 export class CoworkerDatabase {
   readonly path: string;
-  private readonly database: DatabaseSync;
+  private readonly sqlite: DatabaseSync;
+  private readonly database: DrizzleDatabase;
 
   constructor(path: string) {
     this.path = path;
     if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
-    this.database = new DatabaseSync(path, {
+    this.sqlite = new DatabaseSync(path, {
       enableForeignKeyConstraints: true,
       enableDoubleQuotedStringLiterals: false,
     });
-    this.database.exec(schemaSql);
+    this.sqlite.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;");
+    this.database = drizzle({ client: this.sqlite });
+    const migrationsFolder = resolveMigrationsFolder();
+    this.backupBeforePendingMigrations(migrationsFolder);
+    migrate(this.database, { migrationsFolder });
+    this.backfillLegacyConversations();
     this.ensureSettings();
   }
 
   close(): void {
-    this.database.close();
+    this.sqlite.close();
   }
 
   transaction<T>(operation: () => T): T {
-    this.database.exec("BEGIN IMMEDIATE");
-    try {
-      const result = operation();
-      this.database.exec("COMMIT");
-      return result;
-    } catch (error) {
-      this.database.exec("ROLLBACK");
-      throw error;
-    }
+    return this.database.transaction(() => operation() as never, { behavior: "immediate" }) as T;
   }
 
   backup(destinationPath: string): string {
     if (this.path === ":memory:") throw new Error("In-memory databases cannot be backed up");
     mkdirSync(dirname(destinationPath), { recursive: true });
     const escaped = destinationPath.replaceAll("'", "''");
-    this.database.exec(`VACUUM INTO '${escaped}'`);
+    this.sqlite.exec(`VACUUM INTO '${escaped}'`);
     return destinationPath;
+  }
+
+  private backupBeforePendingMigrations(migrationsFolder: string): string | null {
+    if (this.path === ":memory:") return null;
+    const userTableCount =
+      this.database.get<{ count: number }>(sql`
+        SELECT count(*) AS count
+        FROM sqlite_master
+        WHERE type = 'table'
+          AND name NOT LIKE 'sqlite_%'
+          AND name <> '__drizzle_migrations'
+      `)?.count ?? 0;
+    if (userTableCount === 0) return null;
+
+    const hasMigrationJournal = this.database.get<{ name: string }>(sql`
+      SELECT name
+      FROM sqlite_master
+      WHERE type = 'table' AND name = '__drizzle_migrations'
+    `);
+    const appliedHashes = new Set(
+      hasMigrationJournal
+        ? this.database
+            .all<{ hash: string }>(sql`SELECT hash FROM __drizzle_migrations`)
+            .map((migration) => migration.hash)
+        : [],
+    );
+    const pendingMigrations = readMigrationFiles({ migrationsFolder }).filter(
+      (migration) => !appliedHashes.has(migration.hash),
+    );
+    const latestPending = pendingMigrations.at(-1);
+    if (!latestPending) return null;
+
+    const databaseName = basename(this.path, extname(this.path));
+    const migrationName = latestPending.name.replaceAll(/[^a-zA-Z0-9._-]/g, "_");
+    const destinationPath = join(
+      dirname(this.path),
+      "backups",
+      `${databaseName}-before-${migrationName}-${latestPending.hash.slice(0, 12)}.db`,
+    );
+    if (existsSync(destinationPath)) return destinationPath;
+    return this.backup(destinationPath);
+  }
+
+  private backfillLegacyConversations(): void {
+    this.database.run(sql`
+      INSERT OR IGNORE INTO conversations(id, coworker_id, title, created_at, updated_at)
+      SELECT
+        ${tasks.threadId},
+        ${tasks.coworkerId},
+        MIN(${tasks.title}),
+        MIN(${tasks.createdAt}),
+        MAX(COALESCE(${tasks.completedAt}, ${tasks.startedAt}, ${tasks.createdAt}))
+      FROM ${tasks}
+      WHERE ${tasks.threadId} IS NOT NULL AND ${tasks.threadId} <> ''
+      GROUP BY ${tasks.threadId}, ${tasks.coworkerId}
+    `);
+    this.database.run(sql`
+      INSERT OR IGNORE INTO conversations(id, coworker_id, title, created_at, updated_at)
+      SELECT
+        'coworker:' || ${coworkers.id},
+        ${coworkers.id},
+        'New conversation',
+        ${coworkers.createdAt},
+        ${coworkers.updatedAt}
+      FROM ${coworkers}
+      WHERE NOT EXISTS (
+        SELECT 1 FROM ${conversations}
+        WHERE ${conversations.coworkerId} = ${coworkers.id}
+      )
+    `);
   }
 
   private ensureSettings(): void {
     const timestamp = now();
-    const statement = this.database.prepare(
-      "INSERT OR IGNORE INTO settings(key, value_json, updated_at) VALUES (?, ?, ?)",
-    );
     for (const [key, value] of Object.entries(defaultSettings)) {
-      statement.run(key, json(value), timestamp);
+      this.database
+        .insert(settings)
+        .values({ key, valueJson: json(value), updatedAt: timestamp })
+        .onConflictDoNothing()
+        .run();
     }
   }
 
   getSettings(): AppSettings {
-    const rows = this.database.prepare("SELECT key, value_json FROM settings").all() as Row[];
+    const rows = this.database
+      .select({ key: settings.key, valueJson: settings.valueJson })
+      .from(settings)
+      .all();
     const stored = new Map(
-      rows.map((row) => [String(row.key), parseJson<unknown>(row.value_json, undefined)]),
+      rows.map((row) => [row.key, parseJson<unknown>(row.valueJson, undefined)]),
     );
     const provider = stored.get("defaultModelProvider");
     const modelName = stored.get("defaultModelName");
@@ -306,7 +422,7 @@ export class CoworkerDatabase {
         ? modelName
         : null;
     const storedTheme = stored.get("theme");
-    const settings: AppSettings = {
+    const appSettings: AppSettings = {
       runInBackground: Boolean(
         stored.get("runInBackground") ?? defaultSettings.runInBackground,
       ),
@@ -321,48 +437,60 @@ export class CoworkerDatabase {
       defaultModelProvider: configuredProvider,
       defaultModelName: configuredModelName,
     };
-    return settings;
+    return appSettings;
   }
 
   updateSettings(patch: Partial<AppSettings>): AppSettings {
-    const statement = this.database.prepare(
-      `INSERT INTO settings(key, value_json, updated_at) VALUES (?, ?, ?)
-       ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at`,
-    );
     this.transaction(() => {
       for (const [key, value] of Object.entries(patch)) {
-        statement.run(key, json(value), now());
+        const valueJson = json(value);
+        const updatedAt = now();
+        this.database
+          .insert(settings)
+          .values({ key, valueJson, updatedAt })
+          .onConflictDoUpdate({
+            target: settings.key,
+            set: { valueJson, updatedAt },
+          })
+          .run();
       }
     });
     return this.getSettings();
   }
 
   getMetadata(key: string): string | null {
-    const row = this.database
-      .prepare("SELECT value FROM app_metadata WHERE key = ?")
-      .get(key) as Row | undefined;
-    return row ? String(row.value) : null;
+    return (
+      this.database
+        .select({ value: appMetadata.value })
+        .from(appMetadata)
+        .where(eq(appMetadata.key, key))
+        .get()?.value ?? null
+    );
   }
 
   setMetadata(key: string, value: string): void {
+    const updatedAt = now();
     this.database
-      .prepare(
-        `INSERT INTO app_metadata(key, value, updated_at) VALUES (?, ?, ?)
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
-      )
-      .run(key, value, now());
+      .insert(appMetadata)
+      .values({ key, value, updatedAt })
+      .onConflictDoUpdate({
+        target: appMetadata.key,
+        set: { value, updatedAt },
+      })
+      .run();
   }
 
   listCoworkers(): Coworker[] {
-    return (
-      this.database.prepare("SELECT * FROM coworkers ORDER BY created_at ASC").all() as Row[]
-    ).map((row) => this.withCoworkerSkills(coworkerFromRow(row)));
+    return this.database
+      .select()
+      .from(coworkers)
+      .orderBy(asc(coworkers.createdAt))
+      .all()
+      .map((row) => this.withCoworkerSkills(coworkerFromRow(row)));
   }
 
   getCoworker(id: string): Coworker {
-    const row = this.database.prepare("SELECT * FROM coworkers WHERE id = ?").get(id) as
-      | Row
-      | undefined;
+    const row = this.database.select().from(coworkers).where(eq(coworkers.id, id)).get();
     if (!row) throw new Error(`Coworker ${id} was not found`);
     return this.withCoworkerSkills(coworkerFromRow(row));
   }
@@ -370,27 +498,24 @@ export class CoworkerDatabase {
   createCoworker(input: CreateCoworkerInput, workspacePath: string, id = randomUUID()): Coworker {
     const timestamp = now();
     this.database
-      .prepare(
-        `INSERT INTO coworkers(
-          id, name, role, description, system_prompt, model_provider, model_name,
-          status, runtime_status, workspace_path, enabled_tools_json, policies_json,
-          created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', 'STOPPED', ?, ?, ?, ?, ?)`,
-      )
-      .run(
+      .insert(coworkers)
+      .values({
         id,
-        input.name,
-        input.role,
-        input.description ?? null,
-        input.systemPrompt,
-        input.modelProvider,
-        input.modelName,
+        name: input.name,
+        role: input.role,
+        description: input.description ?? null,
+        systemPrompt: input.systemPrompt,
+        modelProvider: input.modelProvider,
+        modelName: input.modelName,
+        status: "active",
+        runtimeStatus: "STOPPED",
         workspacePath,
-        json(input.enabledTools),
-        json(input.policies ?? {}),
-        timestamp,
-        timestamp,
-      );
+        enabledToolsJson: json(input.enabledTools),
+        policiesJson: json(input.policies ?? {}),
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      })
+      .run();
     this.createConversation({ coworkerId: id }, `coworker:${id}`);
     this.setCoworkerSkills(id, input.enabledSkillIds ?? []);
     this.addActivity({
@@ -405,22 +530,59 @@ export class CoworkerDatabase {
   listConversations(coworkerId?: string): Conversation[] {
     const rows = coworkerId
       ? this.database
-          .prepare(
-            `SELECT * FROM conversations
-             WHERE coworker_id = ?
-             ORDER BY updated_at DESC, created_at DESC`,
-          )
-          .all(coworkerId)
+          .select()
+          .from(conversations)
+          .where(eq(conversations.coworkerId, coworkerId))
+          .orderBy(desc(conversations.updatedAt), desc(conversations.createdAt))
+          .all()
       : this.database
-          .prepare("SELECT * FROM conversations ORDER BY updated_at DESC, created_at DESC")
+          .select()
+          .from(conversations)
+          .orderBy(desc(conversations.updatedAt), desc(conversations.createdAt))
           .all();
-    return (rows as Row[]).map(conversationFromRow);
+    return rows.map(conversationFromRow);
+  }
+
+  searchConversations(coworkerId: string, query: string, limit = 100): Conversation[] {
+    const escapedQuery = query.trim().replaceAll(/([!%_])/g, "!$1").toLowerCase();
+    if (!escapedQuery) return this.listConversations(coworkerId).slice(0, limit);
+    const pattern = `%${escapedQuery}%`;
+    return this.database
+      .select()
+      .from(conversations)
+      .where(
+        and(
+          eq(conversations.coworkerId, coworkerId),
+          sql<boolean>`(
+            lower(${conversations.title}) LIKE ${pattern} ESCAPE '!'
+            OR EXISTS (
+              SELECT 1 FROM tasks search_tasks
+              WHERE search_tasks.thread_id = ${conversations.id}
+                AND (
+                  lower(search_tasks.title) LIKE ${pattern} ESCAPE '!'
+                  OR lower(search_tasks.input) LIKE ${pattern} ESCAPE '!'
+                  OR lower(coalesce(search_tasks.result, '')) LIKE ${pattern} ESCAPE '!'
+                  OR lower(coalesce(search_tasks.error, '')) LIKE ${pattern} ESCAPE '!'
+                )
+            )
+            OR EXISTS (
+              SELECT 1
+              FROM messages search_messages
+              INNER JOIN tasks message_tasks ON message_tasks.id = search_messages.task_id
+              WHERE message_tasks.thread_id = ${conversations.id}
+                AND lower(search_messages.content) LIKE ${pattern} ESCAPE '!'
+            )
+          )`,
+        ),
+      )
+      .orderBy(desc(conversations.updatedAt), desc(conversations.createdAt))
+      .limit(limit)
+      .all()
+      .map(conversationFromRow);
   }
 
   getConversation(id: string): Conversation {
-    const row = this.database.prepare("SELECT * FROM conversations WHERE id = ?").get(id) as
-      | Row
-      | undefined;
+    const row = this.database.select().from(conversations).where(eq(conversations.id, id)).get();
     if (!row) throw new Error(`Conversation ${id} was not found`);
     return conversationFromRow(row);
   }
@@ -432,38 +594,31 @@ export class CoworkerDatabase {
     this.getCoworker(input.coworkerId);
     const timestamp = now();
     this.database
-      .prepare(
-        `INSERT INTO conversations(id, coworker_id, title, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?)`,
-      )
-      .run(id, input.coworkerId, input.title ?? "New conversation", timestamp, timestamp);
+      .insert(conversations)
+      .values({
+        id,
+        coworkerId: input.coworkerId,
+        title: input.title ?? "New conversation",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      })
+      .run();
     return this.getConversation(id);
   }
 
   updateCoworker(id: string, input: UpdateCoworkerInput): Coworker {
     this.getCoworker(id);
-    const columns: string[] = [];
-    const values: SqlValue[] = [];
-    const mappings: Array<[keyof UpdateCoworkerInput, string, (value: unknown) => SqlValue]> = [
-      ["name", "name", (value) => String(value)],
-      ["role", "role", (value) => String(value)],
-      ["description", "description", (value) => (value === null ? null : String(value))],
-      ["systemPrompt", "system_prompt", (value) => String(value)],
-      ["modelProvider", "model_provider", (value) => String(value)],
-      ["modelName", "model_name", (value) => String(value)],
-      ["status", "status", (value) => String(value)],
-      ["enabledTools", "enabled_tools_json", json],
-      ["policies", "policies_json", json],
-    ];
-    for (const [key, column, transform] of mappings) {
-      if (input[key] !== undefined) {
-        columns.push(`${column} = ?`);
-        values.push(transform(input[key]));
-      }
-    }
-    columns.push("updated_at = ?");
-    values.push(now(), id);
-    this.database.prepare(`UPDATE coworkers SET ${columns.join(", ")} WHERE id = ?`).run(...values);
+    const patch: Partial<typeof coworkers.$inferInsert> = { updatedAt: now() };
+    if (input.name !== undefined) patch.name = input.name;
+    if (input.role !== undefined) patch.role = input.role;
+    if (input.description !== undefined) patch.description = input.description;
+    if (input.systemPrompt !== undefined) patch.systemPrompt = input.systemPrompt;
+    if (input.modelProvider !== undefined) patch.modelProvider = input.modelProvider;
+    if (input.modelName !== undefined) patch.modelName = input.modelName;
+    if (input.status !== undefined) patch.status = input.status;
+    if (input.enabledTools !== undefined) patch.enabledToolsJson = json(input.enabledTools);
+    if (input.policies !== undefined) patch.policiesJson = json(input.policies);
+    this.database.update(coworkers).set(patch).where(eq(coworkers.id, id)).run();
     if (input.enabledSkillIds !== undefined) {
       this.setCoworkerSkills(id, input.enabledSkillIds);
     }
@@ -479,7 +634,7 @@ export class CoworkerDatabase {
 
   deleteCoworker(id: string): void {
     const coworker = this.getCoworker(id);
-    this.database.prepare("DELETE FROM coworkers WHERE id = ?").run(id);
+    this.database.delete(coworkers).where(eq(coworkers.id, id)).run();
     this.addActivity({
       type: "coworker.removed",
       summary: `${coworker.name} was removed`,
@@ -489,29 +644,30 @@ export class CoworkerDatabase {
 
   setRuntimeStatus(id: string, status: RuntimeStatus): Coworker {
     this.database
-      .prepare("UPDATE coworkers SET runtime_status = ?, updated_at = ? WHERE id = ?")
-      .run(status, now(), id);
+      .update(coworkers)
+      .set({ runtimeStatus: status, updatedAt: now() })
+      .where(eq(coworkers.id, id))
+      .run();
     return this.getCoworker(id);
   }
 
   listSkills(): Skill[] {
-    return (
-      this.database.prepare("SELECT * FROM skills ORDER BY bundled DESC, name ASC").all() as Row[]
-    ).map(skillFromRow);
+    return this.database
+      .select()
+      .from(skills)
+      .orderBy(desc(skills.bundled), asc(skills.name))
+      .all()
+      .map(skillFromRow);
   }
 
   getSkill(id: string): Skill {
-    const row = this.database.prepare("SELECT * FROM skills WHERE id = ?").get(id) as
-      | Row
-      | undefined;
+    const row = this.database.select().from(skills).where(eq(skills.id, id)).get();
     if (!row) throw new Error(`Skill ${id} was not found`);
     return skillFromRow(row);
   }
 
   getSkillByName(name: string): Skill | null {
-    const row = this.database.prepare("SELECT * FROM skills WHERE name = ?").get(name) as
-      | Row
-      | undefined;
+    const row = this.database.select().from(skills).where(eq(skills.name, name)).get();
     return row ? skillFromRow(row) : null;
   }
 
@@ -525,28 +681,30 @@ export class CoworkerDatabase {
     const existing = this.getSkillByName(input.name);
     const id = existing?.id ?? input.id ?? randomUUID();
     const timestamp = now();
+    const bundled = input.bundled ?? false;
     this.database
-      .prepare(
-        `INSERT INTO skills(
-          id, name, description, content, source_url, bundled, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(name) DO UPDATE SET
-          description = excluded.description,
-          content = excluded.content,
-          source_url = excluded.source_url,
-          bundled = MAX(skills.bundled, excluded.bundled),
-          updated_at = excluded.updated_at`,
-      )
-      .run(
+      .insert(skills)
+      .values({
         id,
-        input.name,
-        input.description,
-        input.content,
-        input.sourceUrl ?? null,
-        input.bundled ? 1 : 0,
-        existing?.createdAt ?? timestamp,
-        timestamp,
-      );
+        name: input.name,
+        description: input.description,
+        content: input.content,
+        sourceUrl: input.sourceUrl ?? null,
+        bundled,
+        createdAt: existing?.createdAt ?? timestamp,
+        updatedAt: timestamp,
+      })
+      .onConflictDoUpdate({
+        target: skills.name,
+        set: {
+          description: input.description,
+          content: input.content,
+          sourceUrl: input.sourceUrl ?? null,
+          bundled: sql<boolean>`max(${skills.bundled}, ${bundled ? 1 : 0})`,
+          updatedAt: timestamp,
+        },
+      })
+      .run();
     const skill = this.getSkill(existing?.id ?? id);
     this.addActivity({
       type: existing ? "skill.updated" : "skill.installed",
@@ -559,7 +717,7 @@ export class CoworkerDatabase {
   removeSkill(id: string): void {
     const skill = this.getSkill(id);
     if (skill.bundled) throw new Error("Bundled skills cannot be removed");
-    this.database.prepare("DELETE FROM skills WHERE id = ?").run(id);
+    this.database.delete(skills).where(eq(skills.id, id)).run();
     this.addActivity({
       type: "skill.removed",
       summary: `${skill.name} was removed`,
@@ -573,29 +731,33 @@ export class CoworkerDatabase {
   ): void {
     this.getSkill(skillId);
     this.transaction(() => {
-      this.database.prepare("DELETE FROM skill_resources WHERE skill_id = ?").run(skillId);
-      const insert = this.database.prepare(
-        "INSERT INTO skill_resources(skill_id, path, mime_type, content) VALUES (?, ?, ?, ?)",
-      );
+      this.database.delete(skillResources).where(eq(skillResources.skillId, skillId)).run();
       for (const resource of resources) {
-        insert.run(skillId, resource.path, resource.mimeType, resource.content);
+        this.database
+          .insert(skillResources)
+          .values({
+            skillId,
+            path: resource.path,
+            mimeType: resource.mimeType,
+            content: Buffer.from(resource.content),
+          })
+          .run();
       }
     });
   }
 
   listSkillResources(skillId: string): Array<{ path: string; mimeType: string; size: number }> {
     this.getSkill(skillId);
-    return (
-      this.database
-        .prepare(
-          "SELECT path, mime_type, length(content) AS size FROM skill_resources WHERE skill_id = ? ORDER BY path",
-        )
-        .all(skillId) as Row[]
-    ).map((row) => ({
-      path: String(row.path),
-      mimeType: String(row.mime_type),
-      size: Number(row.size),
-    }));
+    return this.database
+      .select({
+        path: skillResources.path,
+        mimeType: skillResources.mimeType,
+        size: sql<number>`length(${skillResources.content})`,
+      })
+      .from(skillResources)
+      .where(eq(skillResources.skillId, skillId))
+      .orderBy(asc(skillResources.path))
+      .all();
   }
 
   getSkillResource(
@@ -603,52 +765,49 @@ export class CoworkerDatabase {
     path: string,
   ): { path: string; mimeType: string; content: Uint8Array } | null {
     const row = this.database
-      .prepare(
-        "SELECT path, mime_type, content FROM skill_resources WHERE skill_id = ? AND path = ?",
-      )
-      .get(skillId, path) as Row | undefined;
+      .select({
+        path: skillResources.path,
+        mimeType: skillResources.mimeType,
+        content: skillResources.content,
+      })
+      .from(skillResources)
+      .where(and(eq(skillResources.skillId, skillId), eq(skillResources.path, path)))
+      .get();
     if (!row) return null;
-    return {
-      path: String(row.path),
-      mimeType: String(row.mime_type),
-      content: row.content as Uint8Array,
-    };
+    return row;
   }
 
   listCoworkerSkillIds(coworkerId: string): string[] {
-    return (
-      this.database
-        .prepare(
-          `SELECT skill_id FROM coworker_skills
-           WHERE coworker_id = ? ORDER BY created_at ASC, skill_id ASC`,
-        )
-        .all(coworkerId) as Row[]
-    ).map((row) => String(row.skill_id));
+    return this.database
+      .select({ skillId: coworkerSkills.skillId })
+      .from(coworkerSkills)
+      .where(eq(coworkerSkills.coworkerId, coworkerId))
+      .orderBy(asc(coworkerSkills.createdAt), asc(coworkerSkills.skillId))
+      .all()
+      .map((row) => row.skillId);
   }
 
   listCoworkerSkills(coworkerId: string): Skill[] {
-    return (
-      this.database
-        .prepare(
-          `SELECT skills.* FROM skills
-           INNER JOIN coworker_skills ON coworker_skills.skill_id = skills.id
-           WHERE coworker_skills.coworker_id = ?
-           ORDER BY skills.bundled DESC, skills.name ASC`,
-        )
-        .all(coworkerId) as Row[]
-    ).map(skillFromRow);
+    return this.database
+      .select()
+      .from(skills)
+      .innerJoin(coworkerSkills, eq(coworkerSkills.skillId, skills.id))
+      .where(eq(coworkerSkills.coworkerId, coworkerId))
+      .orderBy(desc(skills.bundled), asc(skills.name))
+      .all()
+      .map((row) => skillFromRow(row.skills));
   }
 
   setCoworkerSkills(coworkerId: string, skillIds: string[]): void {
     const uniqueIds = [...new Set(skillIds)];
     this.transaction(() => {
-      this.database.prepare("DELETE FROM coworker_skills WHERE coworker_id = ?").run(coworkerId);
-      const statement = this.database.prepare(
-        "INSERT INTO coworker_skills(coworker_id, skill_id, created_at) VALUES (?, ?, ?)",
-      );
+      this.database.delete(coworkerSkills).where(eq(coworkerSkills.coworkerId, coworkerId)).run();
       for (const skillId of uniqueIds) {
         this.getSkill(skillId);
-        statement.run(coworkerId, skillId, now());
+        this.database
+          .insert(coworkerSkills)
+          .values({ coworkerId, skillId, createdAt: now() })
+          .run();
       }
     });
   }
@@ -663,9 +822,11 @@ export class CoworkerDatabase {
     const runId = input.runId ?? randomUUID();
     const threadId = input.threadId ?? `coworker:${input.coworkerId}`;
     const conversationRow = this.database
-      .prepare("SELECT * FROM conversations WHERE id = ?")
-      .get(threadId) as Row | undefined;
-    if (conversationRow && String(conversationRow.coworker_id) !== input.coworkerId) {
+      .select()
+      .from(conversations)
+      .where(eq(conversations.id, threadId))
+      .get();
+    if (conversationRow && conversationRow.coworkerId !== input.coworkerId) {
       throw new Error("Conversation does not belong to this coworker");
     }
     if (!conversationRow) {
@@ -674,34 +835,32 @@ export class CoworkerDatabase {
         threadId,
       );
     } else {
-      const existingTitle = String(conversationRow.title);
+      const existingTitle = conversationRow.title;
       this.database
-        .prepare(
-          `UPDATE conversations
-           SET title = ?, updated_at = ?
-           WHERE id = ?`,
-        )
-        .run(existingTitle === "New conversation" ? input.title : existingTitle, timestamp, threadId);
+        .update(conversations)
+        .set({
+          title: existingTitle === "New conversation" ? input.title : existingTitle,
+          updatedAt: timestamp,
+        })
+        .where(eq(conversations.id, threadId))
+        .run();
     }
     this.database
-      .prepare(
-        `INSERT INTO tasks(
-          id, coworker_id, schedule_id, run_id, thread_id, title, input, status,
-          source, priority, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'QUEUED', ?, ?, ?)`,
-      )
-      .run(
+      .insert(tasks)
+      .values({
         id,
-        input.coworkerId,
-        input.scheduleId ?? null,
+        coworkerId: input.coworkerId,
+        scheduleId: input.scheduleId ?? null,
         runId,
         threadId,
-        input.title,
-        input.input,
-        input.source ?? "manual",
-        input.priority ?? 0,
-        timestamp,
-      );
+        title: input.title,
+        input: input.input,
+        status: "QUEUED",
+        source: input.source ?? "manual",
+        priority: input.priority ?? 0,
+        createdAt: timestamp,
+      })
+      .run();
     this.addMessage({
       coworkerId: input.coworkerId,
       taskId: id,
@@ -719,17 +878,13 @@ export class CoworkerDatabase {
   }
 
   getTask(id: string): Task {
-    const row = this.database.prepare("SELECT * FROM tasks WHERE id = ?").get(id) as
-      | Row
-      | undefined;
+    const row = this.database.select().from(tasks).where(eq(tasks.id, id)).get();
     if (!row) throw new Error(`Task ${id} was not found`);
     return taskFromRow(row);
   }
 
   getTaskByRunId(runId: string): Task | null {
-    const row = this.database.prepare("SELECT * FROM tasks WHERE run_id = ?").get(runId) as
-      | Row
-      | undefined;
+    const row = this.database.select().from(tasks).where(eq(tasks.runId, runId)).get();
     return row ? taskFromRow(row) : null;
   }
 
@@ -742,40 +897,34 @@ export class CoworkerDatabase {
     }
     const timestamp = now();
     this.database
-      .prepare(
-        `INSERT INTO task_image_attachments(
-          id, task_id, coworker_id, name, mime_type, relative_path, size, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        input.id,
-        input.taskId,
-        input.coworkerId,
-        input.name,
-        input.mimeType,
-        input.relativePath,
-        input.size,
-        timestamp,
-      );
+      .insert(taskImageAttachments)
+      .values({ ...input, createdAt: timestamp })
+      .run();
     const row = this.database
-      .prepare("SELECT * FROM task_image_attachments WHERE id = ?")
-      .get(input.id) as Row;
+      .select()
+      .from(taskImageAttachments)
+      .where(eq(taskImageAttachments.id, input.id))
+      .get();
+    if (!row) throw new Error(`Image attachment ${input.id} was not found`);
     return taskImageAttachmentFromRow(row);
   }
 
   listTaskImageAttachments(taskId: string): TaskImageAttachment[] {
     const rows = this.database
-      .prepare(
-        "SELECT * FROM task_image_attachments WHERE task_id = ? ORDER BY created_at ASC, id ASC",
-      )
-      .all(taskId) as Row[];
+      .select()
+      .from(taskImageAttachments)
+      .where(eq(taskImageAttachments.taskId, taskId))
+      .orderBy(asc(taskImageAttachments.createdAt), asc(taskImageAttachments.id))
+      .all();
     return rows.map(taskImageAttachmentFromRow);
   }
 
   getTaskImageAttachment(id: string): TaskImageAttachment {
     const row = this.database
-      .prepare("SELECT * FROM task_image_attachments WHERE id = ?")
-      .get(id) as Row | undefined;
+      .select()
+      .from(taskImageAttachments)
+      .where(eq(taskImageAttachments.id, id))
+      .get();
     if (!row) throw new Error(`Image attachment ${id} was not found`);
     return taskImageAttachmentFromRow(row);
   }
@@ -783,51 +932,64 @@ export class CoworkerDatabase {
   listImageAttachments(coworkerId?: string): TaskImageAttachment[] {
     const rows = coworkerId
       ? this.database
-          .prepare(
-            `SELECT * FROM task_image_attachments
-             WHERE coworker_id = ?
-             ORDER BY created_at ASC, id ASC`,
-          )
-          .all(coworkerId)
+          .select()
+          .from(taskImageAttachments)
+          .where(eq(taskImageAttachments.coworkerId, coworkerId))
+          .orderBy(asc(taskImageAttachments.createdAt), asc(taskImageAttachments.id))
+          .all()
       : this.database
-          .prepare("SELECT * FROM task_image_attachments ORDER BY created_at ASC, id ASC")
+          .select()
+          .from(taskImageAttachments)
+          .orderBy(asc(taskImageAttachments.createdAt), asc(taskImageAttachments.id))
           .all();
-    return (rows as Row[]).map(taskImageAttachmentFromRow);
+    return rows.map(taskImageAttachmentFromRow);
   }
 
   listTasks(coworkerId?: string, limit = 500): Task[] {
     const rows = coworkerId
       ? this.database
-          .prepare("SELECT * FROM tasks WHERE coworker_id = ? ORDER BY created_at DESC LIMIT ?")
-          .all(coworkerId, limit)
-      : this.database.prepare("SELECT * FROM tasks ORDER BY created_at DESC LIMIT ?").all(limit);
-    return (rows as Row[]).map(taskFromRow);
+          .select()
+          .from(tasks)
+          .where(eq(tasks.coworkerId, coworkerId))
+          .orderBy(desc(tasks.createdAt))
+          .limit(limit)
+          .all()
+      : this.database.select().from(tasks).orderBy(desc(tasks.createdAt)).limit(limit).all();
+    return rows.map(taskFromRow);
   }
 
   claimNextTask(coworkerId: string): Task | null {
     return this.transaction(() => {
       const active = this.database
-        .prepare(
-          `SELECT id FROM tasks
-           WHERE coworker_id = ? AND status IN ('RUNNING', 'WAITING_FOR_APPROVAL')
-           LIMIT 1`,
+        .select({ id: tasks.id })
+        .from(tasks)
+        .where(
+          and(
+            eq(tasks.coworkerId, coworkerId),
+            inArray(tasks.status, ["RUNNING", "WAITING_FOR_APPROVAL"]),
+          ),
         )
-        .get(coworkerId);
+        .limit(1)
+        .get();
       if (active) return null;
       const row = this.database
-        .prepare(
-          `SELECT * FROM tasks
-           WHERE coworker_id = ? AND status = 'QUEUED'
-           ORDER BY priority DESC, created_at ASC
-           LIMIT 1`,
-        )
-        .get(coworkerId) as Row | undefined;
+        .select()
+        .from(tasks)
+        .where(and(eq(tasks.coworkerId, coworkerId), eq(tasks.status, "QUEUED")))
+        .orderBy(desc(tasks.priority), asc(tasks.createdAt))
+        .limit(1)
+        .get();
       if (!row) return null;
       const timestamp = now();
       this.database
-        .prepare("UPDATE tasks SET status = 'RUNNING', started_at = COALESCE(started_at, ?) WHERE id = ?")
-        .run(timestamp, row.id as string);
-      return this.getTask(String(row.id));
+        .update(tasks)
+        .set({
+          status: "RUNNING",
+          startedAt: sql<string>`coalesce(${tasks.startedAt}, ${timestamp})`,
+        })
+        .where(eq(tasks.id, row.id))
+        .run();
+      return this.getTask(row.id);
     });
   }
 
@@ -837,14 +999,11 @@ export class CoworkerDatabase {
     options: { result?: string | null; error?: string | null } = {},
   ): Task {
     const completed = ["COMPLETED", "FAILED", "CANCELLED"].includes(status) ? now() : null;
-    this.database
-      .prepare(
-        `UPDATE tasks
-         SET status = ?, result = COALESCE(?, result), error = COALESCE(?, error),
-             completed_at = CASE WHEN ? IS NULL THEN completed_at ELSE ? END
-         WHERE id = ?`,
-      )
-      .run(status, options.result ?? null, options.error ?? null, completed, completed, id);
+    const patch: Partial<typeof tasks.$inferInsert> = { status };
+    if (options.result != null) patch.result = options.result;
+    if (options.error != null) patch.error = options.error;
+    if (completed) patch.completedAt = completed;
+    this.database.update(tasks).set(patch).where(eq(tasks.id, id)).run();
     const task = this.getTask(id);
     this.addActivity({
       coworkerId: task.coworkerId,
@@ -860,22 +1019,20 @@ export class CoworkerDatabase {
     const task = this.getTask(id);
     if (["COMPLETED", "FAILED", "CANCELLED"].includes(task.status)) return task;
     return this.transaction(() => {
+      const pendingApprovalToolCalls = this.database
+        .select({ toolCallId: approvals.toolCallId })
+        .from(approvals)
+        .where(and(eq(approvals.taskId, id), eq(approvals.status, "PENDING")));
       this.database
-        .prepare(
-          `UPDATE tool_calls
-           SET status = 'DENIED', completed_at = ?
-           WHERE task_id = ? AND id IN (
-             SELECT tool_call_id FROM approvals WHERE task_id = ? AND status = 'PENDING'
-           )`,
-        )
-        .run(now(), id, id);
+        .update(toolCalls)
+        .set({ status: "DENIED", completedAt: now() })
+        .where(and(eq(toolCalls.taskId, id), inArray(toolCalls.id, pendingApprovalToolCalls)))
+        .run();
       this.database
-        .prepare(
-          `UPDATE approvals
-           SET status = 'EXPIRED', decided_at = ?
-           WHERE task_id = ? AND status = 'PENDING'`,
-        )
-        .run(now(), id);
+        .update(approvals)
+        .set({ status: "EXPIRED", decidedAt: now() })
+        .where(and(eq(approvals.taskId, id), eq(approvals.status, "PENDING")))
+        .run();
       return this.setTaskStatus(id, "CANCELLED");
     });
   }
@@ -883,15 +1040,14 @@ export class CoworkerDatabase {
   recoverInterruptedTasks(): number {
     return this.transaction(() => {
       const result = this.database
-        .prepare(
-          `UPDATE tasks
-           SET status = 'QUEUED', source = 'recovery'
-           WHERE status = 'RUNNING'`,
-        )
+        .update(tasks)
+        .set({ status: "QUEUED", source: "recovery" })
+        .where(eq(tasks.status, "RUNNING"))
         .run();
       this.database
-        .prepare("UPDATE coworkers SET runtime_status = 'STOPPED', updated_at = ?")
-        .run(now());
+        .update(coworkers)
+        .set({ runtimeStatus: "STOPPED", updatedAt: now() })
+        .run();
       return Number(result.changes);
     });
   }
@@ -899,33 +1055,31 @@ export class CoworkerDatabase {
   addMessage(input: Omit<Message, "id" | "createdAt">, id = randomUUID()): Message {
     const timestamp = now();
     this.database
-      .prepare(
-        `INSERT INTO messages(id, coworker_id, task_id, role, content, created_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-      )
-      .run(id, input.coworkerId, input.taskId, input.role, input.content, timestamp);
-    return messageFromRow(
-      this.database.prepare("SELECT * FROM messages WHERE id = ?").get(id) as Row,
-    );
+      .insert(messages)
+      .values({ id, ...input, createdAt: timestamp })
+      .run();
+    const row = this.database.select().from(messages).where(eq(messages.id, id)).get();
+    if (!row) throw new Error(`Message ${id} was not found`);
+    return messageFromRow(row);
   }
 
   listMessages(coworkerId: string, taskId?: string, limit = 500): Message[] {
     const rows = taskId
       ? this.database
-          .prepare(
-            `SELECT * FROM messages
-             WHERE coworker_id = ? AND task_id = ?
-             ORDER BY created_at ASC LIMIT ?`,
-          )
-          .all(coworkerId, taskId, limit)
+          .select()
+          .from(messages)
+          .where(and(eq(messages.coworkerId, coworkerId), eq(messages.taskId, taskId)))
+          .orderBy(asc(messages.createdAt))
+          .limit(limit)
+          .all()
       : this.database
-          .prepare(
-            `SELECT * FROM messages
-             WHERE coworker_id = ?
-             ORDER BY created_at ASC LIMIT ?`,
-          )
-          .all(coworkerId, limit);
-    return (rows as Row[]).map(messageFromRow);
+          .select()
+          .from(messages)
+          .where(eq(messages.coworkerId, coworkerId))
+          .orderBy(asc(messages.createdAt))
+          .limit(limit)
+          .all();
+    return rows.map(messageFromRow);
   }
 
   listConversationMessages(
@@ -938,37 +1092,40 @@ export class CoworkerDatabase {
       throw new Error("Conversation does not belong to this coworker");
     }
     const rows = this.database
-      .prepare(
-        `SELECT messages.* FROM messages
-         INNER JOIN tasks ON tasks.id = messages.task_id
-         WHERE messages.coworker_id = ? AND tasks.thread_id = ?
-         ORDER BY messages.created_at ASC LIMIT ?`,
-      )
-      .all(coworkerId, conversationId, limit);
-    return (rows as Row[]).map(messageFromRow);
+      .select()
+      .from(messages)
+      .innerJoin(tasks, eq(tasks.id, messages.taskId))
+      .where(and(eq(messages.coworkerId, coworkerId), eq(tasks.threadId, conversationId)))
+      .orderBy(asc(messages.createdAt))
+      .limit(limit)
+      .all();
+    return rows.map((row) => messageFromRow(row.messages));
   }
 
   saveCheckpoint(taskId: string, messages: unknown[], pendingTool?: unknown): void {
+    const messagesJson = json(messages);
+    const pendingToolJson = pendingTool === undefined ? null : json(pendingTool);
+    const updatedAt = now();
     this.database
-      .prepare(
-        `INSERT INTO task_checkpoints(task_id, messages_json, pending_tool_json, updated_at)
-         VALUES (?, ?, ?, ?)
-         ON CONFLICT(task_id) DO UPDATE SET
-           messages_json = excluded.messages_json,
-           pending_tool_json = excluded.pending_tool_json,
-           updated_at = excluded.updated_at`,
-      )
-      .run(taskId, json(messages), pendingTool === undefined ? null : json(pendingTool), now());
+      .insert(taskCheckpoints)
+      .values({ taskId, messagesJson, pendingToolJson, updatedAt })
+      .onConflictDoUpdate({
+        target: taskCheckpoints.taskId,
+        set: { messagesJson, pendingToolJson, updatedAt },
+      })
+      .run();
   }
 
   getCheckpoint(taskId: string): { messages: unknown[]; pendingTool: unknown } | null {
     const row = this.database
-      .prepare("SELECT * FROM task_checkpoints WHERE task_id = ?")
-      .get(taskId) as Row | undefined;
+      .select()
+      .from(taskCheckpoints)
+      .where(eq(taskCheckpoints.taskId, taskId))
+      .get();
     if (!row) return null;
     return {
-      messages: parseJson<unknown[]>(row.messages_json, []),
-      pendingTool: parseJson(row.pending_tool_json, null),
+      messages: parseJson<unknown[]>(row.messagesJson, []),
+      pendingTool: parseJson(row.pendingToolJson, null),
     };
   }
 
@@ -982,36 +1139,34 @@ export class CoworkerDatabase {
   }): ToolCall {
     const id = input.id ?? randomUUID();
     this.database
-      .prepare(
-        `INSERT OR IGNORE INTO tool_calls(
-          id, task_id, coworker_id, tool_name, arguments_json, status,
-          idempotency_key, created_at
-        ) VALUES (?, ?, ?, ?, ?, 'REQUESTED', ?, ?)`,
-      )
-      .run(
+      .insert(toolCalls)
+      .values({
         id,
-        input.taskId,
-        input.coworkerId,
-        input.toolName,
-        json(input.arguments),
-        input.idempotencyKey,
-        now(),
-      );
+        taskId: input.taskId,
+        coworkerId: input.coworkerId,
+        toolName: input.toolName,
+        argumentsJson: json(input.arguments),
+        status: "REQUESTED",
+        idempotencyKey: input.idempotencyKey,
+        createdAt: now(),
+      })
+      .onConflictDoNothing()
+      .run();
     return this.getToolCallByIdempotencyKey(input.idempotencyKey);
   }
 
   getToolCall(id: string): ToolCall {
-    const row = this.database.prepare("SELECT * FROM tool_calls WHERE id = ?").get(id) as
-      | Row
-      | undefined;
+    const row = this.database.select().from(toolCalls).where(eq(toolCalls.id, id)).get();
     if (!row) throw new Error(`Tool call ${id} was not found`);
     return toolCallFromRow(row);
   }
 
   getToolCallByIdempotencyKey(key: string): ToolCall {
     const row = this.database
-      .prepare("SELECT * FROM tool_calls WHERE idempotency_key = ?")
-      .get(key) as Row | undefined;
+      .select()
+      .from(toolCalls)
+      .where(eq(toolCalls.idempotencyKey, key))
+      .get();
     if (!row) throw new Error(`Tool call with idempotency key ${key} was not found`);
     return toolCallFromRow(row);
   }
@@ -1019,10 +1174,13 @@ export class CoworkerDatabase {
   listToolCalls(taskId?: string): ToolCall[] {
     const rows = taskId
       ? this.database
-          .prepare("SELECT * FROM tool_calls WHERE task_id = ? ORDER BY created_at ASC")
-          .all(taskId)
-      : this.database.prepare("SELECT * FROM tool_calls ORDER BY created_at ASC").all();
-    return (rows as Row[]).map(toolCallFromRow);
+          .select()
+          .from(toolCalls)
+          .where(eq(toolCalls.taskId, taskId))
+          .orderBy(asc(toolCalls.createdAt))
+          .all()
+      : this.database.select().from(toolCalls).orderBy(asc(toolCalls.createdAt)).all();
+    return rows.map(toolCallFromRow);
   }
 
   updateToolCall(
@@ -1031,14 +1189,10 @@ export class CoworkerDatabase {
     result?: unknown,
   ): ToolCall {
     const completed = ["COMPLETED", "FAILED", "DENIED"].includes(status) ? now() : null;
-    this.database
-      .prepare(
-        `UPDATE tool_calls
-         SET status = ?, result_json = COALESCE(?, result_json),
-             completed_at = CASE WHEN ? IS NULL THEN completed_at ELSE ? END
-         WHERE id = ?`,
-      )
-      .run(status, result === undefined ? null : json(result), completed, completed, id);
+    const patch: Partial<typeof toolCalls.$inferInsert> = { status };
+    if (result !== undefined) patch.resultJson = json(result);
+    if (completed) patch.completedAt = completed;
+    this.database.update(toolCalls).set(patch).where(eq(toolCalls.id, id)).run();
     return this.getToolCall(id);
   }
 
@@ -1053,35 +1207,38 @@ export class CoworkerDatabase {
   }): Approval {
     return this.transaction(() => {
       const existing = this.database
-        .prepare("SELECT * FROM approvals WHERE tool_call_id = ?")
-        .get(input.toolCallId) as Row | undefined;
+        .select()
+        .from(approvals)
+        .where(eq(approvals.toolCallId, input.toolCallId))
+        .get();
       if (existing) return approvalFromRow(existing);
       const id = randomUUID();
       const timestamp = now();
       this.database
-        .prepare(
-          `INSERT INTO approvals(
-            id, task_id, coworker_id, tool_call_id, action_type, summary,
-            proposed_payload_json, risk_level, status, created_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?)`,
-        )
-        .run(
+        .insert(approvals)
+        .values({
           id,
-          input.taskId,
-          input.coworkerId,
-          input.toolCallId,
-          input.actionType,
-          input.summary,
-          json(input.proposedPayload),
-          input.riskLevel,
-          timestamp,
-        );
+          taskId: input.taskId,
+          coworkerId: input.coworkerId,
+          toolCallId: input.toolCallId,
+          actionType: input.actionType,
+          summary: input.summary,
+          proposedPayloadJson: json(input.proposedPayload),
+          riskLevel: input.riskLevel,
+          status: "PENDING",
+          createdAt: timestamp,
+        })
+        .run();
       this.database
-        .prepare("UPDATE tool_calls SET status = 'WAITING_FOR_APPROVAL' WHERE id = ?")
-        .run(input.toolCallId);
+        .update(toolCalls)
+        .set({ status: "WAITING_FOR_APPROVAL" })
+        .where(eq(toolCalls.id, input.toolCallId))
+        .run();
       this.database
-        .prepare("UPDATE tasks SET status = 'WAITING_FOR_APPROVAL' WHERE id = ?")
-        .run(input.taskId);
+        .update(tasks)
+        .set({ status: "WAITING_FOR_APPROVAL" })
+        .where(eq(tasks.id, input.taskId))
+        .run();
       this.addActivity({
         coworkerId: input.coworkerId,
         taskId: input.taskId,
@@ -1094,31 +1251,37 @@ export class CoworkerDatabase {
   }
 
   getApproval(id: string): Approval {
-    const row = this.database.prepare("SELECT * FROM approvals WHERE id = ?").get(id) as
-      | Row
-      | undefined;
+    const row = this.database.select().from(approvals).where(eq(approvals.id, id)).get();
     if (!row) throw new Error(`Approval ${id} was not found`);
     return approvalFromRow(row);
   }
 
   getApprovalForTask(taskId: string): Approval | null {
     const row = this.database
-      .prepare(
-        `SELECT * FROM approvals
-         WHERE task_id = ? AND status IN ('PENDING', 'APPROVED', 'EDITED', 'REJECTED')
-         ORDER BY created_at DESC LIMIT 1`,
+      .select()
+      .from(approvals)
+      .where(
+        and(
+          eq(approvals.taskId, taskId),
+          inArray(approvals.status, ["PENDING", "APPROVED", "EDITED", "REJECTED"]),
+        ),
       )
-      .get(taskId) as Row | undefined;
+      .orderBy(desc(approvals.createdAt))
+      .limit(1)
+      .get();
     return row ? approvalFromRow(row) : null;
   }
 
   listApprovals(status?: ApprovalStatus): Approval[] {
     const rows = status
       ? this.database
-          .prepare("SELECT * FROM approvals WHERE status = ? ORDER BY created_at ASC")
-          .all(status)
-      : this.database.prepare("SELECT * FROM approvals ORDER BY created_at DESC").all();
-    return (rows as Row[]).map(approvalFromRow);
+          .select()
+          .from(approvals)
+          .where(eq(approvals.status, status))
+          .orderBy(asc(approvals.createdAt))
+          .all()
+      : this.database.select().from(approvals).orderBy(desc(approvals.createdAt)).all();
+    return rows.map(approvalFromRow);
   }
 
   decideApproval(input: ApprovalDecisionInput): Approval {
@@ -1132,18 +1295,20 @@ export class CoworkerDatabase {
       const decidedPayload =
         input.decision === "edit" ? input.payload : input.payload ?? approval.proposedPayload;
       this.database
-        .prepare(
-          `UPDATE approvals
-           SET status = ?, decided_payload_json = ?, decided_at = ?
-           WHERE id = ?`,
-        )
-        .run(status, json(decidedPayload), now(), approval.id);
+        .update(approvals)
+        .set({ status, decidedPayloadJson: json(decidedPayload), decidedAt: now() })
+        .where(eq(approvals.id, approval.id))
+        .run();
       this.database
-        .prepare("UPDATE tasks SET status = 'QUEUED' WHERE id = ?")
-        .run(approval.taskId);
+        .update(tasks)
+        .set({ status: "QUEUED" })
+        .where(eq(tasks.id, approval.taskId))
+        .run();
       this.database
-        .prepare("UPDATE tool_calls SET status = ? WHERE id = ?")
-        .run(status === "REJECTED" ? "DENIED" : "REQUESTED", approval.toolCallId);
+        .update(toolCalls)
+        .set({ status: status === "REJECTED" ? "DENIED" : "REQUESTED" })
+        .where(eq(toolCalls.id, approval.toolCallId))
+        .run();
       this.addActivity({
         coworkerId: approval.coworkerId,
         taskId: approval.taskId,
@@ -1160,26 +1325,22 @@ export class CoworkerDatabase {
     const timestamp = now();
     this.getCoworker(input.coworkerId);
     this.database
-      .prepare(
-        `INSERT INTO schedules(
-          id, coworker_id, name, schedule_type, cron_expression, run_at, timezone,
-          task_template_json, enabled, next_run_at, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
+      .insert(schedules)
+      .values({
         id,
-        input.coworkerId,
-        input.name,
-        input.scheduleType,
-        input.cronExpression ?? null,
-        input.runAt ?? null,
-        input.timezone,
-        json(input.taskTemplate),
-        input.enabled === false ? 0 : 1,
+        coworkerId: input.coworkerId,
+        name: input.name,
+        scheduleType: input.scheduleType,
+        cronExpression: input.cronExpression ?? null,
+        runAt: input.runAt ?? null,
+        timezone: input.timezone,
+        taskTemplateJson: json(input.taskTemplate),
+        enabled: input.enabled !== false,
         nextRunAt,
-        timestamp,
-        timestamp,
-      );
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      })
+      .run();
     this.addActivity({
       coworkerId: input.coworkerId,
       type: "schedule.created",
@@ -1190,17 +1351,18 @@ export class CoworkerDatabase {
   }
 
   getSchedule(id: string): Schedule {
-    const row = this.database.prepare("SELECT * FROM schedules WHERE id = ?").get(id) as
-      | Row
-      | undefined;
+    const row = this.database.select().from(schedules).where(eq(schedules.id, id)).get();
     if (!row) throw new Error(`Schedule ${id} was not found`);
     return scheduleFromRow(row);
   }
 
   listSchedules(): Schedule[] {
-    return (
-      this.database.prepare("SELECT * FROM schedules ORDER BY created_at ASC").all() as Row[]
-    ).map(scheduleFromRow);
+    return this.database
+      .select()
+      .from(schedules)
+      .orderBy(asc(schedules.createdAt))
+      .all()
+      .map(scheduleFromRow);
   }
 
   updateSchedule(
@@ -1209,32 +1371,24 @@ export class CoworkerDatabase {
     nextRunAt: string | null,
   ): Schedule {
     this.getSchedule(id);
-    const columns: string[] = [];
-    const values: SqlValue[] = [];
-    const mappings: Array<[keyof UpdateScheduleInput, string, (value: unknown) => SqlValue]> = [
-      ["name", "name", (value) => String(value)],
-      ["scheduleType", "schedule_type", (value) => String(value)],
-      ["cronExpression", "cron_expression", (value) => (value === null ? null : String(value))],
-      ["runAt", "run_at", (value) => (value === null ? null : String(value))],
-      ["timezone", "timezone", (value) => String(value)],
-      ["taskTemplate", "task_template_json", json],
-      ["enabled", "enabled", (value) => (value ? 1 : 0)],
-    ];
-    for (const [key, column, transform] of mappings) {
-      if (input[key] !== undefined) {
-        columns.push(`${column} = ?`);
-        values.push(transform(input[key]));
-      }
-    }
-    columns.push("next_run_at = ?", "updated_at = ?");
-    values.push(nextRunAt, now(), id);
-    this.database.prepare(`UPDATE schedules SET ${columns.join(", ")} WHERE id = ?`).run(...values);
+    const patch: Partial<typeof schedules.$inferInsert> = {
+      nextRunAt,
+      updatedAt: now(),
+    };
+    if (input.name !== undefined) patch.name = input.name;
+    if (input.scheduleType !== undefined) patch.scheduleType = input.scheduleType;
+    if (input.cronExpression !== undefined) patch.cronExpression = input.cronExpression;
+    if (input.runAt !== undefined) patch.runAt = input.runAt;
+    if (input.timezone !== undefined) patch.timezone = input.timezone;
+    if (input.taskTemplate !== undefined) patch.taskTemplateJson = json(input.taskTemplate);
+    if (input.enabled !== undefined) patch.enabled = input.enabled;
+    this.database.update(schedules).set(patch).where(eq(schedules.id, id)).run();
     return this.getSchedule(id);
   }
 
   deleteSchedule(id: string): void {
     const schedule = this.getSchedule(id);
-    this.database.prepare("DELETE FROM schedules WHERE id = ?").run(id);
+    this.database.delete(schedules).where(eq(schedules.id, id)).run();
     this.addActivity({
       coworkerId: schedule.coworkerId,
       type: "schedule.removed",
@@ -1244,63 +1398,62 @@ export class CoworkerDatabase {
   }
 
   listDueSchedules(at = now()): Schedule[] {
-    return (
-      this.database
-        .prepare(
-          `SELECT * FROM schedules
-           WHERE enabled = 1 AND next_run_at IS NOT NULL AND next_run_at <= ?
-           ORDER BY next_run_at ASC`,
-        )
-        .all(at) as Row[]
-    ).map(scheduleFromRow);
+    return this.database
+      .select()
+      .from(schedules)
+      .where(
+        and(
+          eq(schedules.enabled, true),
+          isNotNull(schedules.nextRunAt),
+          lte(schedules.nextRunAt, at),
+        ),
+      )
+      .orderBy(asc(schedules.nextRunAt))
+      .all()
+      .map(scheduleFromRow);
   }
 
   getEarliestNextRun(): string | null {
     const row = this.database
-      .prepare(
-        `SELECT next_run_at FROM schedules
-         WHERE enabled = 1 AND next_run_at IS NOT NULL
-         ORDER BY next_run_at ASC LIMIT 1`,
-      )
-      .get() as Row | undefined;
-    return row ? String(row.next_run_at) : null;
+      .select({ nextRunAt: schedules.nextRunAt })
+      .from(schedules)
+      .where(and(eq(schedules.enabled, true), isNotNull(schedules.nextRunAt)))
+      .orderBy(asc(schedules.nextRunAt))
+      .limit(1)
+      .get();
+    return row?.nextRunAt ?? null;
   }
 
   markScheduleRun(id: string, ranAt: string, nextRunAt: string | null): Schedule {
-    const enabled = nextRunAt === null ? 0 : 1;
+    const enabled = nextRunAt !== null;
     this.database
-      .prepare(
-        `UPDATE schedules
-         SET last_run_at = ?, next_run_at = ?, enabled = ?, updated_at = ?
-         WHERE id = ?`,
-      )
-      .run(ranAt, nextRunAt, enabled, now(), id);
+      .update(schedules)
+      .set({ lastRunAt: ranAt, nextRunAt, enabled, updatedAt: now() })
+      .where(eq(schedules.id, id))
+      .run();
     return this.getSchedule(id);
   }
 
   createArtifact(input: Omit<Artifact, "id" | "createdAt">): Artifact {
     if (input.taskId) {
       const existing = this.database
-        .prepare("SELECT * FROM artifacts WHERE task_id = ? AND file_path = ? LIMIT 1")
-        .get(input.taskId, input.filePath) as Row | undefined;
+        .select()
+        .from(artifacts)
+        .where(and(eq(artifacts.taskId, input.taskId), eq(artifacts.filePath, input.filePath)))
+        .limit(1)
+        .get();
       if (existing) return artifactFromRow(existing);
     }
     const id = randomUUID();
     this.database
-      .prepare(
-        `INSERT INTO artifacts(id, task_id, coworker_id, name, mime_type, file_path, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(id, input.taskId, input.coworkerId, input.name, input.mimeType, input.filePath, now());
-    return artifactFromRow(
-      this.database.prepare("SELECT * FROM artifacts WHERE id = ?").get(id) as Row,
-    );
+      .insert(artifacts)
+      .values({ id, ...input, createdAt: now() })
+      .run();
+    return this.getArtifact(id);
   }
 
   getArtifact(id: string): Artifact {
-    const row = this.database.prepare("SELECT * FROM artifacts WHERE id = ?").get(id) as
-      | Row
-      | undefined;
+    const row = this.database.select().from(artifacts).where(eq(artifacts.id, id)).get();
     if (!row) throw new Error(`Artifact ${id} was not found`);
     return artifactFromRow(row);
   }
@@ -1308,8 +1461,14 @@ export class CoworkerDatabase {
   deleteArtifact(id: string): Artifact {
     const artifact = this.getArtifact(id);
     this.database
-      .prepare("DELETE FROM artifacts WHERE coworker_id = ? AND file_path = ?")
-      .run(artifact.coworkerId, artifact.filePath);
+      .delete(artifacts)
+      .where(
+        and(
+          eq(artifacts.coworkerId, artifact.coworkerId),
+          eq(artifacts.filePath, artifact.filePath),
+        ),
+      )
+      .run();
     this.addActivity({
       coworkerId: artifact.coworkerId,
       taskId: artifact.taskId,
@@ -1323,10 +1482,13 @@ export class CoworkerDatabase {
   listArtifacts(coworkerId?: string): Artifact[] {
     const rows = coworkerId
       ? this.database
-          .prepare("SELECT * FROM artifacts WHERE coworker_id = ? ORDER BY created_at DESC")
-          .all(coworkerId)
-      : this.database.prepare("SELECT * FROM artifacts ORDER BY created_at DESC").all();
-    return (rows as Row[]).map(artifactFromRow);
+          .select()
+          .from(artifacts)
+          .where(eq(artifacts.coworkerId, coworkerId))
+          .orderBy(desc(artifacts.createdAt))
+          .all()
+      : this.database.select().from(artifacts).orderBy(desc(artifacts.createdAt)).all();
+    return rows.map(artifactFromRow);
   }
 
   addActivity(
@@ -1340,37 +1502,39 @@ export class CoworkerDatabase {
     id = randomUUID(),
   ): ActivityItem {
     this.database
-      .prepare(
-        `INSERT INTO activity(
-          id, coworker_id, task_id, type, summary, metadata_json, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
+      .insert(activity)
+      .values({
         id,
-        input.coworkerId ?? null,
-        input.taskId ?? null,
-        input.type,
-        input.summary,
-        input.metadata === undefined ? null : json(input.metadata),
-        now(),
-      );
-    return activityFromRow(
-      this.database.prepare("SELECT * FROM activity WHERE id = ?").get(id) as Row,
-    );
+        coworkerId: input.coworkerId ?? null,
+        taskId: input.taskId ?? null,
+        type: input.type,
+        summary: input.summary,
+        metadataJson: input.metadata === undefined ? null : json(input.metadata),
+        createdAt: now(),
+      })
+      .run();
+    const row = this.database.select().from(activity).where(eq(activity.id, id)).get();
+    if (!row) throw new Error(`Activity ${id} was not found`);
+    return activityFromRow(row);
   }
 
   listActivity(limit = 200): ActivityItem[] {
-    return (
-      this.database
-        .prepare("SELECT * FROM activity ORDER BY created_at DESC LIMIT ?")
-        .all(limit) as Row[]
-    ).map(activityFromRow);
+    return this.database
+      .select()
+      .from(activity)
+      .orderBy(desc(activity.createdAt))
+      .limit(limit)
+      .all()
+      .map(activityFromRow);
   }
 
   listIntegrations(): Integration[] {
-    return (
-      this.database.prepare("SELECT * FROM integrations ORDER BY created_at ASC").all() as Row[]
-    ).map(integrationFromRow);
+    return this.database
+      .select()
+      .from(integrations)
+      .orderBy(asc(integrations.createdAt))
+      .all()
+      .map(integrationFromRow);
   }
 
   upsertEmailIntegration(input: {
@@ -1380,85 +1544,90 @@ export class CoworkerDatabase {
     fromAddress?: string;
   }): Integration {
     const existing = this.database
-      .prepare("SELECT * FROM integrations WHERE type = 'email' LIMIT 1")
-      .get() as Row | undefined;
+      .select()
+      .from(integrations)
+      .where(eq(integrations.type, "email"))
+      .limit(1)
+      .get();
     const timestamp = now();
     const config = { fromAddress: input.fromAddress ?? "" };
     if (existing) {
       this.database
-        .prepare(
-          `UPDATE integrations
-           SET name = ?, mode = ?, status = 'connected', credential_key = ?,
-               config_json = ?, updated_at = ?
-           WHERE id = ?`,
-        )
-        .run(
-          input.name,
-          input.mode,
-          input.credentialKey,
-          json(config),
-          timestamp,
-          existing.id as string,
-        );
-      return this.getIntegration(String(existing.id));
+        .update(integrations)
+        .set({
+          name: input.name,
+          mode: input.mode,
+          status: "connected",
+          credentialKey: input.credentialKey,
+          configJson: json(config),
+          updatedAt: timestamp,
+        })
+        .where(eq(integrations.id, existing.id))
+        .run();
+      return this.getIntegration(existing.id);
     }
     const id = randomUUID();
     this.database
-      .prepare(
-        `INSERT INTO integrations(
-          id, type, name, mode, status, credential_key, config_json, created_at, updated_at
-        ) VALUES (?, 'email', ?, ?, 'connected', ?, ?, ?, ?)`,
-      )
-      .run(id, input.name, input.mode, input.credentialKey, json(config), timestamp, timestamp);
+      .insert(integrations)
+      .values({
+        id,
+        type: "email",
+        name: input.name,
+        mode: input.mode,
+        status: "connected",
+        credentialKey: input.credentialKey,
+        configJson: json(config),
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      })
+      .run();
     return this.getIntegration(id);
   }
 
   getIntegration(id: string): Integration {
-    const row = this.database.prepare("SELECT * FROM integrations WHERE id = ?").get(id) as
-      | Row
-      | undefined;
+    const row = this.database.select().from(integrations).where(eq(integrations.id, id)).get();
     if (!row) throw new Error(`Integration ${id} was not found`);
     return integrationFromRow(row);
   }
 
   getEmailIntegration(): Integration | null {
     const row = this.database
-      .prepare("SELECT * FROM integrations WHERE type = 'email' LIMIT 1")
-      .get() as Row | undefined;
+      .select()
+      .from(integrations)
+      .where(eq(integrations.type, "email"))
+      .limit(1)
+      .get();
     return row ? integrationFromRow(row) : null;
   }
 
   getSideEffect(key: string): { status: string; result: unknown } | null {
     const row = this.database
-      .prepare("SELECT status, result_json FROM side_effects WHERE idempotency_key = ?")
-      .get(key) as Row | undefined;
+      .select({ status: sideEffects.status, resultJson: sideEffects.resultJson })
+      .from(sideEffects)
+      .where(eq(sideEffects.idempotencyKey, key))
+      .get();
     return row
-      ? { status: String(row.status), result: parseJson(row.result_json, null) }
+      ? { status: row.status, result: parseJson(row.resultJson, null) }
       : null;
   }
 
   startSideEffect(key: string, toolCallId: string): boolean {
     const result = this.database
-      .prepare(
-        `INSERT INTO side_effects(
-          idempotency_key, tool_call_id, status, created_at
-        ) VALUES (?, ?, 'RUNNING', ?)
-        ON CONFLICT(idempotency_key) DO UPDATE SET
-          status = 'RUNNING',
-          result_json = NULL,
-          completed_at = NULL`,
-      )
-      .run(key, toolCallId, now());
+      .insert(sideEffects)
+      .values({ idempotencyKey: key, toolCallId, status: "RUNNING", createdAt: now() })
+      .onConflictDoUpdate({
+        target: sideEffects.idempotencyKey,
+        set: { status: "RUNNING", resultJson: null, completedAt: null },
+      })
+      .run();
     return Number(result.changes) === 1;
   }
 
   finishSideEffect(key: string, status: "COMPLETED" | "FAILED", result: unknown): void {
     this.database
-      .prepare(
-        `UPDATE side_effects
-         SET status = ?, result_json = ?, completed_at = ?
-         WHERE idempotency_key = ?`,
-      )
-      .run(status, json(result), now(), key);
+      .update(sideEffects)
+      .set({ status, resultJson: json(result), completedAt: now() })
+      .where(eq(sideEffects.idempotencyKey, key))
+      .run();
   }
 }

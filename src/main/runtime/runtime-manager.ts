@@ -36,12 +36,20 @@ export interface CoworkerRuntimeManagerOptions {
   idleTimeoutMs?: number;
   workerFactory?: () => Worker;
   providerErrors?: ProviderErrorSink;
+  applicationErrors?: {
+    error(
+      category: string,
+      error: unknown,
+      details?: Record<string, string | number | boolean | null>,
+    ): Promise<void>;
+  };
 }
 
 export class CoworkerRuntimeManager {
   private readonly runtimes = new Map<string, RuntimeRecord>();
   private readonly dispatching = new Set<string>();
   private readonly messageBuffers = new Map<string, { id: string; content: string }>();
+  private dispatchPaused = false;
   private readonly idleTimeoutMs: number;
   private readonly workerFactory: () => Worker;
 
@@ -87,6 +95,11 @@ export class CoworkerRuntimeManager {
       void this.handleWorkerMessage(record, message);
     });
     worker.on("error", (error: Error) => {
+      void this.options.applicationErrors?.error("runtime.worker", error, {
+        coworkerId,
+        taskId: record.currentTaskId,
+        runId: record.currentRunId,
+      });
       if (!record.readyResolved) record.stopping = true;
       record.rejectReady(error);
       this.options.database.addActivity({
@@ -97,6 +110,13 @@ export class CoworkerRuntimeManager {
       });
     });
     worker.on("exit", (code) => {
+      if (code !== 0 && !record.stopping) {
+        void this.options.applicationErrors?.error(
+          "runtime.worker_exit",
+          new Error(`${coworker.name}'s runtime exited with code ${code}`),
+          { coworkerId, taskId: record.currentTaskId, runId: record.currentRunId },
+        );
+      }
       if (!record.readyResolved) record.stopping = true;
       record.rejectReady(new Error(`${coworker.name}'s runtime exited during startup (${code})`));
       void this.handleWorkerExit(coworkerId, record, code);
@@ -177,7 +197,21 @@ export class CoworkerRuntimeManager {
   }
 
   enqueueTask(coworkerId: string): void {
+    if (this.dispatchPaused) return;
     queueMicrotask(() => void this.dispatch(coworkerId));
+  }
+
+  pauseDispatch(): void {
+    this.dispatchPaused = true;
+  }
+
+  resumeDispatch(): void {
+    this.dispatchPaused = false;
+    for (const coworker of this.options.database.listCoworkers()) {
+      if (this.options.database.listTasks(coworker.id).some((task) => task.status === "QUEUED")) {
+        this.enqueueTask(coworker.id);
+      }
+    }
   }
 
   async abort(coworkerId: string, runId: string): Promise<void> {
@@ -193,6 +227,7 @@ export class CoworkerRuntimeManager {
   }
 
   private async dispatch(coworkerId: string): Promise<void> {
+    if (this.dispatchPaused) return;
     if (this.dispatching.has(coworkerId)) return;
     this.dispatching.add(coworkerId);
     let claimedTask: Task | null = null;

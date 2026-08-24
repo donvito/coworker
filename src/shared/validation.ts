@@ -57,6 +57,8 @@ export const createConversationSchema = z.object({
   title: z.string().trim().min(1).max(160).optional(),
 });
 
+export const conversationSearchSchema = z.string().trim().min(1).max(500);
+
 export const approvalDecisionSchema = z.object({
   approvalId: identifier,
   decision: z.enum(["approve", "reject", "edit"]),

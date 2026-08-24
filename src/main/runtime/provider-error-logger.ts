@@ -108,6 +108,10 @@ export class ProviderErrorLogger implements ProviderErrorSink {
       .slice(0, Math.max(1, Math.min(limit, 1_000)));
   }
 
+  async flush(): Promise<void> {
+    await this.writeQueue;
+  }
+
   async report(
     metadata: Record<string, string>,
     limit = 200,
