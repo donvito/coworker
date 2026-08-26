@@ -12,6 +12,7 @@ import {
 import { ipcChannels } from "@shared/ipc";
 import type { AgentRunRequest } from "@shared/contracts";
 import {
+  addModelEndpointSchema,
   agentRunRequestSchema,
   approvalDecisionSchema,
   approvalStatusSchema,
@@ -30,6 +31,7 @@ import {
   installSkillPackageSchema,
   listLimitSchema,
   modelProviderSchema,
+  remoteModelProviderSchema,
   settingsPatchSchema,
   sendConversationMessageSchema,
   sharedFolderPathSchema,
@@ -63,6 +65,8 @@ const mutationChannels = new Set<string>([
   ipcChannels.schedulesRunNow,
   ipcChannels.integrationsConfigureEmail,
   ipcChannels.integrationsConfigureModel,
+  ipcChannels.integrationsAddModelEndpoint,
+  ipcChannels.integrationsRemoveModelEndpoint,
   ipcChannels.integrationsRemoveCredential,
   ipcChannels.integrationsConfigureWebSearch,
   ipcChannels.skillsInstallFromUrl,
@@ -342,6 +346,12 @@ export function registerIpc(input: {
   );
   handle(ipcChannels.integrationsConfigureModel, (_event, value) =>
     input.service.configureModel(configureModelSchema.parse(value)),
+  );
+  handle(ipcChannels.integrationsAddModelEndpoint, (_event, value) =>
+    input.service.addModelEndpoint(addModelEndpointSchema.parse(value)),
+  );
+  handle(ipcChannels.integrationsRemoveModelEndpoint, (_event, id) =>
+    input.service.removeModelEndpoint(remoteModelProviderSchema.parse(id)),
   );
   handle(ipcChannels.integrationsListModels, (_event, provider) =>
     input.service.listModels(modelProviderSchema.parse(provider)),

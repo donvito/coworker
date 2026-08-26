@@ -16,6 +16,7 @@ import { readMigrationFiles } from "drizzle-orm/migrator";
 import { drizzle, type NodeSQLiteDatabase } from "drizzle-orm/node-sqlite";
 import { migrate } from "drizzle-orm/node-sqlite/migrator";
 import { appThemes, remoteModelProviders } from "@shared/contracts";
+import { isCustomModelProvider } from "@shared/model-providers";
 import type {
   ActivityItem,
   AppSettings,
@@ -32,6 +33,7 @@ import type {
   DiscussionSession,
   Integration,
   Message,
+  ModelEndpoint,
   RuntimeStatus,
   Schedule,
   SharedFolder,
@@ -57,6 +59,7 @@ import {
   integrations,
   messageMentions,
   messages,
+  modelEndpoints,
   schedules,
   settings,
   sideEffects,
@@ -476,7 +479,8 @@ export class CoworkerDatabase {
     const modelName = stored.get("defaultModelName");
     const configuredProvider =
       typeof provider === "string" &&
-      remoteModelProviders.some((candidate) => candidate === provider)
+      (remoteModelProviders.some((candidate) => candidate === provider) ||
+        isCustomModelProvider(provider))
         ? (provider as AppSettings["defaultModelProvider"])
         : null;
     const configuredModelName =
@@ -518,6 +522,47 @@ export class CoworkerDatabase {
       }
     });
     return this.getSettings();
+  }
+
+  listModelEndpoints(): ModelEndpoint[] {
+    return this.database
+      .select()
+      .from(modelEndpoints)
+      .orderBy(asc(modelEndpoints.createdAt))
+      .all()
+      .map((row) => ({ ...row, id: row.id as ModelEndpoint["id"] }));
+  }
+
+  getModelEndpoint(id: string): ModelEndpoint | null {
+    const row = this.database
+      .select()
+      .from(modelEndpoints)
+      .where(eq(modelEndpoints.id, id))
+      .get();
+    return row ? { ...row, id: row.id as ModelEndpoint["id"] } : null;
+  }
+
+  upsertModelEndpoint(input: { id: string; name: string; baseUrl: string }): ModelEndpoint {
+    const timestamp = now();
+    this.database
+      .insert(modelEndpoints)
+      .values({
+        id: input.id,
+        name: input.name,
+        baseUrl: input.baseUrl,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      })
+      .onConflictDoUpdate({
+        target: modelEndpoints.id,
+        set: { name: input.name, baseUrl: input.baseUrl, updatedAt: timestamp },
+      })
+      .run();
+    return this.getModelEndpoint(input.id)!;
+  }
+
+  deleteModelEndpoint(id: string): void {
+    this.database.delete(modelEndpoints).where(eq(modelEndpoints.id, id)).run();
   }
 
   getMetadata(key: string): string | null {

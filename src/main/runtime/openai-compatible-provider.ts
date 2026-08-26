@@ -4,11 +4,12 @@ import {
   type Provider,
 } from "@earendil-works/pi-ai";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
-import type { RemoteModelProvider } from "@shared/contracts";
+import type { ModelProvider } from "@shared/contracts";
 import { modelProviderName } from "@shared/model-providers";
 
 export interface OpenAiCompatibleRuntimeProviderInput {
-  provider: Extract<RemoteModelProvider, "ollama" | "lmstudio" | "openai-compatible">;
+  /** "ollama", "lmstudio", "openai-compatible", or "openai-compatible:<slug>". */
+  provider: ModelProvider;
   modelId: string;
   baseUrl: string;
   apiKey?: string;

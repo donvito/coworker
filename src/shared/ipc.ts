@@ -41,6 +41,8 @@ export const ipcChannels = {
   integrationsList: "coworker:integrations:list",
   integrationsConfigureEmail: "coworker:integrations:configure-email",
   integrationsConfigureModel: "coworker:integrations:configure-model",
+  integrationsAddModelEndpoint: "coworker:integrations:add-model-endpoint",
+  integrationsRemoveModelEndpoint: "coworker:integrations:remove-model-endpoint",
   integrationsListModels: "coworker:integrations:list-models",
   integrationsModelCapabilities: "coworker:integrations:model-capabilities",
   integrationsCredentialStatus: "coworker:integrations:credential-status",

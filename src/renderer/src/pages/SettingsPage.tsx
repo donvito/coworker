@@ -2,8 +2,10 @@ import { useEffect, useState, type FormEvent } from "react";
 import type {
   AppSettings,
   AppTheme,
+  ConfigureModelResult,
   Coworker,
   Integration,
+  ModelEndpoint,
   ProviderErrorDiagnostic,
   RemoteModelProvider,
   Skill,
@@ -14,7 +16,7 @@ import {
   getModelProviderDefinition,
   modelProviderBaseUrlKey,
   modelProviderCredentialKey,
-  modelProviderName,
+  modelProviderDisplayName,
   remoteModelProviderDefinitions,
 } from "@shared/model-providers";
 import { Icon } from "../components/Icon";
@@ -44,6 +46,7 @@ function bytesToBase64(buffer: ArrayBuffer): string {
 export function SettingsPage({
   settings,
   integrations,
+  modelEndpoints = [],
   skills,
   coworkers,
   dataPath,
@@ -53,6 +56,7 @@ export function SettingsPage({
 }: {
   settings: AppSettings;
   integrations: Integration[];
+  modelEndpoints?: ModelEndpoint[];
   skills: Skill[];
   coworkers: Coworker[];
   dataPath: string;
@@ -67,7 +71,9 @@ export function SettingsPage({
   const [credentialStatus, setCredentialStatus] = useState<Record<string, boolean>>({});
   const [unreadableKeys, setUnreadableKeys] = useState<string[]>([]);
   const [credentialsLoaded, setCredentialsLoaded] = useState(false);
-  const [modelProvider, setModelProvider] = useState<RemoteModelProvider>("anthropic");
+  const [modelProvider, setModelProvider] = useState<RemoteModelProvider | "add-endpoint">(
+    "anthropic",
+  );
   const [makeDefaultModel, setMakeDefaultModel] = useState(true);
   const [defaultModelChoice, setDefaultModelChoice] = useState("");
   const [webSearchProvider, setWebSearchProvider] = useState<WebSearchProvider>("tavily");
@@ -76,6 +82,25 @@ export function SettingsPage({
   const [globalInstructions, setGlobalInstructions] = useState(
     settings.globalOperatingInstructions,
   );
+
+  const knownProviderCards = remoteModelProviderDefinitions.filter(
+    (provider) => provider.id !== "openai-compatible",
+  );
+  const addingEndpoint = modelProvider === "add-endpoint";
+  const activeProvider = addingEndpoint ? null : modelProvider;
+  const selectedEndpoint = activeProvider
+    ? modelEndpoints.find((endpoint) => endpoint.id === activeProvider) ?? null
+    : null;
+  const isEndpointForm = addingEndpoint || selectedEndpoint !== null;
+  const activeDefinition = getModelProviderDefinition(
+    addingEndpoint ? "openai-compatible" : modelProvider,
+  );
+  const activeConnected = activeProvider
+    ? Boolean(credentialStatus[modelProviderCredentialKey(activeProvider)])
+    : false;
+  const activeLabel = addingEndpoint
+    ? "New endpoint"
+    : modelProviderDisplayName(modelProvider, modelEndpoints);
 
   useEffect(() => {
     const keys = [
@@ -87,6 +112,10 @@ export function SettingsPage({
               modelProviderBaseUrlKey(provider.id),
             ],
       ),
+      ...modelEndpoints.flatMap((endpoint) => [
+        modelProviderCredentialKey(endpoint.id),
+        modelProviderBaseUrlKey(endpoint.id),
+      ]),
       "integration:email:resend",
       ...webSearchProviders.map((provider) => `web-search:${provider}`),
     ];
@@ -113,7 +142,8 @@ export function SettingsPage({
         );
       })
       .finally(() => setCredentialsLoaded(true));
-  }, [integrations]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- endpoint list identity changes with each snapshot refresh
+  }, [integrations, modelEndpoints.map((endpoint) => endpoint.id).join("|")]);
 
   useEffect(() => {
     const providerIsDefault = settings.defaultModelProvider === modelProvider;
@@ -215,19 +245,37 @@ export function SettingsPage({
     event.preventDefault();
     const form = event.currentTarget;
     const data = new FormData(form);
-    const provider = modelProvider;
     const apiKey = String(data.get("apiKey") ?? "").trim();
     const baseUrl = String(data.get("baseUrl") ?? "").trim();
+    const endpointName = String(data.get("endpointName") ?? "").trim();
     setWorking(true);
     setNotice(null);
     try {
-      const result = await window.coworker.integrations.configureModel({
-        provider,
-        apiKey: apiKey || undefined,
-        baseUrl: baseUrl || undefined,
-        defaultModelName:
-          makeDefaultModel && defaultModelChoice ? defaultModelChoice : undefined,
-      });
+      const defaultModelName =
+        makeDefaultModel && defaultModelChoice ? defaultModelChoice : undefined;
+      let result: ConfigureModelResult;
+      let savedProvider: RemoteModelProvider;
+      if (modelProvider === "add-endpoint") {
+        const added = await window.coworker.integrations.addModelEndpoint({
+          name: endpointName,
+          baseUrl,
+          apiKey: apiKey || undefined,
+          defaultModelName,
+        });
+        result = added;
+        savedProvider = added.provider;
+      } else {
+        result = await window.coworker.integrations.configureModel({
+          provider: modelProvider,
+          apiKey: apiKey || undefined,
+          baseUrl: baseUrl || undefined,
+          defaultModelName,
+          endpointName: endpointName || undefined,
+        });
+        savedProvider = modelProvider;
+      }
+      const savedLabel =
+        endpointName || modelProviderDisplayName(savedProvider, modelEndpoints);
       setCredentialStatus((current) => ({ ...current, [result.key]: true }));
       let appliedDefault = result.defaultApplied ? defaultModelChoice : "";
       if (makeDefaultModel && !result.defaultApplied && result.models[0]) {
@@ -235,24 +283,43 @@ export function SettingsPage({
         // save, so apply the first available model and let the user adjust it.
         appliedDefault = result.models[0].id;
         await window.coworker.app.updateSettings({
-          defaultModelProvider: provider,
+          defaultModelProvider: savedProvider,
           defaultModelName: appliedDefault,
         });
         setDefaultModelChoice(appliedDefault);
       }
       await onChanged();
+      if (modelProvider === "add-endpoint") setModelProvider(savedProvider);
       form.reset();
       setNoticeKind("success");
       setNotice(
         appliedDefault
-          ? `${modelProviderName(provider)} configuration stored securely. ${modelProviderName(provider)} · ${appliedDefault} is now the global default model.`
-          : `${modelProviderName(provider)} configuration stored securely.`,
+          ? `${savedLabel} configuration stored securely. ${savedLabel} · ${appliedDefault} is now the global default model.`
+          : `${savedLabel} configuration stored securely.`,
       );
     } catch (configureError) {
       setNoticeKind("error");
       setNotice(
         configureError instanceof Error ? configureError.message : String(configureError),
       );
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function removeEndpoint(endpoint: ModelEndpoint) {
+    if (!confirm(`Remove the endpoint “${endpoint.name}”?`)) return;
+    setWorking(true);
+    setNotice(null);
+    try {
+      await window.coworker.integrations.removeModelEndpoint(endpoint.id);
+      setModelProvider("anthropic");
+      await onChanged();
+      setNoticeKind("success");
+      setNotice(`${endpoint.name} was removed.`);
+    } catch (removeError) {
+      setNoticeKind("error");
+      setNotice(removeError instanceof Error ? removeError.message : String(removeError));
     } finally {
       setWorking(false);
     }
@@ -604,7 +671,7 @@ export function SettingsPage({
                 verified before the configuration is saved.
               </p>
               <div className="provider-grid model-provider-grid">
-                {remoteModelProviderDefinitions.map((provider) => (
+                {knownProviderCards.map((provider) => (
                   <button
                     aria-pressed={modelProvider === provider.id}
                     className={`provider-card model-provider-card${
@@ -636,6 +703,47 @@ export function SettingsPage({
                     />
                   </button>
                 ))}
+                {modelEndpoints.map((endpoint) => (
+                  <button
+                    aria-pressed={modelProvider === endpoint.id}
+                    className={`provider-card model-provider-card${
+                      modelProvider === endpoint.id ? " selected" : ""
+                    }`}
+                    key={endpoint.id}
+                    onClick={() => {
+                      setModelProvider(endpoint.id);
+                      setNotice(null);
+                    }}
+                    type="button"
+                  >
+                    <span>
+                      <strong>{endpoint.name}</strong>
+                      <small>
+                        OpenAI-compatible
+                        {settings.defaultModelProvider === endpoint.id ? " · Default" : ""}
+                      </small>
+                    </span>
+                    <span aria-hidden="true" className="connection-dot connected" />
+                  </button>
+                ))}
+                <button
+                  aria-pressed={modelProvider === "add-endpoint"}
+                  className={`provider-card model-provider-card add-endpoint-card${
+                    modelProvider === "add-endpoint" ? " selected" : ""
+                  }`}
+                  onClick={() => {
+                    setModelProvider("add-endpoint");
+                    setNotice(null);
+                  }}
+                  type="button"
+                >
+                  <span>
+                    <strong>
+                      <Icon name="plus" /> Add endpoint
+                    </strong>
+                    <small>Local or hosted OpenAI-compatible server</small>
+                  </span>
+                </button>
               </div>
               <form
                 className="inline-credential-form model-credential-form"
@@ -643,40 +751,53 @@ export function SettingsPage({
                 onSubmit={configureModel}
               >
                 <div className="credential-form-heading">
-                  <strong>{modelProviderName(modelProvider)}</strong>
+                  <strong>
+                    {addingEndpoint
+                      ? "New OpenAI-compatible endpoint"
+                      : modelProviderDisplayName(modelProvider, modelEndpoints)}
+                  </strong>
                   <small>
-                    {credentialStatus[modelProviderCredentialKey(modelProvider)]
-                      ? "Connected · enter new credentials to replace the saved configuration"
-                      : "Enter the provider credentials below"}
+                    {addingEndpoint
+                      ? "Name the endpoint so you can tell your local servers apart"
+                      : activeConnected
+                        ? "Connected · enter new credentials to replace the saved configuration"
+                        : "Enter the provider credentials below"}
                   </small>
                 </div>
-                {getModelProviderDefinition(modelProvider).baseUrlMode !== "none" ? (
+                {isEndpointForm ? (
                   <input
-                    aria-label={`${modelProviderName(modelProvider)} base URL`}
+                    aria-label="Endpoint name"
+                    defaultValue={selectedEndpoint?.name ?? ""}
+                    maxLength={80}
+                    name="endpointName"
+                    placeholder="e.g. LM Studio on this Mac"
+                    required
+                    type="text"
+                  />
+                ) : null}
+                {activeDefinition.baseUrlMode !== "none" ? (
+                  <input
+                    aria-label={`${activeLabel} base URL`}
                     name="baseUrl"
                     type="url"
                     placeholder={
-                      getModelProviderDefinition(modelProvider).defaultBaseUrl ??
-                      "https://models.example.com/v1"
+                      activeDefinition.defaultBaseUrl ?? "http://127.0.0.1:1234/v1"
                     }
-                    defaultValue={getModelProviderDefinition(modelProvider).defaultBaseUrl}
-                    required={
-                      getModelProviderDefinition(modelProvider).baseUrlMode === "required"
-                    }
+                    defaultValue={selectedEndpoint?.baseUrl || activeDefinition.defaultBaseUrl}
+                    required={isEndpointForm || activeDefinition.baseUrlMode === "required"}
                   />
                 ) : null}
                 <input
-                  aria-label={`${modelProviderName(modelProvider)} API key`}
+                  aria-label={`${activeLabel} API key`}
                   name="apiKey"
                   type="password"
                   placeholder={
-                    credentialStatus[modelProviderCredentialKey(modelProvider)]
+                    activeConnected
                       ? "Stored — enter to replace"
-                      : getModelProviderDefinition(modelProvider).apiKeyPlaceholder
+                      : activeDefinition.apiKeyPlaceholder || "Optional API key"
                   }
                   required={
-                    getModelProviderDefinition(modelProvider).apiKeyRequired &&
-                    !credentialStatus[modelProviderCredentialKey(modelProvider)]
+                    activeDefinition.apiKeyRequired && !activeConnected && !addingEndpoint
                   }
                 />
                 <div className="credential-default-model">
@@ -698,30 +819,41 @@ export function SettingsPage({
                     </span>
                   </label>
                   {makeDefaultModel ? (
-                    credentialStatus[modelProviderCredentialKey(modelProvider)] &&
-                    credentialsLoaded ? (
+                    activeProvider && activeConnected && credentialsLoaded ? (
                       <ModelSelector
                         disabled={working}
                         onChange={setDefaultModelChoice}
-                        provider={modelProvider}
+                        provider={activeProvider}
                         value={defaultModelChoice}
                       />
                     ) : (
                       <small className="credential-default-model-hint">
-                        The model list loads once the key is verified. Saving connects the
+                        The model list loads once the connection is verified. Saving connects the
                         provider and makes its first available model the default; you can change
                         it here right after.
                       </small>
                     )
                   ) : null}
                 </div>
-                <button className="primary-button" disabled={working}>
-                  Verify and save
-                </button>
+                <div className="credential-form-actions">
+                  <button className="primary-button" disabled={working}>
+                    Verify and save
+                  </button>
+                  {selectedEndpoint ? (
+                    <button
+                      className="ghost-button danger"
+                      disabled={working}
+                      onClick={() => void removeEndpoint(selectedEndpoint)}
+                      type="button"
+                    >
+                      Remove endpoint
+                    </button>
+                  ) : null}
+                </div>
               </form>
               <small className="settings-model-default-note">
                 {settings.defaultModelProvider && settings.defaultModelName
-                  ? `Current global default: ${modelProviderName(settings.defaultModelProvider)} · ${settings.defaultModelName}`
+                  ? `Current global default: ${modelProviderDisplayName(settings.defaultModelProvider, modelEndpoints)} · ${settings.defaultModelName}`
                   : "No global default model configured yet. Connect a provider with the switch on to set one."}
               </small>
             </section>

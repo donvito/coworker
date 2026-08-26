@@ -71,7 +71,11 @@ export function HomePage({
                   {task?.title ?? "Ready for a new task"}
                 </span>
                 <span className="station-foot">
-                  <CoworkerModelBadge compact coworker={coworker} />
+                  <CoworkerModelBadge
+                    compact
+                    coworker={coworker}
+                    modelEndpoints={snapshot.modelEndpoints}
+                  />
                   <Icon name="arrow" className="station-arrow" />
                 </span>
               </button>

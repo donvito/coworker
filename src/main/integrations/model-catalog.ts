@@ -6,6 +6,7 @@ import { openrouterProvider } from "@earendil-works/pi-ai/providers/openrouter";
 import type { ModelOption, ModelProvider, RemoteModelProvider } from "@shared/contracts";
 import {
   getModelProviderDefinition,
+  isModelEndpointProvider,
   modelProviderBaseUrlKey,
   modelProviderCredentialKey,
   modelProviderName,
@@ -399,17 +400,18 @@ async function queryLmStudioModels(
 }
 
 async function queryCompatibleModels(
+  provider: RemoteModelProvider,
   apiKey: string,
   baseUrl: string,
   fetcher: ModelCatalogFetch,
 ): Promise<ModelOption[]> {
   const body = await requestJson(
-    "openai-compatible",
+    provider,
     endpoint(baseUrl, "models"),
     authorizationHeaders(apiKey),
     fetcher,
   );
-  const parsed = parseResponse("openai-compatible", openAiResponseSchema, body);
+  const parsed = parseResponse(provider, openAiResponseSchema, body);
   return parsed.data
     .filter((model) => !["embedding", "embeddings"].includes(model.type ?? ""))
     .map((model) => ({
@@ -451,9 +453,14 @@ export async function queryProviderModels(
       await queryLmStudioModels(apiKey, normalizedBaseUrl(provider, options.baseUrl), fetcher),
     );
   }
-  if (provider === "openai-compatible") {
+  if (isModelEndpointProvider(provider)) {
     return sortModels(
-      await queryCompatibleModels(apiKey, normalizedBaseUrl(provider, options.baseUrl), fetcher),
+      await queryCompatibleModels(
+        provider,
+        apiKey,
+        normalizedBaseUrl(provider, options.baseUrl),
+        fetcher,
+      ),
     );
   }
 

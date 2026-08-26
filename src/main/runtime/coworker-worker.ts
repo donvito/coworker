@@ -393,14 +393,13 @@ async function initialize(workerConfig: WorkerCoworkerConfig): Promise<void> {
             ? googleProvider()
             : workerConfig.coworker.modelProvider === "openrouter"
               ? openrouterProvider()
-              : ["ollama", "lmstudio", "openai-compatible"].includes(
+              : (["ollama", "lmstudio", "openai-compatible"].includes(
                     workerConfig.coworker.modelProvider,
-                  ) && workerConfig.modelBaseUrl
+                  ) ||
+                    workerConfig.coworker.modelProvider.startsWith("openai-compatible:")) &&
+                  workerConfig.modelBaseUrl
                 ? createOpenAiCompatibleRuntimeProvider({
-                    provider: workerConfig.coworker.modelProvider as
-                      | "ollama"
-                      | "lmstudio"
-                      | "openai-compatible",
+                    provider: workerConfig.coworker.modelProvider,
                     modelId: workerConfig.coworker.modelName,
                     baseUrl: workerConfig.modelBaseUrl,
                     apiKey: workerConfig.modelApiKey,

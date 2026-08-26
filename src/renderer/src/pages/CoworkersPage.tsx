@@ -1,5 +1,10 @@
 import { useState, type FormEvent } from "react";
-import type { AppSettings, Coworker, RemoteModelProvider } from "@shared/contracts";
+import type {
+  AppSettings,
+  Coworker,
+  ModelEndpoint,
+  RemoteModelProvider,
+} from "@shared/contracts";
 import { remoteModelProviderDefinitions } from "@shared/model-providers";
 import { Icon } from "../components/Icon";
 import { ModelSelector } from "../components/ModelSelector";
@@ -15,12 +20,14 @@ type CoworkerView = "cards" | "list";
 export function CoworkersPage({
   coworkers,
   settings,
+  modelEndpoints = [],
   onOpen,
   onChanged,
   onOpenModelSettings,
 }: {
   coworkers: Coworker[];
   settings: AppSettings;
+  modelEndpoints?: ModelEndpoint[];
   onOpen: (coworker: Coworker) => void;
   onChanged: () => Promise<void>;
   onOpenModelSettings?: () => void;
@@ -98,7 +105,7 @@ export function CoworkersPage({
                 <Icon name="settings" />
                 {coworker.enabledTools.length} tools
               </span>
-              <CoworkerModelBadge coworker={coworker} />
+              <CoworkerModelBadge coworker={coworker} modelEndpoints={modelEndpoints} />
             </span>
             <Icon name="arrow" className="roster-arrow" />
           </button>
@@ -120,6 +127,7 @@ export function CoworkersPage({
       {creating ? (
         <CreateCoworkerModal
           settings={settings}
+          modelEndpoints={modelEndpoints}
           onChanged={onChanged}
           onClose={() => setCreating(false)}
           onCreated={onOpen}
@@ -132,12 +140,14 @@ export function CoworkersPage({
 
 export function CreateCoworkerModal({
   settings,
+  modelEndpoints = [],
   onChanged,
   onClose,
   onCreated,
   onOpenModelSettings,
 }: {
   settings: Pick<AppSettings, "defaultModelProvider" | "defaultModelName">;
+  modelEndpoints?: ModelEndpoint[];
   onChanged: () => Promise<void>;
   onClose: () => void;
   onCreated: (coworker: Coworker) => void;
@@ -233,9 +243,16 @@ export function CreateCoworkerModal({
                   }}
                   value={provider}
                 >
-                  {remoteModelProviderDefinitions.map((definition) => (
-                    <option key={definition.id} value={definition.id}>
-                      {definition.label}
+                  {remoteModelProviderDefinitions
+                    .filter((definition) => definition.id !== "openai-compatible")
+                    .map((definition) => (
+                      <option key={definition.id} value={definition.id}>
+                        {definition.label}
+                      </option>
+                    ))}
+                  {modelEndpoints.map((endpoint) => (
+                    <option key={endpoint.id} value={endpoint.id}>
+                      {endpoint.name}
                     </option>
                   ))}
                 </select>

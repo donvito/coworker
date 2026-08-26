@@ -19,7 +19,20 @@ const maxImageBase64Length = Math.ceil(maxImageBytes / 3) * 4;
 const maxImagesTotalBase64Length = Math.ceil(maxImagesTotalBytes / 3) * 4;
 
 export const idSchema = identifier;
-export const modelProviderSchema = z.enum(modelProviders);
+const customModelProviderIdSchema = z
+  .string()
+  .regex(
+    /^openai-compatible:[a-z0-9][a-z0-9-]{0,47}$/,
+    "Invalid model endpoint identifier",
+  ) as z.ZodType<`openai-compatible:${string}`>;
+export const modelProviderSchema = z.union([
+  z.enum(modelProviders),
+  customModelProviderIdSchema,
+]);
+export const remoteModelProviderSchema = z.union([
+  z.enum(remoteModelProviders),
+  customModelProviderIdSchema,
+]);
 export const sharedFolderPathSchema = z.string().trim().min(1).max(1_000);
 
 export const createCoworkerSchema = z.object({
@@ -292,10 +305,11 @@ const modelBaseUrlSchema = z
 
 export const configureModelSchema = z
   .object({
-    provider: z.enum(remoteModelProviders),
+    provider: remoteModelProviderSchema,
     apiKey: z.string().trim().max(2_000).optional(),
     baseUrl: modelBaseUrlSchema.optional(),
     defaultModelName: z.string().trim().min(1).max(160).optional(),
+    endpointName: z.string().trim().min(1).max(80).optional(),
   })
   .superRefine((value, context) => {
     if (value.provider === "openai-compatible" && !value.baseUrl) {
@@ -306,6 +320,13 @@ export const configureModelSchema = z
       });
     }
   });
+
+export const addModelEndpointSchema = z.object({
+  name: z.string().trim().min(1).max(80),
+  baseUrl: modelBaseUrlSchema,
+  apiKey: z.string().trim().max(2_000).optional(),
+  defaultModelName: z.string().trim().min(1).max(160).optional(),
+});
 
 export const configureWebSearchSchema = z.object({
   provider: z.enum(webSearchProviders),
@@ -336,14 +357,22 @@ type CredentialKey =
   | "integration:email:resend"
   | `web-search:${WebSearchProvider}`;
 
-export const credentialKeySchema = z.enum([
-  ...remoteModelProviders.flatMap(
-    (provider) =>
-      [`model:${provider}`, `model:${provider}:base-url`] as const satisfies readonly CredentialKey[],
-  ),
-  "integration:email:resend",
-  ...webSearchProviders.map((provider) => `web-search:${provider}` as const),
-] as [CredentialKey, ...CredentialKey[]]);
+export const credentialKeySchema = z.union([
+  z.enum([
+    ...remoteModelProviders.flatMap(
+      (provider) =>
+        [`model:${provider}`, `model:${provider}:base-url`] as const satisfies readonly CredentialKey[],
+    ),
+    "integration:email:resend",
+    ...webSearchProviders.map((provider) => `web-search:${provider}` as const),
+  ] as [CredentialKey, ...CredentialKey[]]),
+  z
+    .string()
+    .regex(
+      /^model:openai-compatible:[a-z0-9][a-z0-9-]{0,47}(?::base-url)?$/,
+      "Invalid credential key",
+    ),
+]);
 
 export const approvalStatusSchema = z.enum(approvalStatuses);
 export const listLimitSchema = z.number().int().min(1).max(1_000);

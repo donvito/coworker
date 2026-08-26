@@ -1,8 +1,13 @@
 import { useEffect, useId, useRef, useState } from "react";
-import type { Coworker, ModelOption, RemoteModelProvider } from "@shared/contracts";
+import type {
+  Coworker,
+  ModelEndpoint,
+  ModelOption,
+  RemoteModelProvider,
+} from "@shared/contracts";
 import {
   modelProviderCredentialKey,
-  modelProviderName,
+  modelProviderDisplayName,
   remoteModelProviderDefinitions,
 } from "@shared/model-providers";
 import { modelOptionLabel, modelPricingLabel } from "../lib/model-pricing";
@@ -10,10 +15,12 @@ import { modelOptionLabel, modelPricingLabel } from "../lib/model-pricing";
 export function QuickModelSwitcher({
   coworker,
   disabled = false,
+  modelEndpoints = [],
   onChanged,
 }: {
   coworker: Coworker;
   disabled?: boolean;
+  modelEndpoints?: ModelEndpoint[];
   onChanged: () => Promise<void>;
 }) {
   const initialProvider =
@@ -65,12 +72,18 @@ export function QuickModelSwitcher({
   useEffect(() => {
     let cancelled = false;
     setProvidersLoading(true);
+    const candidates: RemoteModelProvider[] = [
+      ...remoteModelProviderDefinitions
+        .filter((definition) => definition.id !== "openai-compatible")
+        .map((definition) => definition.id),
+      ...modelEndpoints.map((endpoint) => endpoint.id),
+    ];
     void Promise.all(
-      remoteModelProviderDefinitions.map(async (provider) => ({
-        provider: provider.id,
+      candidates.map(async (provider) => ({
+        provider,
         configured: (
           await window.coworker.integrations.credentialStatus(
-            modelProviderCredentialKey(provider.id),
+            modelProviderCredentialKey(provider),
           )
         ).configured,
       })),
@@ -96,7 +109,8 @@ export function QuickModelSwitcher({
     return () => {
       cancelled = true;
     };
-  }, [coworker.modelProvider]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- endpoint list identity changes with each snapshot refresh
+  }, [coworker.modelProvider, modelEndpoints.map((endpoint) => endpoint.id).join("|")]);
 
   useEffect(() => {
     let cancelled = false;
@@ -192,29 +206,29 @@ export function QuickModelSwitcher({
         <span>
           {selectedProvider ? (selectedOption?.name ?? selectedModel) : "Choose provider and model"}
         </span>
-        {selectedProvider ? <small>{modelProviderName(selectedProvider)}</small> : null}
+        {selectedProvider ? (
+          <small>{modelProviderDisplayName(selectedProvider, modelEndpoints)}</small>
+        ) : null}
         <b aria-hidden="true">⌄</b>
       </button>
       {open ? (
         <div className="quick-model-popover">
           <nav aria-label={`Model provider for ${coworker.name}`} className="quick-model-providers">
-            {remoteModelProviderDefinitions
-              .filter((provider) => configuredProviders.includes(provider.id))
-              .map((provider) => (
-                <button
-                  aria-pressed={provider.id === catalogProvider}
-                  className={provider.id === catalogProvider ? "selected" : ""}
-                  disabled={saving}
-                  key={provider.id}
-                  onClick={() => {
-                    setCatalogProvider(provider.id);
-                    setQuery("");
-                  }}
-                  type="button"
-                >
-                  {provider.label}
-                </button>
-              ))}
+            {configuredProviders.map((provider) => (
+              <button
+                aria-pressed={provider === catalogProvider}
+                className={provider === catalogProvider ? "selected" : ""}
+                disabled={saving}
+                key={provider}
+                onClick={() => {
+                  setCatalogProvider(provider);
+                  setQuery("");
+                }}
+                type="button"
+              >
+                {modelProviderDisplayName(provider, modelEndpoints)}
+              </button>
+            ))}
           </nav>
           <div className="quick-model-catalog">
             <div className="quick-model-search">

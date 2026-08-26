@@ -128,6 +128,7 @@ export default function App() {
           key={selectedCoworker.id}
           skills={snapshot.skills}
           settings={snapshot.settings}
+          modelEndpoints={snapshot.modelEndpoints}
           onBack={() => setSelectedCoworkerId(null)}
           onChanged={refresh}
           onOpenApprovals={() => navigate("approvals")}
@@ -141,6 +142,7 @@ export default function App() {
         <CoworkersPage
           coworkers={snapshot.coworkers}
           settings={snapshot.settings}
+          modelEndpoints={snapshot.modelEndpoints}
           onOpen={(coworker) => setSelectedCoworkerId(coworker.id)}
           onChanged={refresh}
           onOpenModelSettings={openModelSettings}
@@ -180,6 +182,7 @@ export default function App() {
         <SettingsPage
           settings={snapshot.settings}
           integrations={snapshot.integrations}
+          modelEndpoints={snapshot.modelEndpoints}
           skills={snapshot.skills}
           coworkers={snapshot.coworkers}
           dataPath={snapshot.dataPath}

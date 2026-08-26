@@ -1,4 +1,23 @@
-import type { ModelProvider, RemoteModelProvider } from "./contracts";
+import type {
+  CustomModelProviderId,
+  ModelEndpoint,
+  ModelProvider,
+  RemoteModelProvider,
+} from "./contracts";
+
+/** True for user-registered OpenAI-compatible endpoints ("openai-compatible:<slug>"). */
+export function isCustomModelProvider(
+  provider: string,
+): provider is CustomModelProviderId {
+  return provider.startsWith("openai-compatible:");
+}
+
+/** True for any provider served by an OpenAI-compatible endpoint the user configured. */
+export function isModelEndpointProvider(
+  provider: string,
+): provider is "openai-compatible" | CustomModelProviderId {
+  return provider === "openai-compatible" || isCustomModelProvider(provider);
+}
 
 export interface ModelProviderDefinition {
   id: ModelProvider;
@@ -76,13 +95,25 @@ export const remoteModelProviderDefinitions = modelProviderDefinitions.filter(
 );
 
 export function getModelProviderDefinition(provider: ModelProvider): ModelProviderDefinition {
-  const definition = modelProviderDefinitions.find((candidate) => candidate.id === provider);
+  const definition = modelProviderDefinitions.find((candidate) => candidate.id === provider)
+    ?? (isCustomModelProvider(provider)
+      ? modelProviderDefinitions.find((candidate) => candidate.id === "openai-compatible")
+      : undefined);
   if (!definition) throw new Error(`Unsupported model provider: ${provider}`);
   return definition;
 }
 
 export function modelProviderName(provider: ModelProvider): string {
   return getModelProviderDefinition(provider).label;
+}
+
+/** Provider label that prefers the user-chosen endpoint name when one exists. */
+export function modelProviderDisplayName(
+  provider: ModelProvider,
+  endpoints: ReadonlyArray<Pick<ModelEndpoint, "id" | "name">> = [],
+): string {
+  const endpoint = endpoints.find((candidate) => candidate.id === provider);
+  return endpoint?.name ?? modelProviderName(provider);
 }
 
 export function modelProviderCredentialKey(provider: RemoteModelProvider): string {

@@ -43,8 +43,26 @@ export const remoteModelProviders = [
   "openai-compatible",
 ] as const;
 export const modelProviders = ["demo", ...remoteModelProviders] as const;
-export type ModelProvider = (typeof modelProviders)[number];
-export type RemoteModelProvider = (typeof remoteModelProviders)[number];
+export type KnownModelProvider = (typeof modelProviders)[number];
+export type KnownRemoteModelProvider = (typeof remoteModelProviders)[number];
+/**
+ * A user-registered OpenAI-compatible endpoint. Each endpoint is a
+ * first-class model provider identified as "openai-compatible:<slug>";
+ * the bare "openai-compatible" id remains valid for the legacy single slot.
+ */
+export type CustomModelProviderId = `openai-compatible:${string}`;
+export type ModelProvider = KnownModelProvider | CustomModelProviderId;
+export type RemoteModelProvider = KnownRemoteModelProvider | CustomModelProviderId;
+
+export interface ModelEndpoint {
+  /** Provider id: "openai-compatible" (legacy slot) or "openai-compatible:<slug>". */
+  id: RemoteModelProvider;
+  /** User-chosen display name, e.g. "LM Studio on my Mac". */
+  name: string;
+  baseUrl: string;
+  createdAt: string;
+  updatedAt: string;
+}
 
 export const providerErrorPhases = [
   "configuration",
@@ -415,6 +433,7 @@ export interface AppSnapshot {
   artifacts: Artifact[];
   activity: ActivityItem[];
   integrations: Integration[];
+  modelEndpoints: ModelEndpoint[];
   skills: Skill[];
   settings: AppSettings;
   dataPath: string;
@@ -562,7 +581,15 @@ export interface DesktopApi {
       apiKey?: string;
       baseUrl?: string;
       defaultModelName?: string;
+      endpointName?: string;
     }): Promise<ConfigureModelResult>;
+    addModelEndpoint(input: {
+      name: string;
+      baseUrl: string;
+      apiKey?: string;
+      defaultModelName?: string;
+    }): Promise<ConfigureModelResult & { provider: RemoteModelProvider }>;
+    removeModelEndpoint(id: RemoteModelProvider): Promise<void>;
     listModels(provider: ModelProvider): Promise<ModelOption[]>;
     modelCapabilities(
       provider: ModelProvider,

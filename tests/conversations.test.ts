@@ -2,6 +2,7 @@ import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { readMigrationFiles } from "drizzle-orm/migrator";
 import { afterEach, describe, expect, it } from "vitest";
 import { CoworkerDatabase } from "@main/db/database";
 
@@ -310,7 +311,9 @@ describe("durable coworker conversations", () => {
       const migrationCount = verified
         .prepare("SELECT count(*) AS count FROM __drizzle_migrations")
         .get() as { count: number };
-      expect(migrationCount.count).toBe(5);
+      expect(migrationCount.count).toBe(
+        readMigrationFiles({ migrationsFolder: join(process.cwd(), "drizzle") }).length,
+      );
     } finally {
       verified.close();
     }

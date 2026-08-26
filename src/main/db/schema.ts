@@ -446,6 +446,14 @@ export const settings = sqliteTable("settings", {
   updatedAt: text("updated_at").notNull(),
 });
 
+export const modelEndpoints = sqliteTable("model_endpoints", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  baseUrl: text("base_url").notNull(),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
 export const appMetadata = sqliteTable("app_metadata", {
   key: text("key").primaryKey(),
   value: text("value").notNull(),
@@ -519,6 +527,7 @@ export const databaseSchema = {
   integrations,
   sideEffects,
   settings,
+  modelEndpoints,
   appMetadata,
   skills,
   coworkerSkills,

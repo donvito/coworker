@@ -36,6 +36,7 @@ import {
 } from "@main/integrations/model-catalog";
 import {
   getModelProviderDefinition,
+  isModelEndpointProvider,
   modelProviderBaseUrlKey,
   modelProviderCredentialKey,
   modelProviderName,
@@ -172,6 +173,7 @@ export class DesktopAppService {
     }
     this.seedSkills();
     await this.seedCoworkers();
+    await this.seedLegacyModelEndpoint();
     this.enableBundledSkills();
     this.enableDocumentExports();
     this.enableScheduleCreation();
@@ -219,11 +221,31 @@ export class DesktopAppService {
       artifacts: this.database.listArtifacts(),
       activity: this.database.listActivity(),
       integrations: this.database.listIntegrations(),
+      modelEndpoints: this.database.listModelEndpoints(),
       skills: this.database.listSkills(),
       settings: this.database.getSettings(),
       dataPath: this.options.dataPath,
       version: this.options.appVersion ?? "development",
     };
+  }
+
+  /**
+   * A pre-existing OpenAI-compatible credential predates named endpoints;
+   * surface it as a manageable endpoint entry once.
+   */
+  private async seedLegacyModelEndpoint(): Promise<void> {
+    if (this.database.getModelEndpoint("openai-compatible")) return;
+    const legacyKey = modelProviderCredentialKey("openai-compatible");
+    if (!(await this.options.credentials.has(legacyKey))) return;
+    const baseUrl = await readableCredential(
+      this.options.credentials,
+      modelProviderBaseUrlKey("openai-compatible"),
+    );
+    this.database.upsertModelEndpoint({
+      id: "openai-compatible",
+      name: "OpenAI-compatible",
+      baseUrl: baseUrl ?? "",
+    });
   }
 
   async createCoworker(input: CreateCoworkerInput) {
@@ -957,10 +979,14 @@ export class DesktopAppService {
     apiKey?: string;
     baseUrl?: string;
     defaultModelName?: string;
+    endpointName?: string;
   }): Promise<ConfigureModelResult> {
     try {
       const definition = getModelProviderDefinition(input.provider);
       const key = modelProviderCredentialKey(input.provider);
+      const endpoint = isModelEndpointProvider(input.provider)
+        ? this.database.getModelEndpoint(input.provider)
+        : null;
       const submittedApiKey = input.apiKey?.trim();
       const storedApiKey = submittedApiKey
         ? null
@@ -976,10 +1002,10 @@ export class DesktopAppService {
       const storedBaseUrl =
         definition.baseUrlMode === "none" || submittedBaseUrl
           ? undefined
-          : await readableCredential(
+          : (await readableCredential(
               this.options.credentials,
               modelProviderBaseUrlKey(input.provider),
-            );
+            )) || endpoint?.baseUrl;
       const baseUrl = submittedBaseUrl || storedBaseUrl || definition.defaultBaseUrl;
       if (definition.baseUrlMode === "required" && !baseUrl) {
         throw new Error(`A base URL is required for ${modelProviderName(input.provider)}`);
@@ -1002,6 +1028,14 @@ export class DesktopAppService {
       if (definition.baseUrlMode !== "none" && baseUrl) {
         await this.options.credentials.set(modelProviderBaseUrlKey(input.provider), baseUrl);
       }
+      if (isModelEndpointProvider(input.provider)) {
+        this.database.upsertModelEndpoint({
+          id: input.provider,
+          name: input.endpointName ?? endpoint?.name ?? "OpenAI-compatible",
+          baseUrl: baseUrl ?? "",
+        });
+        this.emit({ type: "entity.changed", entity: "integrations" });
+      }
       if (input.defaultModelName !== undefined) {
         await this.updateSettings({
           defaultModelProvider: input.provider,
@@ -1021,6 +1055,49 @@ export class DesktopAppService {
       );
       throw error;
     }
+  }
+
+  async addModelEndpoint(input: {
+    name: string;
+    baseUrl: string;
+    apiKey?: string;
+    defaultModelName?: string;
+  }): Promise<ConfigureModelResult & { provider: RemoteModelProvider }> {
+    const provider =
+      `openai-compatible:${randomUUID().replaceAll("-", "").slice(0, 10)}` as const;
+    const result = await this.configureModel({
+      provider,
+      apiKey: input.apiKey,
+      baseUrl: input.baseUrl,
+      defaultModelName: input.defaultModelName,
+      endpointName: input.name,
+    });
+    return { ...result, provider };
+  }
+
+  async removeModelEndpoint(id: RemoteModelProvider): Promise<void> {
+    if (!isModelEndpointProvider(id)) {
+      throw new Error("Only OpenAI-compatible endpoints can be removed");
+    }
+    const endpoint = this.database.getModelEndpoint(id);
+    if (!endpoint) throw new Error("This endpoint is no longer configured");
+    const dependents = this.database
+      .listCoworkers()
+      .filter((coworker) => coworker.modelProvider === id)
+      .map((coworker) => coworker.name);
+    if (dependents.length > 0) {
+      throw new Error(
+        `${endpoint.name} is still used by ${dependents.join(", ")}. Move ${dependents.length === 1 ? "that coworker" : "those coworkers"} to another model first.`,
+      );
+    }
+    this.database.deleteModelEndpoint(id);
+    await this.options.credentials.delete(modelProviderCredentialKey(id));
+    await this.options.credentials.delete(modelProviderBaseUrlKey(id));
+    const settings = this.database.getSettings();
+    if (settings.defaultModelProvider === id) {
+      await this.updateSettings({ defaultModelProvider: null, defaultModelName: null });
+    }
+    this.emit({ type: "entity.changed", entity: "integrations" });
   }
 
   async configureWebSearch(input: {

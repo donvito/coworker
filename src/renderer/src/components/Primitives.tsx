@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
-import type { Coworker, RuntimeStatus, TaskStatus } from "@shared/contracts";
-import { modelProviderName } from "@shared/model-providers";
+import type { Coworker, ModelEndpoint, RuntimeStatus, TaskStatus } from "@shared/contracts";
+import { modelProviderDisplayName } from "@shared/model-providers";
 import avatar1 from "../assets/coworker-avatars/avatar-1.png";
 import avatar2 from "../assets/coworker-avatars/avatar-2.png";
 import avatar3 from "../assets/coworker-avatars/avatar-3.png";
@@ -102,9 +102,11 @@ export function StatusLabel({
 export function CoworkerModelBadge({
   coworker,
   compact = false,
+  modelEndpoints = [],
 }: {
   coworker: Pick<Coworker, "modelProvider" | "modelName">;
   compact?: boolean;
+  modelEndpoints?: ModelEndpoint[];
 }) {
   if (coworker.modelProvider === "demo") {
     return (
@@ -117,7 +119,7 @@ export function CoworkerModelBadge({
       </span>
     );
   }
-  const provider = modelProviderName(coworker.modelProvider);
+  const provider = modelProviderDisplayName(coworker.modelProvider, modelEndpoints);
   const label = `${provider} · ${coworker.modelName}`;
   // OpenRouter ids are "org/model"; the segment after the slash is the model.
   const displayName = coworker.modelName.split("/").at(-1) || coworker.modelName;

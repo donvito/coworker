@@ -81,6 +81,10 @@ const api: DesktopApi = {
       ipcRenderer.invoke(ipcChannels.integrationsConfigureEmail, input),
     configureModel: (input) =>
       ipcRenderer.invoke(ipcChannels.integrationsConfigureModel, input),
+    addModelEndpoint: (input) =>
+      ipcRenderer.invoke(ipcChannels.integrationsAddModelEndpoint, input),
+    removeModelEndpoint: (id) =>
+      ipcRenderer.invoke(ipcChannels.integrationsRemoveModelEndpoint, id),
     listModels: (provider) =>
       ipcRenderer.invoke(ipcChannels.integrationsListModels, provider),
     modelCapabilities: (provider, modelId) =>

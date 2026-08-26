@@ -3,10 +3,12 @@ import { dirname } from "node:path";
 import {
   modelProviders,
   providerErrorPhases,
+  type KnownModelProvider,
   type ModelProvider,
   type ProviderErrorDiagnostic,
   type ProviderErrorPhase,
 } from "@shared/contracts";
+import { isCustomModelProvider } from "@shared/model-providers";
 
 export interface ProviderErrorContext {
   phase: ProviderErrorPhase;
@@ -149,7 +151,8 @@ function isProviderDiagnostic(value: unknown): value is ProviderErrorDiagnostic 
     typeof record.phase === "string" &&
     providerErrorPhases.includes(record.phase as ProviderErrorPhase) &&
     typeof record.provider === "string" &&
-    modelProviders.includes(record.provider as ModelProvider) &&
+    (modelProviders.includes(record.provider as KnownModelProvider) ||
+      isCustomModelProvider(record.provider)) &&
     typeof record.message === "string"
   );
 }

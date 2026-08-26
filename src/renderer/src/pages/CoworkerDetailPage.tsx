@@ -22,6 +22,7 @@ import type {
   ConversationImageInput,
   Coworker,
   DiscussionSession,
+  ModelEndpoint,
   Message as StoredMessage,
   Task,
   TaskImageAttachmentSummary,
@@ -388,6 +389,7 @@ export function CoworkerDetailPage({
   imageAttachments,
   skills,
   settings,
+  modelEndpoints = [],
   onBack,
   onChanged,
   onOpenApprovals,
@@ -406,6 +408,7 @@ export function CoworkerDetailPage({
   imageAttachments: TaskImageAttachmentSummary[];
   skills: Skill[];
   settings: AppSettings;
+  modelEndpoints?: ModelEndpoint[];
   onBack: () => void;
   onChanged: () => Promise<void>;
   onOpenApprovals: () => void;
@@ -526,6 +529,7 @@ export function CoworkerDetailPage({
           )}
           imageAttachments={imageAttachments}
           messages={conversationMessages}
+          modelEndpoints={modelEndpoints}
           onBack={onBack}
           onChanged={onChanged}
           onCreateGroup={() => setCreatingGroup(true)}
@@ -554,6 +558,7 @@ export function CoworkerDetailPage({
             storedMessages={conversationMessages}
             imageAttachments={imageAttachments}
             showReasoning={settings.showReasoning}
+            modelEndpoints={modelEndpoints}
             onBack={onBack}
             onChanged={onChanged}
             onCreate={() => setCreating(true)}
@@ -579,6 +584,7 @@ export function CoworkerDetailPage({
         <CoworkerSettingsModal
           coworker={managingCoworker}
           skills={skills}
+          modelEndpoints={modelEndpoints}
           onChanged={onChanged}
           onClose={() => setManagingCoworkerId(null)}
           onOpenModelSettings={onOpenModelSettings}
@@ -591,6 +597,7 @@ export function CoworkerDetailPage({
       {creating ? (
         <CreateCoworkerModal
           settings={settings}
+          modelEndpoints={modelEndpoints}
           onChanged={onChanged}
           onClose={() => setCreating(false)}
           onCreated={onSelectCoworker}
@@ -642,6 +649,7 @@ function GroupConversationSurface({
   tasks,
   approvals,
   imageAttachments,
+  modelEndpoints = [],
   onBack,
   onChanged,
   onCreateGroup,
@@ -658,6 +666,7 @@ function GroupConversationSurface({
   tasks: Task[];
   approvals: Approval[];
   imageAttachments: TaskImageAttachmentSummary[];
+  modelEndpoints?: ModelEndpoint[];
   onBack: () => void;
   onChanged: () => Promise<void>;
   onCreateGroup: () => void;
@@ -973,6 +982,7 @@ function GroupConversationSurface({
             <CoworkerRosterItem
               coworker={item}
               key={item.id}
+              modelEndpoints={modelEndpoints}
               onOpenContextMenu={() => undefined}
               onSelect={() => onSelectCoworker(item)}
               selected={false}
@@ -1443,6 +1453,7 @@ export function CoworkerRosterItem({
   latestTask,
   waiting,
   selected,
+  modelEndpoints = [],
   onSelect,
   onOpenContextMenu,
 }: {
@@ -1450,6 +1461,7 @@ export function CoworkerRosterItem({
   latestTask?: Task;
   waiting: number;
   selected: boolean;
+  modelEndpoints?: ModelEndpoint[];
   onSelect: () => void;
   onOpenContextMenu: (position: { x: number; y: number }) => void;
 }) {
@@ -1478,7 +1490,7 @@ export function CoworkerRosterItem({
           </small>
           {waiting > 0 ? <b>{waiting}</b> : null}
         </span>
-        <CoworkerModelBadge compact coworker={coworker} />
+        <CoworkerModelBadge compact coworker={coworker} modelEndpoints={modelEndpoints} />
       </span>
     </button>
   );
@@ -1497,6 +1509,7 @@ function CoworkerSurface({
   storedMessages,
   imageAttachments,
   showReasoning,
+  modelEndpoints = [],
   onBack,
   onChanged,
   onCreate,
@@ -1519,6 +1532,7 @@ function CoworkerSurface({
   storedMessages: StoredMessage[];
   imageAttachments: TaskImageAttachmentSummary[];
   showReasoning: boolean;
+  modelEndpoints?: ModelEndpoint[];
   onBack: () => void;
   onChanged: () => Promise<void>;
   onCreate: () => void;
@@ -2087,6 +2101,7 @@ function CoworkerSurface({
                 coworker={item}
                 key={item.id}
                 latestTask={latestTask}
+                modelEndpoints={modelEndpoints}
                 onOpenContextMenu={({ x, y }) => {
                   setCoworkerMenu({
                     coworker: item,
@@ -2168,6 +2183,7 @@ function CoworkerSurface({
               <QuickModelSwitcher
                 coworker={coworker}
                 disabled={agent.isRunning}
+                modelEndpoints={modelEndpoints}
                 onChanged={onChanged}
               />
             </span>

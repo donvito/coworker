@@ -101,7 +101,7 @@ describe("global model default", () => {
     // provider becomes the default in the same save.
     const defaultSwitch = screen.getByRole("checkbox");
     expect((defaultSwitch as HTMLInputElement).checked).toBe(true);
-    await screen.findByText(/The model list loads once the key is verified/);
+    await screen.findByText(/The model list loads once the connection is verified/);
     expect(screen.getByText(/No global default model configured yet/)).toBeTruthy();
   });
 

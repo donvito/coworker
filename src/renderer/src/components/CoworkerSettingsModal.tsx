@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import type { Coworker, RemoteModelProvider, Skill } from "@shared/contracts";
+import type { Coworker, ModelEndpoint, RemoteModelProvider, Skill } from "@shared/contracts";
 import { remoteModelProviderDefinitions } from "@shared/model-providers";
 import { Icon } from "./Icon";
 import { ModelSelector } from "./ModelSelector";
@@ -18,6 +18,7 @@ export function revealFolderLabel(platform: string): string {
 export function CoworkerSettingsModal({
   coworker,
   skills,
+  modelEndpoints = [],
   onClose,
   onChanged,
   onRemoved,
@@ -25,6 +26,7 @@ export function CoworkerSettingsModal({
 }: {
   coworker: Coworker;
   skills: Skill[];
+  modelEndpoints?: ModelEndpoint[];
   onClose: () => void;
   onChanged: () => Promise<void>;
   onRemoved: () => void;
@@ -240,9 +242,16 @@ export function CoworkerSettingsModal({
                 value={provider}
               >
                 <option value="">No model configured</option>
-                {remoteModelProviderDefinitions.map((definition) => (
-                  <option key={definition.id} value={definition.id}>
-                    {definition.label}
+                {remoteModelProviderDefinitions
+                  .filter((definition) => definition.id !== "openai-compatible")
+                  .map((definition) => (
+                    <option key={definition.id} value={definition.id}>
+                      {definition.label}
+                    </option>
+                  ))}
+                {modelEndpoints.map((endpoint) => (
+                  <option key={endpoint.id} value={endpoint.id}>
+                    {endpoint.name}
                   </option>
                 ))}
               </select>
