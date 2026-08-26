@@ -147,10 +147,27 @@ svg {
 }
 
 .app-frame {
+  --sidebar-width: 224px;
   display: grid;
-  grid-template-columns: 224px minmax(0, 1fr);
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
   width: 100%;
   height: 100%;
+}
+
+.app-frame.conversation-mode {
+  --sidebar-width: 0px;
+}
+
+/* Window-wide titlebar drag strip over the main content; the sidebar keeps
+   its own drag region so its buttons stay clickable. */
+.app-window-drag {
+  position: fixed;
+  z-index: 15;
+  top: 0;
+  right: 0;
+  left: var(--sidebar-width);
+  height: 30px;
+  -webkit-app-region: drag;
 }
 
 .sidebar {
@@ -6350,7 +6367,8 @@ select:focus {
 
 @media (max-width: 1120px) {
   .app-frame {
-    grid-template-columns: 196px minmax(0, 1fr);
+    --sidebar-width: 196px;
+    grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
   }
 
   .conversation-layout {
@@ -6376,7 +6394,8 @@ select:focus {
 
 @media (max-width: 860px) {
   .app-frame {
-    grid-template-columns: 74px minmax(0, 1fr);
+    --sidebar-width: 74px;
+    grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
   }
 
   .sidebar {

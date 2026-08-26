@@ -29,6 +29,7 @@ export function AppShell({
 }) {
   return (
     <div className={conversationMode ? "app-frame conversation-mode" : "app-frame"}>
+      <div className="app-window-drag" />
       {!conversationMode ? (
         <aside className="sidebar">
           <div className="window-drag-region" />
