@@ -524,22 +524,6 @@ svg {
   gap: 12px;
 }
 
-.floor-scope {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 7px 12px;
-  color: var(--ink-soft);
-  font-family: var(--mono);
-  font-size: 11px;
-  font-weight: 650;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  background: rgba(255, 255, 255, 0.75);
-  border: 1px solid var(--line);
-  border-radius: 99px;
-}
-
 .floor-stats {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -957,35 +941,6 @@ svg {
 .floor-activity > .text-button {
   justify-content: flex-start;
   margin-top: 4px;
-}
-
-.pulse-dot {
-  position: relative;
-  width: 7px;
-  height: 7px;
-  background: #3d9b68;
-  border-radius: 50%;
-}
-
-.pulse-dot::after {
-  position: absolute;
-  inset: -4px;
-  border: 1px solid rgba(61, 155, 104, 0.35);
-  border-radius: 50%;
-  content: "";
-  animation: pulse 2.4s ease-out infinite;
-}
-
-@keyframes pulse {
-  0% {
-    opacity: 0.8;
-    transform: scale(0.6);
-  }
-  70%,
-  100% {
-    opacity: 0;
-    transform: scale(1.5);
-  }
 }
 
 .large-avatar,

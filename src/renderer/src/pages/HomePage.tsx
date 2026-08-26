@@ -105,9 +105,6 @@ export function HomePage({
         title={greeting()}
         action={
           <div className="floor-head-actions">
-            <span className="floor-scope">
-              <span className="pulse-dot" /> Local · this computer
-            </span>
             <button
               className="primary-button"
               onClick={() =>
@@ -238,7 +235,6 @@ export function HomePage({
                       modelEndpoints={snapshot.modelEndpoints}
                     />
                     <span className="floor-card-action">
-                      {actionLabel(coworker)}
                       <Icon name="arrow" />
                     </span>
                   </span>
@@ -276,10 +272,9 @@ export function HomePage({
           </div>
         </div>
 
-        <aside aria-label="Recent movement" className="floor-activity">
+        <aside aria-label="Activity log" className="floor-activity">
           <header>
-            <h2>Recent movement</h2>
-            <span className="eyebrow">Desk log</span>
+            <h2>Activity log</h2>
           </header>
           <div className="floor-activity-list">
             {snapshot.activity.length === 0 ? (
@@ -346,12 +341,6 @@ function taskLine(snapshot: AppSnapshot, coworker: Coworker): string {
     return `Finished ${recentlyFinished} task${recentlyFinished === 1 ? "" : "s"} in the last hour`;
   }
   return "Ready for a new task";
-}
-
-function actionLabel(coworker: Coworker): string {
-  if (["WORKING", "WAITING_FOR_APPROVAL"].includes(coworker.runtimeStatus)) return "Open";
-  if (coworker.runtimeStatus === "IDLE") return "Assign";
-  return "Start";
 }
 
 function activityKind(type: string): string {
