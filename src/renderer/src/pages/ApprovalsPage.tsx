@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import type { Approval, Coworker } from "@shared/contracts";
 import { Icon } from "../components/Icon";
+import { ModalPortal } from "../components/ModalPortal";
 import {
   CoworkerAvatar,
   EmptyState,
@@ -264,6 +265,7 @@ function ApprovalEditor({
     });
   }
   return (
+    <ModalPortal>
     <div className="modal-backdrop" onMouseDown={onClose}>
       <section
         className="modal-card review-modal"
@@ -312,5 +314,6 @@ function ApprovalEditor({
         </form>
       </section>
     </div>
+    </ModalPortal>
   );
 }

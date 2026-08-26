@@ -126,7 +126,9 @@ describe("coworker folder access settings", () => {
       />,
     );
 
-    expect(screen.getByText("No model configured", { selector: "strong" })).toBeTruthy();
+    expect(
+      screen.getByText("No model configured", { selector: ".model-not-configured strong" }),
+    ).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Open model settings" }));
     expect(onOpenModelSettings).toHaveBeenCalledOnce();
 

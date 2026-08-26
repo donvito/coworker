@@ -370,7 +370,9 @@ svg {
   }
   to {
     opacity: 1;
-    transform: translateY(0);
+    /* Must end at none: a retained transform makes .page the containing
+       block for position: fixed, trapping modal backdrops inside the page. */
+    transform: none;
   }
 }
 
@@ -1586,8 +1588,11 @@ svg {
   display: grid;
   place-items: center;
   padding: 28px;
-  background: rgba(15, 29, 23, 0.42);
-  backdrop-filter: blur(5px);
+  background: radial-gradient(
+    110% 110% at 50% 12%,
+    rgba(19, 36, 29, 0.28) 0%,
+    rgba(10, 20, 16, 0.46) 100%
+  );
   animation: fade-in 140ms ease both;
 }
 
@@ -1782,6 +1787,24 @@ select:focus {
   font-size: 15px;
 }
 
+.provider-select .model-selector-trigger {
+  min-height: 46px;
+}
+
+.provider-select .model-selector-trigger > span {
+  align-self: center;
+}
+
+.provider-select .model-selector-options {
+  max-height: 264px;
+}
+
+.provider-select .model-selector-options > button {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+
 .model-selector-options {
   display: flex;
   max-height: 360px;
@@ -1951,6 +1974,10 @@ select:focus {
 
 .coworker-settings-modal {
   width: min(680px, calc(100vw - 48px));
+}
+
+.create-coworker-modal {
+  width: min(620px, calc(100vw - 48px));
 }
 
 .skill-picker {

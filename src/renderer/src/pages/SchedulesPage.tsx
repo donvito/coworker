@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 import type { Coworker, Schedule } from "@shared/contracts";
 import { Icon } from "../components/Icon";
+import { ModalPortal } from "../components/ModalPortal";
 import {
   CoworkerAvatar,
   EmptyState,
@@ -192,6 +193,7 @@ export function SchedulesPage({
       )}
 
       {creating ? (
+        <ModalPortal>
         <div className="modal-backdrop" onMouseDown={() => setCreating(false)}>
           <section
             className="modal-card"
@@ -276,6 +278,7 @@ export function SchedulesPage({
             </form>
           </section>
         </div>
+        </ModalPortal>
       ) : null}
     </div>
   );

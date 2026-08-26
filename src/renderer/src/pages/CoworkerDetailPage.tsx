@@ -39,6 +39,7 @@ import {
 } from "../components/ArtifactActions";
 import { CoworkerSettingsModal } from "../components/CoworkerSettingsModal";
 import { ChatMarkdown } from "../components/ChatMarkdown";
+import { ModalPortal } from "../components/ModalPortal";
 import { QuickModelSwitcher } from "../components/QuickModelSwitcher";
 import { Icon } from "../components/Icon";
 import {
@@ -1382,6 +1383,7 @@ export function CreateGroupChannelModal({
   }
 
   return (
+    <ModalPortal>
     <div className="modal-backdrop" onMouseDown={onClose} role="presentation">
       <form
         className="modal-card group-channel-modal"
@@ -1445,6 +1447,7 @@ export function CreateGroupChannelModal({
         </div>
       </form>
     </div>
+    </ModalPortal>
   );
 }
 

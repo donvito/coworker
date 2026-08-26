@@ -5,9 +5,10 @@ import type {
   ModelEndpoint,
   RemoteModelProvider,
 } from "@shared/contracts";
-import { remoteModelProviderDefinitions } from "@shared/model-providers";
 import { Icon } from "../components/Icon";
+import { ModalPortal } from "../components/ModalPortal";
 import { ModelSelector } from "../components/ModelSelector";
+import { ProviderSelect } from "../components/ProviderSelect";
 import {
   CoworkerAvatar,
   CoworkerModelBadge,
@@ -201,9 +202,10 @@ export function CreateCoworkerModal({
   }
 
   return (
+    <ModalPortal>
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
       <section
-        className="modal-card"
+        className="modal-card create-coworker-modal"
         role="dialog"
         aria-modal="true"
         aria-labelledby="create-coworker-title"
@@ -231,39 +233,23 @@ export function CreateCoworkerModal({
             />
           </label>
           {provider ? (
-            <div className="form-split">
-              <label>
-                <span>Model provider</span>
-                <select
-                  disabled={saving}
-                  name="provider"
-                  onChange={(event) => {
-                    setProvider(event.target.value as RemoteModelProvider);
-                    setModelName("");
-                  }}
-                  value={provider}
-                >
-                  {remoteModelProviderDefinitions
-                    .filter((definition) => definition.id !== "openai-compatible")
-                    .map((definition) => (
-                      <option key={definition.id} value={definition.id}>
-                        {definition.label}
-                      </option>
-                    ))}
-                  {modelEndpoints.map((endpoint) => (
-                    <option key={endpoint.id} value={endpoint.id}>
-                      {endpoint.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
+            <>
+              <ProviderSelect
+                disabled={saving}
+                modelEndpoints={modelEndpoints}
+                onChange={(next) => {
+                  setProvider(next);
+                  setModelName("");
+                }}
+                value={provider}
+              />
               <ModelSelector
                 disabled={saving}
                 onChange={setModelName}
                 provider={provider}
                 value={modelName}
               />
-            </div>
+            </>
           ) : (
             <div className="model-not-configured create-coworker-model-empty">
               <strong>No model configured</strong>
@@ -287,5 +273,6 @@ export function CreateCoworkerModal({
         </form>
       </section>
     </div>
+    </ModalPortal>
   );
 }

@@ -1,8 +1,9 @@
 import { useState, type FormEvent } from "react";
 import type { Coworker, ModelEndpoint, RemoteModelProvider, Skill } from "@shared/contracts";
-import { remoteModelProviderDefinitions } from "@shared/model-providers";
 import { Icon } from "./Icon";
+import { ModalPortal } from "./ModalPortal";
 import { ModelSelector } from "./ModelSelector";
+import { ProviderSelect } from "./ProviderSelect";
 
 function folderDisplayName(path: string): string {
   const segments = path.replace(/[\\/]+$/, "").split(/[\\/]/);
@@ -110,6 +111,7 @@ export function CoworkerSettingsModal({
   }
 
   return (
+    <ModalPortal>
     <div className="modal-backdrop" onMouseDown={onClose}>
       <section
         aria-labelledby="coworker-settings-title"
@@ -229,60 +231,42 @@ export function CoworkerSettingsModal({
               safeguards.
             </small>
           </label>
-          <div className="form-split">
-            <label>
-              <span>Model provider</span>
-              <select
-                disabled={working}
-                name="modelProvider"
-                onChange={(event) => {
-                  setProvider(event.target.value as RemoteModelProvider | "");
-                  setModelName("");
-                }}
-                value={provider}
-              >
-                <option value="">No model configured</option>
-                {remoteModelProviderDefinitions
-                  .filter((definition) => definition.id !== "openai-compatible")
-                  .map((definition) => (
-                    <option key={definition.id} value={definition.id}>
-                      {definition.label}
-                    </option>
-                  ))}
-                {modelEndpoints.map((endpoint) => (
-                  <option key={endpoint.id} value={endpoint.id}>
-                    {endpoint.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            {provider ? (
-              <ModelSelector
-                disabled={working}
-                onChange={setModelName}
-                provider={provider}
-                value={modelName}
-              />
-            ) : (
-              <div className="model-not-configured">
-                <strong>No model configured</strong>
-                <small>
-                  {coworker.name} needs a model before it can work. Other settings still save.
-                </small>
-                {onOpenModelSettings ? (
-                  <button
-                    className="text-button"
-                    onClick={onOpenModelSettings}
-                    type="button"
-                  >
-                    Open model settings
-                  </button>
-                ) : (
-                  <small>Add an API key in Settings → Models, then choose its provider here.</small>
-                )}
-              </div>
-            )}
-          </div>
+          <ProviderSelect
+            disabled={working}
+            emptyLabel="No model configured"
+            modelEndpoints={modelEndpoints}
+            onChange={(next) => {
+              setProvider(next);
+              setModelName("");
+            }}
+            value={provider}
+          />
+          {provider ? (
+            <ModelSelector
+              disabled={working}
+              onChange={setModelName}
+              provider={provider}
+              value={modelName}
+            />
+          ) : (
+            <div className="model-not-configured">
+              <strong>No model configured</strong>
+              <small>
+                {coworker.name} needs a model before it can work. Other settings still save.
+              </small>
+              {onOpenModelSettings ? (
+                <button
+                  className="text-button"
+                  onClick={onOpenModelSettings}
+                  type="button"
+                >
+                  Open model settings
+                </button>
+              ) : (
+                <small>Add an API key in Settings → Models, then choose its provider here.</small>
+              )}
+            </div>
+          )}
           <label>
             <span>Availability</span>
             <select defaultValue={coworker.status} name="status">
@@ -307,5 +291,6 @@ export function CoworkerSettingsModal({
         </form>
       </section>
     </div>
+    </ModalPortal>
   );
 }
