@@ -23,15 +23,15 @@ The builds are not code-signed yet, so the OS warns on first launch:
 
 ## Screenshots
 
-**Workroom home** — every coworker's runtime status, the decision queue, and a live desk log.
+**Team room** — the floor at a glance, a composer that puts any coworker to work, and a live activity log.
 
-![Workroom home](docs/images/home.png)
+![Team room](docs/images/home.png)
 
 **Coworkers** — each one has an independent runtime, workspace, and single focused task queue.
 
 ![Coworkers](docs/images/coworkers.png)
 
-**Chat** — streaming replies, typed tool calls, and the files a coworker writes into its own workspace.
+**Chat** — streaming Markdown replies, per-coworker model switching, and the files a coworker writes into its own workspace.
 
 ![Coworker chat](docs/images/coworker-chat.png)
 
