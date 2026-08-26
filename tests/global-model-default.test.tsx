@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CreateCoworkerModal } from "@renderer/pages/CoworkersPage";
 import { SettingsPage } from "@renderer/pages/SettingsPage";
@@ -63,7 +63,7 @@ describe("global model default", () => {
     expect(onChanged).toHaveBeenCalledOnce();
   });
 
-  it("shows no configured model when no provider credentials have been saved", async () => {
+  it("explains how to set a default when no provider is connected", async () => {
     Object.defineProperty(window, "coworker", {
       configurable: true,
       value: {
@@ -83,13 +83,13 @@ describe("global model default", () => {
         integrations={[]}
         onChanged={vi.fn().mockResolvedValue(undefined)}
         settings={{
-      demoMode: false,
-      launchAtLogin: false,
-      runInBackground: true,
-      theme: "forest",
-      showReasoning: true,
-      globalOperatingInstructions: "Ask when information is missing.",
-      defaultModelProvider: null,
+          demoMode: false,
+          launchAtLogin: false,
+          runInBackground: true,
+          theme: "forest",
+          showReasoning: true,
+          globalOperatingInstructions: "Ask when information is missing.",
+          defaultModelProvider: null,
           defaultModelName: null,
         }}
         skills={[]}
@@ -97,43 +97,37 @@ describe("global model default", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Models" }));
-    const browser = (await screen.findByText("Default model")).closest(
-      ".settings-model-browser",
-    );
-    expect(browser).not.toBeNull();
-    const provider = within(browser as HTMLElement).getByRole("combobox", {
-      name: "Provider",
-    });
-    await waitFor(() => expect((provider as HTMLSelectElement).disabled).toBe(true));
-    expect(within(provider).getByRole("option", { name: "No model configured" })).toBeTruthy();
-    expect(within(browser as HTMLElement).queryByText("Built-in demo")).toBeNull();
+    // With no global default yet the switch starts on so the first verified
+    // provider becomes the default in the same save.
+    const defaultSwitch = screen.getByRole("checkbox");
+    expect((defaultSwitch as HTMLInputElement).checked).toBe(true);
+    await screen.findByText(/The model list loads once the key is verified/);
+    expect(screen.getByText(/No global default model configured yet/)).toBeTruthy();
   });
 
-  it("lists connected providers and saves a selected catalog model as the default", async () => {
-    const updateSettings = vi.fn().mockResolvedValue(undefined);
+  it("changes the global default model inside the provider's credential form", async () => {
+    const configureModel = vi.fn().mockResolvedValue({
+      key: "model:openrouter",
+      configured: true,
+      models: [
+        { id: "vendor/old-model", name: "Old model", supportsImages: false },
+        { id: "vendor/new-model", name: "New model", supportsImages: true },
+      ],
+      defaultApplied: true,
+    });
     const onChanged = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(window, "coworker", {
       configurable: true,
       value: {
-        app: { updateSettings },
         integrations: {
           credentialStatus: vi.fn(async (key: string) => ({
             configured: key === "model:openrouter" || key === "model:openai",
           })),
           listModels: vi.fn().mockResolvedValue([
-            {
-              id: "vendor/old-model",
-              name: "Old model",
-              supportsImages: false,
-              pricing: { currency: "USD", inputPerMillion: 1, outputPerMillion: 2 },
-            },
-            {
-              id: "vendor/new-model",
-              name: "New model",
-              supportsImages: true,
-              pricing: { currency: "USD", inputPerMillion: 0.5, outputPerMillion: 1.5 },
-            },
+            { id: "vendor/old-model", name: "Old model", supportsImages: false },
+            { id: "vendor/new-model", name: "New model", supportsImages: true },
           ]),
+          configureModel,
         },
         diagnostics: {
           listProviderErrors: vi.fn().mockResolvedValue([]),
@@ -148,13 +142,13 @@ describe("global model default", () => {
         integrations={[]}
         onChanged={onChanged}
         settings={{
-      demoMode: false,
-      launchAtLogin: false,
-      runInBackground: true,
-      theme: "forest",
-      showReasoning: true,
-      globalOperatingInstructions: "Ask when information is missing.",
-      defaultModelProvider: "openrouter",
+          demoMode: false,
+          launchAtLogin: false,
+          runInBackground: true,
+          theme: "forest",
+          showReasoning: true,
+          globalOperatingInstructions: "Ask when information is missing.",
+          defaultModelProvider: "openrouter",
           defaultModelName: "vendor/old-model",
         }}
         skills={[]}
@@ -162,42 +156,51 @@ describe("global model default", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Models" }));
-    const browser = (await screen.findByText("Default model")).closest(
-      ".settings-model-browser",
-    );
-    expect(browser).not.toBeNull();
-    const provider = within(browser as HTMLElement).getByRole("combobox", {
-      name: "Provider",
+    const openRouter = await screen.findByRole("button", {
+      name: "OpenRouter Connected · Default",
     });
-    await waitFor(() => expect((provider as HTMLSelectElement).disabled).toBe(false));
-    expect(within(provider).queryByRole("option", { name: "Built-in demo" })).toBeNull();
-    expect(within(provider).getByRole("option", { name: "OpenAI" })).toBeTruthy();
-    expect(within(provider).getByRole("option", { name: "OpenRouter" })).toBeTruthy();
-    expect(within(provider).queryByRole("option", { name: "Anthropic" })).toBeNull();
+    fireEvent.click(openRouter);
 
-    const model = within(browser as HTMLElement).getByRole("combobox", { name: "Model" });
+    expect((screen.getByRole("checkbox") as HTMLInputElement).checked).toBe(true);
+    const model = screen.getByRole("combobox", { name: "Model" });
     await waitFor(() => expect((model as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(model);
-    fireEvent.click(
-      within(browser as HTMLElement).getByRole("option", { name: /New model/ }),
-    );
+    fireEvent.click(screen.getByRole("option", { name: /New model/ }));
 
+    fireEvent.click(screen.getByRole("button", { name: "Verify and save" }));
     await waitFor(() =>
-      expect(updateSettings).toHaveBeenCalledWith({
-        defaultModelProvider: "openrouter",
+      expect(configureModel).toHaveBeenCalledWith({
+        provider: "openrouter",
+        apiKey: undefined,
+        baseUrl: undefined,
         defaultModelName: "vendor/new-model",
       }),
     );
     expect(onChanged).toHaveBeenCalledOnce();
+    await waitFor(() =>
+      expect(screen.getByRole("status").textContent).toContain(
+        "vendor/new-model is now the global default model",
+      ),
+    );
   });
 
-  it("selects a credential provider from its card without a redundant dropdown", async () => {
-    const configureModel = vi.fn().mockResolvedValue({ key: "model:openrouter" });
+  it("connects a new provider and applies its first model as the default in one save", async () => {
+    const configureModel = vi.fn().mockResolvedValue({
+      key: "model:openrouter",
+      configured: true,
+      models: [{ id: "vendor/first-model", name: "First model", supportsImages: false }],
+      defaultApplied: false,
+    });
+    const updateSettings = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(window, "coworker", {
       configurable: true,
       value: {
+        app: { updateSettings },
         integrations: {
           credentialStatus: vi.fn().mockResolvedValue({ configured: false }),
+          listModels: vi.fn().mockResolvedValue([
+            { id: "vendor/first-model", name: "First model", supportsImages: false },
+          ]),
           configureModel,
         },
         diagnostics: {
@@ -243,7 +246,17 @@ describe("global model default", () => {
         provider: "openrouter",
         apiKey: "router-key",
         baseUrl: undefined,
+        defaultModelName: undefined,
       }),
+    );
+    await waitFor(() =>
+      expect(updateSettings).toHaveBeenCalledWith({
+        defaultModelProvider: "openrouter",
+        defaultModelName: "vendor/first-model",
+      }),
+    );
+    expect(screen.getByRole("status").textContent).toContain(
+      "vendor/first-model is now the global default model",
     );
   });
 

@@ -53,6 +53,7 @@ describe("application diagnostics and archives", () => {
     expect(Object.keys(zip.files).sort()).toEqual([
       "logs/app.jsonl",
       "logs/provider-errors.jsonl",
+      "report.txt",
       "system-info.json",
     ]);
     const appLog = await zip.file("logs/app.jsonl")!.async("string");
@@ -63,6 +64,9 @@ describe("application diagnostics and archives", () => {
     expect(await zip.file("logs/provider-errors.jsonl")!.async("string")).toContain(
       "redacted provider failure",
     );
+    const report = await zip.file("report.txt")!.async("string");
+    expect(report).toContain("Coworker provider error report");
+    expect(report).toContain("App version: 1.2.3");
     expect(zip.file("database/coworker.db")).toBeNull();
     expect(await zip.file("system-info.json")!.async("string")).toContain('"App version": "1.2.3"');
   });

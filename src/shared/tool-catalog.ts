@@ -47,6 +47,22 @@ export const toolCatalog = [
     defaultPolicy: "automatic",
   },
   {
+    name: "folders.list",
+    label: "List shared folders",
+    description:
+      "List the read-only folders the user granted this coworker, or browse the files inside one of them. Call without arguments to see every granted folder.",
+    risk: "low",
+    defaultPolicy: "automatic",
+  },
+  {
+    name: "folders.read",
+    label: "Read shared folder document",
+    description:
+      "Read a document or file from a user-granted read-only folder. Extracts text from PDF, Word DOCX, and Excel XLSX documents and reads text files directly. Granted folders can never be written to.",
+    risk: "low",
+    defaultPolicy: "automatic",
+  },
+  {
     name: "invoice.create",
     label: "Create invoice",
     description:

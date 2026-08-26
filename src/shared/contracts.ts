@@ -98,6 +98,13 @@ export interface Skill {
 export const webSearchProviders = ["tavily", "exa", "firecrawl", "serpapi"] as const;
 export type WebSearchProvider = (typeof webSearchProviders)[number];
 
+export interface SharedFolder {
+  /** Absolute path of a folder this coworker may read (never write). */
+  path: string;
+  /** Stable name the coworker uses to address the folder in tools. */
+  alias: string;
+}
+
 export interface Coworker {
   id: string;
   name: string;
@@ -112,6 +119,7 @@ export interface Coworker {
   enabledTools: string[];
   enabledSkillIds: string[];
   policies: Record<string, ToolPolicy>;
+  sharedFolders: SharedFolder[];
   createdAt: string;
   updatedAt: string;
 }
@@ -126,6 +134,7 @@ export interface CreateCoworkerInput {
   enabledTools: string[];
   enabledSkillIds?: string[];
   policies?: Record<string, ToolPolicy>;
+  sharedFolderPaths?: string[];
 }
 
 export interface UpdateCoworkerInput {
@@ -139,6 +148,7 @@ export interface UpdateCoworkerInput {
   enabledTools?: string[];
   enabledSkillIds?: string[];
   policies?: Record<string, ToolPolicy>;
+  sharedFolderPaths?: string[];
 }
 
 export interface Task {
@@ -147,6 +157,9 @@ export interface Task {
   scheduleId: string | null;
   runId: string;
   threadId: string;
+  sourceMessageId: string | null;
+  discussionId: string | null;
+  discussionTurn: number | null;
   title: string;
   input: string;
   status: TaskStatus;
@@ -161,15 +174,64 @@ export interface Task {
 
 export interface Conversation {
   id: string;
-  coworkerId: string;
+  coworkerId: string | null;
+  kind: "direct" | "group";
+  memberIds: string[];
   title: string;
   createdAt: string;
   updatedAt: string;
 }
 
 export interface CreateConversationInput {
-  coworkerId: string;
+  coworkerId?: string;
+  kind?: Conversation["kind"];
+  memberIds?: string[];
   title?: string;
+}
+
+export interface UpdateConversationInput {
+  title?: string;
+  memberIds?: string[];
+}
+
+export interface ConversationImageInput {
+  data: string;
+  mimeType: "image/jpeg" | "image/png" | "image/webp" | "image/gif";
+  name: string;
+  size: number;
+}
+
+export interface SendConversationMessageInput {
+  conversationId: string;
+  clientMessageId: string;
+  content: string;
+  mentionedCoworkerIds: string[];
+  images?: ConversationImageInput[];
+}
+
+export interface ConversationDispatchReceipt {
+  message: Message;
+  runs: Array<AgentRunReceipt & { coworkerId: string }>;
+  discussion: DiscussionSession | null;
+}
+
+export interface DiscussionSession {
+  id: string;
+  conversationId: string;
+  sourceMessageId: string;
+  participantIds: string[];
+  nextTurn: number;
+  turnLimit: number;
+  hardLimit: number;
+  status: "active" | "awaiting_user" | "completed" | "cancelled" | "failed";
+  error: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DiscussionAdvanceReceipt {
+  discussion: DiscussionSession;
+  run: (AgentRunReceipt & { coworkerId: string }) | null;
 }
 
 export interface TaskImageAttachment {
@@ -199,14 +261,21 @@ export interface CreateTaskInput {
   scheduleId?: string;
   runId?: string;
   threadId?: string;
+  sourceMessageId?: string;
+  discussionId?: string;
+  discussionTurn?: number;
+  persistUserMessage?: boolean;
 }
 
 export interface Message {
   id: string;
-  coworkerId: string;
+  conversationId: string;
+  coworkerId: string | null;
+  authorName: string;
   taskId: string | null;
   role: "user" | "assistant" | "system" | "tool";
   content: string;
+  mentionedCoworkerIds: string[];
   createdAt: string;
 }
 
@@ -337,6 +406,7 @@ export interface AppSettings {
 export interface AppSnapshot {
   coworkers: Coworker[];
   conversations: Conversation[];
+  discussions: DiscussionSession[];
   tasks: Task[];
   messages: Message[];
   imageAttachments: TaskImageAttachmentSummary[];
@@ -354,6 +424,7 @@ export interface AppSnapshot {
 export type EntityName =
   | "coworkers"
   | "conversations"
+  | "discussions"
   | "tasks"
   | "approvals"
   | "schedules"
@@ -366,7 +437,14 @@ export type EntityName =
 export type DesktopEvent =
   | { type: "entity.changed"; entity: EntityName; id?: string }
   | { type: "runtime.status"; coworkerId: string; status: RuntimeStatus; taskId?: string }
-  | { type: "agent.event"; coworkerId: string; runId: string; taskId: string; event: BaseEvent }
+  | {
+      type: "agent.event";
+      coworkerId: string;
+      conversationId: string;
+      runId: string;
+      taskId: string;
+      event: BaseEvent;
+    }
   | { type: "notification"; title: string; body: string }
   | {
       type: "navigation.requested";
@@ -396,7 +474,16 @@ export interface CredentialStatus {
   needsReentry?: boolean;
 }
 
+export interface ConfigureModelResult extends CredentialStatus {
+  /** Chat models available to the verified credential. */
+  models: ModelOption[];
+  /** True when this call also updated the global default model. */
+  defaultApplied: boolean;
+}
+
 export interface DesktopApi {
+  /** The operating system platform, as reported by Node's process.platform. */
+  platform: string;
   app: {
     bootstrap(): Promise<AppSnapshot>;
     openDataFolder(): Promise<void>;
@@ -411,10 +498,20 @@ export interface DesktopApi {
     update(id: string, input: UpdateCoworkerInput): Promise<Coworker>;
     remove(id: string): Promise<void>;
   };
+  folders: {
+    /** Open the native directory picker; returns the selected absolute paths. */
+    pick(): Promise<string[]>;
+    /** Reveal one of a coworker's granted folders in the OS file manager. */
+    reveal(coworkerId: string, path: string): Promise<void>;
+  };
   conversations: {
     list(coworkerId?: string): Promise<Conversation[]>;
     search(coworkerId: string, query: string): Promise<Conversation[]>;
     create(input: CreateConversationInput): Promise<Conversation>;
+    update(id: string, input: UpdateConversationInput): Promise<Conversation>;
+    send(input: SendConversationMessageInput): Promise<ConversationDispatchReceipt>;
+    continueDiscussion(id: string): Promise<DiscussionAdvanceReceipt>;
+    stopDiscussion(id: string): Promise<DiscussionSession>;
   };
   tasks: {
     list(coworkerId?: string): Promise<Task[]>;
@@ -423,7 +520,7 @@ export interface DesktopApi {
   };
   messages: {
     list(coworkerId: string, taskId?: string): Promise<Message[]>;
-    listConversation(coworkerId: string, conversationId: string): Promise<Message[]>;
+    listConversation(conversationId: string): Promise<Message[]>;
   };
   approvals: {
     list(status?: ApprovalStatus): Promise<Approval[]>;
@@ -450,7 +547,6 @@ export interface DesktopApi {
   diagnostics: {
     listProviderErrors(limit?: number): Promise<ProviderErrorDiagnostic[]>;
     copyProviderReport(): Promise<{ count: number }>;
-    exportProviderReport(): Promise<string | null>;
     exportSupportBundle(): Promise<string | null>;
   };
   integrations: {
@@ -465,7 +561,8 @@ export interface DesktopApi {
       provider: RemoteModelProvider;
       apiKey?: string;
       baseUrl?: string;
-    }): Promise<CredentialStatus>;
+      defaultModelName?: string;
+    }): Promise<ConfigureModelResult>;
     listModels(provider: ModelProvider): Promise<ModelOption[]>;
     modelCapabilities(
       provider: ModelProvider,

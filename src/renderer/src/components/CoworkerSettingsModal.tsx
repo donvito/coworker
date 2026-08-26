@@ -1,7 +1,19 @@
 import { useState, type FormEvent } from "react";
 import type { Coworker, RemoteModelProvider, Skill } from "@shared/contracts";
 import { remoteModelProviderDefinitions } from "@shared/model-providers";
+import { Icon } from "./Icon";
 import { ModelSelector } from "./ModelSelector";
+
+function folderDisplayName(path: string): string {
+  const segments = path.replace(/[\\/]+$/, "").split(/[\\/]/);
+  return segments.at(-1) || path;
+}
+
+export function revealFolderLabel(platform: string): string {
+  if (platform === "darwin") return "Reveal in Finder";
+  if (platform === "win32") return "Show in Explorer";
+  return "Open folder";
+}
 
 export function CoworkerSettingsModal({
   coworker,
@@ -9,12 +21,14 @@ export function CoworkerSettingsModal({
   onClose,
   onChanged,
   onRemoved,
+  onOpenModelSettings,
 }: {
   coworker: Coworker;
   skills: Skill[];
   onClose: () => void;
   onChanged: () => Promise<void>;
   onRemoved: () => void;
+  onOpenModelSettings?: () => void;
 }) {
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -25,26 +39,50 @@ export function CoworkerSettingsModal({
     coworker.modelProvider === "demo" ? "" : coworker.modelName,
   );
   const [enabledSkillIds, setEnabledSkillIds] = useState(coworker.enabledSkillIds);
+  const [sharedFolderPaths, setSharedFolderPaths] = useState(
+    coworker.sharedFolders.map((folder) => folder.path),
+  );
+  const savedFolderPaths = new Set(coworker.sharedFolders.map((folder) => folder.path));
+
+  async function addSharedFolders() {
+    setError(null);
+    try {
+      const picked = await window.coworker.folders.pick();
+      if (picked.length === 0) return;
+      setSharedFolderPaths((current) => [...new Set([...current, ...picked])]);
+    } catch (pickError) {
+      setError(pickError instanceof Error ? pickError.message : String(pickError));
+    }
+  }
+
+  async function revealSharedFolder(path: string) {
+    setError(null);
+    try {
+      await window.coworker.folders.reveal(coworker.id, path);
+    } catch (revealError) {
+      setError(revealError instanceof Error ? revealError.message : String(revealError));
+    }
+  }
 
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
-    if (!provider || !modelName) {
-      setError("No model configured. Add an API key and choose a default model in Settings.");
-      return;
-    }
     setWorking(true);
     setError(null);
     try {
+      // A model is required before the coworker can run, but every other
+      // setting (folders, skills, instructions) stays saveable without one.
+      const modelPatch =
+        provider && modelName ? { modelProvider: provider, modelName } : {};
       await window.coworker.coworkers.update(coworker.id, {
         name: String(data.get("name") ?? "").trim(),
         role: String(data.get("role") ?? "").trim(),
         description: String(data.get("description") ?? "").trim() || null,
         systemPrompt: String(data.get("systemPrompt") ?? "").trim(),
-        modelProvider: provider,
-        modelName,
         status: String(data.get("status")) as Coworker["status"],
         enabledSkillIds,
+        sharedFolderPaths,
+        ...modelPatch,
       });
       await onChanged();
       onClose();
@@ -120,6 +158,67 @@ export function CoworkerSettingsModal({
               </label>
             ))}
           </fieldset>
+          <fieldset className="folder-picker">
+            <legend>Folder access</legend>
+            <small>
+              Read-only folders on this computer that {coworker.name} can browse and read.
+              Coworkers can never create, change, or delete anything in them.
+            </small>
+            {sharedFolderPaths.length === 0 ? (
+              <p className="folder-picker-empty">No folders granted yet.</p>
+            ) : (
+              <ul className="folder-picker-list">
+                {sharedFolderPaths.map((path) => {
+                  const saved = savedFolderPaths.has(path);
+                  const alias = coworker.sharedFolders.find(
+                    (folder) => folder.path === path,
+                  )?.alias;
+                  return (
+                    <li key={path}>
+                      <Icon name="file" />
+                      <span className="folder-picker-name">
+                        <strong>{alias ?? folderDisplayName(path)}</strong>
+                        <small title={path}>{path}</small>
+                      </span>
+                      {saved ? (
+                        <button
+                          className="text-button"
+                          disabled={working}
+                          onClick={() => void revealSharedFolder(path)}
+                          type="button"
+                        >
+                          {revealFolderLabel(window.coworker.platform)}
+                        </button>
+                      ) : (
+                        <small className="folder-picker-pending">Added on save</small>
+                      )}
+                      <button
+                        aria-label={`Remove folder ${path}`}
+                        className="ghost-button danger"
+                        disabled={working}
+                        onClick={() =>
+                          setSharedFolderPaths((current) =>
+                            current.filter((candidate) => candidate !== path),
+                          )
+                        }
+                        type="button"
+                      >
+                        Remove
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+            <button
+              className="secondary-button"
+              disabled={working}
+              onClick={() => void addSharedFolders()}
+              type="button"
+            >
+              Add folder…
+            </button>
+          </fieldset>
           <label>
             <span>Operating instructions</span>
             <textarea defaultValue={coworker.systemPrompt} name="systemPrompt" required rows={5} />
@@ -158,7 +257,20 @@ export function CoworkerSettingsModal({
             ) : (
               <div className="model-not-configured">
                 <strong>No model configured</strong>
-                <small>Add an API key in Settings, then choose its provider here.</small>
+                <small>
+                  {coworker.name} needs a model before it can work. Other settings still save.
+                </small>
+                {onOpenModelSettings ? (
+                  <button
+                    className="text-button"
+                    onClick={onOpenModelSettings}
+                    type="button"
+                  >
+                    Open model settings
+                  </button>
+                ) : (
+                  <small>Add an API key in Settings → Models, then choose its provider here.</small>
+                )}
               </div>
             )}
           </div>
@@ -178,7 +290,7 @@ export function CoworkerSettingsModal({
               <button className="secondary-button" disabled={working} onClick={onClose} type="button">
                 Cancel
               </button>
-              <button className="primary-button" disabled={working || !modelName}>
+              <button className="primary-button" disabled={working}>
                 {working ? "Saving…" : "Save changes"}
               </button>
             </span>

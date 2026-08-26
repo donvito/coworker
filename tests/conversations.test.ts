@@ -111,10 +111,10 @@ describe("durable coworker conversations", () => {
           title: "Wrong owner",
           input: "Continue Ava's conversation.",
         }),
-      ).toThrow("Conversation does not belong to this coworker");
+      ).toThrow("Coworker is not a member of this conversation");
       expect(() =>
         database.listConversationMessages(hermi.id, conversation.id),
-      ).toThrow("Conversation does not belong to this coworker");
+      ).toThrow("Coworker is not a member of this conversation");
     } finally {
       database.close();
     }
@@ -178,6 +178,7 @@ describe("durable coworker conversations", () => {
     database.close();
 
     const legacy = new DatabaseSync(databasePath);
+    legacy.exec("PRAGMA foreign_keys = OFF");
     legacy.prepare("DELETE FROM conversations").run();
     legacy.close();
 
@@ -281,7 +282,9 @@ describe("durable coworker conversations", () => {
 
     const backupFiles = await readdir(join(root, "backups"));
     expect(backupFiles).toHaveLength(1);
-    expect(backupFiles[0]).toMatch(/^coworker-before-\d{14}_initial-[a-f0-9]{12}\.db$/);
+    expect(backupFiles[0]).toMatch(
+      /^coworker-before-\d{14}_[a-z0-9_-]+-[a-f0-9]{12}\.db$/,
+    );
     const backup = new DatabaseSync(join(root, "backups", backupFiles[0]!));
     try {
       expect(
@@ -307,7 +310,7 @@ describe("durable coworker conversations", () => {
       const migrationCount = verified
         .prepare("SELECT count(*) AS count FROM __drizzle_migrations")
         .get() as { count: number };
-      expect(migrationCount.count).toBe(1);
+      expect(migrationCount.count).toBe(5);
     } finally {
       verified.close();
     }

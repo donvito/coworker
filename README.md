@@ -48,6 +48,10 @@ pnpm install
 pnpm dev
 ```
 
+Unpackaged development builds use a separate **Coworker Development** data profile. Set
+`COWORKER_DATA_PATH` to an absolute directory to use another isolated profile; packaged builds
+continue using the normal production data directory.
+
 The app ships with two demo coworkers — **Ava** (accounting) and **Sarah** (sales) — that run on a built-in faux provider, so you can try the full flow without an API key.
 
 To connect a real model, open **Settings → Providers**, add credentials, and verify the provider. Supported: Anthropic, OpenAI, Google, OpenRouter, Ollama, LM Studio, and any custom OpenAI-compatible endpoint. Ollama (`http://127.0.0.1:11434/v1`) and LM Studio (`http://127.0.0.1:1234/v1`) work without an API key.
@@ -73,7 +77,11 @@ To connect a real model, open **Settings → Providers**, add credentials, and v
 
 **Coworkers and chat**
 - Multiple coworkers, each with its own role, system prompt, tool set, and workspace
-- Multiple named conversations per coworker, persisted across restarts
+- Direct conversations with one coworker and shared group channels with two or more coworkers
+- Channel messages reach every member by default; typed `@mentions` narrow a request to specific coworkers
+- Channel requests involving two or more coworkers become turn-based discussions: each coworker sees the latest shared transcript, decides whether it has something to add, and passes quietly when it doesn't
+- Discussions conclude on their own when every coworker passes, with a safety check-in on unusually long discussions; reply mid-discussion to interject and steer, or stop it at any time
+- Multiple named conversations and channels persisted across restarts
 - Search conversation titles and message contents, with messages grouped and timestamped by day
 - Right-click any coworker in the chat sidebar to open their settings
 - Streaming, Markdown-rendered replies with typed tool call rendering
@@ -95,7 +103,7 @@ To connect a real model, open **Settings → Providers**, add credentials, and v
 
 **Skills**
 - Agent Skills-compatible global skill library with per-coworker enablement
-- Bundled `web-search` and `document-authoring` skills
+- Bundled `web-search`, `document-authoring`, and `team-channel-collaboration` skills
 - Install by uploading a `SKILL.md`, from an HTTPS URL in Settings, or by pasting a skill URL into chat
 - Metadata is exposed to the model first; full instructions load on demand through a controlled skill reader
 

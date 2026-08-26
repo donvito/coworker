@@ -9,9 +9,6 @@ export function filterConversations(
   const normalizedQuery = query.trim().toLocaleLowerCase();
   if (!normalizedQuery) return conversations;
 
-  const taskConversationIds = new Map(
-    tasks.map((task) => [task.id, task.threadId] as const),
-  );
   const searchableByConversation = new Map<string, string[]>();
   for (const task of tasks) {
     const values = searchableByConversation.get(task.threadId) ?? [];
@@ -19,12 +16,9 @@ export function filterConversations(
     searchableByConversation.set(task.threadId, values);
   }
   for (const message of messages) {
-    if (!message.taskId) continue;
-    const conversationId = taskConversationIds.get(message.taskId);
-    if (!conversationId) continue;
-    const values = searchableByConversation.get(conversationId) ?? [];
+    const values = searchableByConversation.get(message.conversationId) ?? [];
     values.push(message.content);
-    searchableByConversation.set(conversationId, values);
+    searchableByConversation.set(message.conversationId, values);
   }
 
   return conversations.filter((conversation) =>

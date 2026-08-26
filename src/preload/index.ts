@@ -3,6 +3,7 @@ import type { DesktopApi, DesktopEvent } from "@shared/contracts";
 import { ipcChannels } from "@shared/ipc";
 
 const api: DesktopApi = {
+  platform: process.platform,
   app: {
     bootstrap: () => ipcRenderer.invoke(ipcChannels.bootstrap),
     openDataFolder: () => ipcRenderer.invoke(ipcChannels.openDataFolder),
@@ -17,11 +18,23 @@ const api: DesktopApi = {
     update: (id, input) => ipcRenderer.invoke(ipcChannels.coworkersUpdate, id, input),
     remove: (id) => ipcRenderer.invoke(ipcChannels.coworkersRemove, id),
   },
+  folders: {
+    pick: () => ipcRenderer.invoke(ipcChannels.foldersPick),
+    reveal: (coworkerId, path) =>
+      ipcRenderer.invoke(ipcChannels.foldersReveal, coworkerId, path),
+  },
   conversations: {
     list: (coworkerId) => ipcRenderer.invoke(ipcChannels.conversationsList, coworkerId),
     search: (coworkerId, query) =>
       ipcRenderer.invoke(ipcChannels.conversationsSearch, coworkerId, query),
     create: (input) => ipcRenderer.invoke(ipcChannels.conversationsCreate, input),
+    update: (id, input) =>
+      ipcRenderer.invoke(ipcChannels.conversationsUpdate, id, input),
+    send: (input) => ipcRenderer.invoke(ipcChannels.conversationsSend, input),
+    continueDiscussion: (id) =>
+      ipcRenderer.invoke(ipcChannels.conversationsContinueDiscussion, id),
+    stopDiscussion: (id) =>
+      ipcRenderer.invoke(ipcChannels.conversationsStopDiscussion, id),
   },
   tasks: {
     list: (coworkerId) => ipcRenderer.invoke(ipcChannels.tasksList, coworkerId),
@@ -31,8 +44,8 @@ const api: DesktopApi = {
   messages: {
     list: (coworkerId, taskId) =>
       ipcRenderer.invoke(ipcChannels.messagesList, coworkerId, taskId),
-    listConversation: (coworkerId, conversationId) =>
-      ipcRenderer.invoke(ipcChannels.messagesListConversation, coworkerId, conversationId),
+    listConversation: (conversationId) =>
+      ipcRenderer.invoke(ipcChannels.messagesListConversation, conversationId),
   },
   approvals: {
     list: (status) => ipcRenderer.invoke(ipcChannels.approvalsList, status),
@@ -60,7 +73,6 @@ const api: DesktopApi = {
     listProviderErrors: (limit) =>
       ipcRenderer.invoke(ipcChannels.diagnosticsProviderErrorsList, limit),
     copyProviderReport: () => ipcRenderer.invoke(ipcChannels.diagnosticsProviderReportCopy),
-    exportProviderReport: () => ipcRenderer.invoke(ipcChannels.diagnosticsProviderReportExport),
     exportSupportBundle: () => ipcRenderer.invoke(ipcChannels.diagnosticsSupportBundleExport),
   },
   integrations: {

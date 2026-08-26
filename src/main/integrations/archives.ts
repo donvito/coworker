@@ -21,7 +21,7 @@ import type { ProviderErrorLogger } from "@main/runtime/provider-error-logger";
 interface SupportBundleInput {
   destinationPath: string;
   logger: ApplicationLogger;
-  providerLogger: Pick<ProviderErrorLogger, "path" | "flush">;
+  providerLogger: Pick<ProviderErrorLogger, "path" | "flush" | "report">;
   metadata: Record<string, string>;
 }
 
@@ -43,6 +43,7 @@ interface WorkspaceManifest {
 export async function createSupportBundle(input: SupportBundleInput): Promise<string> {
   const generatedAt = new Date().toISOString();
   await input.providerLogger.flush();
+  const providerReport = await input.providerLogger.report(input.metadata);
   return writeZip(input.destinationPath, async (archive) => {
     archive.append(
       JSON.stringify(
@@ -57,6 +58,7 @@ export async function createSupportBundle(input: SupportBundleInput): Promise<st
       ),
       { name: "system-info.json" },
     );
+    archive.append(providerReport.text, { name: "report.txt" });
     for (const file of await input.logger.readFiles()) {
       archive.append(file.content, { name: `logs/${file.name}` });
     }

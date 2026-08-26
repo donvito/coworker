@@ -29,15 +29,18 @@ import type {
   CreateCoworkerInput,
   CreateScheduleInput,
   CreateTaskInput,
+  DiscussionSession,
   Integration,
   Message,
   RuntimeStatus,
   Schedule,
+  SharedFolder,
   Skill,
   Task,
   TaskImageAttachment,
   TaskStatus,
   ToolCall,
+  UpdateConversationInput,
   UpdateCoworkerInput,
   UpdateScheduleInput,
 } from "@shared/contracts";
@@ -46,10 +49,13 @@ import {
   appMetadata,
   approvals,
   artifacts,
+  conversationMembers,
   conversations,
   coworkerSkills,
   coworkers,
+  discussionSessions,
   integrations,
+  messageMentions,
   messages,
   schedules,
   settings,
@@ -63,6 +69,20 @@ import {
 } from "./schema";
 
 type DrizzleDatabase = NodeSQLiteDatabase;
+type AddMessageInput = Omit<
+  Message,
+  | "id"
+  | "createdAt"
+  | "mentionedCoworkerIds"
+  | "conversationId"
+  | "coworkerId"
+  | "authorName"
+> & {
+  conversationId?: string;
+  coworkerId?: string | null;
+  authorName?: string;
+  mentionedCoworkerIds?: string[];
+};
 
 const defaultSettings: AppSettings = {
   runInBackground: true,
@@ -108,6 +128,7 @@ function coworkerFromRow(row: typeof coworkers.$inferSelect): Coworker {
     enabledTools: parseJson<string[]>(row.enabledToolsJson, []),
     enabledSkillIds: [],
     policies: parseJson<Coworker["policies"]>(row.policiesJson, {}),
+    sharedFolders: parseJson<Coworker["sharedFolders"]>(row.sharedFoldersJson, []),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -133,6 +154,9 @@ function taskFromRow(row: typeof tasks.$inferSelect): Task {
     scheduleId: row.scheduleId,
     runId: String(row.runId),
     threadId: String(row.threadId),
+    sourceMessageId: row.sourceMessageId,
+    discussionId: row.discussionId,
+    discussionTurn: row.discussionTurn,
     title: row.title,
     input: row.input,
     status: row.status as TaskStatus,
@@ -146,10 +170,30 @@ function taskFromRow(row: typeof tasks.$inferSelect): Task {
   };
 }
 
+function discussionFromRow(
+  row: typeof discussionSessions.$inferSelect,
+): DiscussionSession {
+  return {
+    id: row.id,
+    conversationId: row.conversationId,
+    sourceMessageId: row.sourceMessageId,
+    participantIds: parseJson<string[]>(row.participantIdsJson, []),
+    nextTurn: row.nextTurn,
+    turnLimit: row.turnLimit,
+    hardLimit: row.hardLimit,
+    status: row.status,
+    error: row.error,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
 function conversationFromRow(row: typeof conversations.$inferSelect): Conversation {
   return {
     id: row.id,
     coworkerId: row.coworkerId,
+    kind: row.kind,
+    memberIds: [],
     title: row.title,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -174,10 +218,13 @@ function taskImageAttachmentFromRow(
 function messageFromRow(row: typeof messages.$inferSelect): Message {
   return {
     id: row.id,
+    conversationId: row.conversationId,
     coworkerId: row.coworkerId,
+    authorName: row.authorName,
     taskId: row.taskId,
     role: row.role,
     content: row.content,
+    mentionedCoworkerIds: [],
     createdAt: row.createdAt,
   };
 }
@@ -364,10 +411,11 @@ export class CoworkerDatabase {
 
   private backfillLegacyConversations(): void {
     this.database.run(sql`
-      INSERT OR IGNORE INTO conversations(id, coworker_id, title, created_at, updated_at)
+      INSERT OR IGNORE INTO conversations(id, coworker_id, kind, title, created_at, updated_at)
       SELECT
         ${tasks.threadId},
         ${tasks.coworkerId},
+        'direct',
         MIN(${tasks.title}),
         MIN(${tasks.createdAt}),
         MAX(COALESCE(${tasks.completedAt}, ${tasks.startedAt}, ${tasks.createdAt}))
@@ -376,10 +424,11 @@ export class CoworkerDatabase {
       GROUP BY ${tasks.threadId}, ${tasks.coworkerId}
     `);
     this.database.run(sql`
-      INSERT OR IGNORE INTO conversations(id, coworker_id, title, created_at, updated_at)
+      INSERT OR IGNORE INTO conversations(id, coworker_id, kind, title, created_at, updated_at)
       SELECT
         'coworker:' || ${coworkers.id},
         ${coworkers.id},
+        'direct',
         'New conversation',
         ${coworkers.createdAt},
         ${coworkers.updatedAt}
@@ -388,6 +437,19 @@ export class CoworkerDatabase {
         SELECT 1 FROM ${conversations}
         WHERE ${conversations.coworkerId} = ${coworkers.id}
       )
+    `);
+    this.database.run(sql`
+      INSERT OR IGNORE INTO conversation_members(conversation_id, coworker_id, created_at)
+      SELECT id, coworker_id, created_at
+      FROM conversations
+      WHERE coworker_id IS NOT NULL
+    `);
+    this.database.run(sql`
+      INSERT OR IGNORE INTO conversation_members(conversation_id, coworker_id, created_at)
+      SELECT thread_id, coworker_id, MIN(created_at)
+      FROM tasks
+      WHERE thread_id IS NOT NULL AND thread_id <> ''
+      GROUP BY thread_id, coworker_id
     `);
   }
 
@@ -495,7 +557,11 @@ export class CoworkerDatabase {
     return this.withCoworkerSkills(coworkerFromRow(row));
   }
 
-  createCoworker(input: CreateCoworkerInput, workspacePath: string, id = randomUUID()): Coworker {
+  createCoworker(
+    input: CreateCoworkerInput & { sharedFolders?: SharedFolder[] },
+    workspacePath: string,
+    id = randomUUID(),
+  ): Coworker {
     const timestamp = now();
     this.database
       .insert(coworkers)
@@ -512,6 +578,7 @@ export class CoworkerDatabase {
         workspacePath,
         enabledToolsJson: json(input.enabledTools),
         policiesJson: json(input.policies ?? {}),
+        sharedFoldersJson: json(input.sharedFolders ?? []),
         createdAt: timestamp,
         updatedAt: timestamp,
       })
@@ -528,32 +595,26 @@ export class CoworkerDatabase {
   }
 
   listConversations(coworkerId?: string): Conversation[] {
-    const rows = coworkerId
-      ? this.database
-          .select()
-          .from(conversations)
-          .where(eq(conversations.coworkerId, coworkerId))
-          .orderBy(desc(conversations.updatedAt), desc(conversations.createdAt))
-          .all()
-      : this.database
-          .select()
-          .from(conversations)
-          .orderBy(desc(conversations.updatedAt), desc(conversations.createdAt))
-          .all();
-    return rows.map(conversationFromRow);
+    const result = this.database
+      .select()
+      .from(conversations)
+      .orderBy(desc(conversations.updatedAt), desc(conversations.createdAt))
+      .all()
+      .map((row) => this.withConversationMembers(conversationFromRow(row)));
+    return coworkerId
+      ? result.filter((conversation) => conversation.memberIds.includes(coworkerId))
+      : result;
   }
 
   searchConversations(coworkerId: string, query: string, limit = 100): Conversation[] {
     const escapedQuery = query.trim().replaceAll(/([!%_])/g, "!$1").toLowerCase();
     if (!escapedQuery) return this.listConversations(coworkerId).slice(0, limit);
     const pattern = `%${escapedQuery}%`;
-    return this.database
+    const result = this.database
       .select()
       .from(conversations)
       .where(
-        and(
-          eq(conversations.coworkerId, coworkerId),
-          sql<boolean>`(
+        sql<boolean>`(
             lower(${conversations.title}) LIKE ${pattern} ESCAPE '!'
             OR EXISTS (
               SELECT 1 FROM tasks search_tasks
@@ -568,45 +629,225 @@ export class CoworkerDatabase {
             OR EXISTS (
               SELECT 1
               FROM messages search_messages
-              INNER JOIN tasks message_tasks ON message_tasks.id = search_messages.task_id
-              WHERE message_tasks.thread_id = ${conversations.id}
+              WHERE search_messages.conversation_id = ${conversations.id}
                 AND lower(search_messages.content) LIKE ${pattern} ESCAPE '!'
             )
           )`,
-        ),
       )
       .orderBy(desc(conversations.updatedAt), desc(conversations.createdAt))
       .limit(limit)
       .all()
-      .map(conversationFromRow);
+      .map((row) => this.withConversationMembers(conversationFromRow(row)));
+    return result.filter((conversation) => conversation.memberIds.includes(coworkerId));
   }
 
   getConversation(id: string): Conversation {
     const row = this.database.select().from(conversations).where(eq(conversations.id, id)).get();
     if (!row) throw new Error(`Conversation ${id} was not found`);
-    return conversationFromRow(row);
+    return this.withConversationMembers(conversationFromRow(row));
   }
 
   createConversation(
     input: CreateConversationInput,
     id: string = randomUUID(),
   ): Conversation {
-    this.getCoworker(input.coworkerId);
+    const memberIds = [
+      ...new Set([...(input.memberIds ?? []), ...(input.coworkerId ? [input.coworkerId] : [])]),
+    ];
+    const kind = input.kind ?? (memberIds.length > 1 ? "group" : "direct");
+    if (kind === "direct" && memberIds.length !== 1) {
+      throw new Error("A direct conversation must have exactly one coworker");
+    }
+    if (kind === "group" && memberIds.length < 2) {
+      throw new Error("A group conversation must have at least two coworkers");
+    }
+    const members = memberIds.map((memberId) => this.getCoworker(memberId));
     const timestamp = now();
+    this.transaction(() => {
+      this.database
+        .insert(conversations)
+        .values({
+          id,
+          coworkerId: kind === "direct" ? memberIds[0]! : null,
+          kind,
+          title:
+            input.title ??
+            (kind === "direct"
+              ? "New conversation"
+              : members.map((member) => member.name).join(", ")),
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        })
+        .run();
+      this.database
+        .insert(conversationMembers)
+        .values(
+          memberIds.map((memberId) => ({
+            conversationId: id,
+            coworkerId: memberId,
+            createdAt: timestamp,
+          })),
+        )
+        .run();
+    });
+    return this.getConversation(id);
+  }
+
+  updateConversation(id: string, input: UpdateConversationInput): Conversation {
+    const conversation = this.getConversation(id);
+    const memberIds = input.memberIds
+      ? [...new Set(input.memberIds)]
+      : conversation.memberIds;
+    if (
+      (conversation.kind === "direct" && memberIds.length !== 1) ||
+      (conversation.kind === "group" && memberIds.length < 2)
+    ) {
+      throw new Error(
+        conversation.kind === "direct"
+          ? "A direct conversation must have exactly one coworker"
+          : "A group conversation must have at least two coworkers",
+      );
+    }
+    memberIds.forEach((memberId) => this.getCoworker(memberId));
+    const updatedAt = now();
+    this.transaction(() => {
+      this.database
+        .update(conversations)
+        .set({
+          title: input.title ?? conversation.title,
+          coworkerId: conversation.kind === "direct" ? memberIds[0]! : null,
+          updatedAt,
+        })
+        .where(eq(conversations.id, id))
+        .run();
+      if (input.memberIds) {
+        this.database
+          .delete(conversationMembers)
+          .where(eq(conversationMembers.conversationId, id))
+          .run();
+        this.database
+          .insert(conversationMembers)
+          .values(
+            memberIds.map((memberId) => ({
+              conversationId: id,
+              coworkerId: memberId,
+              createdAt: updatedAt,
+            })),
+          )
+          .run();
+      }
+    });
+    return this.getConversation(id);
+  }
+
+  private withConversationMembers(conversation: Conversation): Conversation {
+    const memberIds = this.database
+      .select({ coworkerId: conversationMembers.coworkerId })
+      .from(conversationMembers)
+      .where(eq(conversationMembers.conversationId, conversation.id))
+      .all()
+      .map((row) => row.coworkerId);
+    return { ...conversation, memberIds };
+  }
+
+  createDiscussion(input: {
+    id?: string;
+    conversationId: string;
+    sourceMessageId: string;
+    participantIds: string[];
+    turnLimit?: number;
+    hardLimit?: number;
+  }): DiscussionSession {
+    const conversation = this.getConversation(input.conversationId);
+    const participantIds = [...new Set(input.participantIds)];
+    if (participantIds.length < 2) {
+      throw new Error("A discussion requires at least two coworkers");
+    }
+    if (participantIds.some((id) => !conversation.memberIds.includes(id))) {
+      throw new Error("Discussion participants must belong to the conversation");
+    }
+    participantIds.forEach((id) => this.getCoworker(id));
+    const id = input.id ?? randomUUID();
+    const timestamp = now();
+    const hardLimit = input.hardLimit ?? Math.max(8, participantIds.length);
+    const turnLimit = input.turnLimit ?? hardLimit;
+    if (turnLimit > hardLimit) throw new Error("Discussion turn limit exceeds its hard limit");
     this.database
-      .insert(conversations)
+      .insert(discussionSessions)
       .values({
         id,
-        coworkerId: input.coworkerId,
-        title: input.title ?? "New conversation",
+        conversationId: input.conversationId,
+        sourceMessageId: input.sourceMessageId,
+        participantIdsJson: json(participantIds),
+        nextTurn: 1,
+        turnLimit,
+        hardLimit,
+        status: "active",
+        error: null,
         createdAt: timestamp,
         updatedAt: timestamp,
       })
       .run();
-    return this.getConversation(id);
+    return this.getDiscussion(id);
   }
 
-  updateCoworker(id: string, input: UpdateCoworkerInput): Coworker {
+  getDiscussion(id: string): DiscussionSession {
+    const row = this.database
+      .select()
+      .from(discussionSessions)
+      .where(eq(discussionSessions.id, id))
+      .get();
+    if (!row) throw new Error(`Discussion ${id} was not found`);
+    return discussionFromRow(row);
+  }
+
+  findDiscussionBySourceMessage(sourceMessageId: string): DiscussionSession | null {
+    const row = this.database
+      .select()
+      .from(discussionSessions)
+      .where(eq(discussionSessions.sourceMessageId, sourceMessageId))
+      .get();
+    return row ? discussionFromRow(row) : null;
+  }
+
+  listDiscussions(conversationId?: string): DiscussionSession[] {
+    const rows = conversationId
+      ? this.database
+          .select()
+          .from(discussionSessions)
+          .where(eq(discussionSessions.conversationId, conversationId))
+          .orderBy(desc(discussionSessions.updatedAt))
+          .all()
+      : this.database
+          .select()
+          .from(discussionSessions)
+          .orderBy(desc(discussionSessions.updatedAt))
+          .all();
+    return rows.map(discussionFromRow);
+  }
+
+  updateDiscussion(
+    id: string,
+    patch: Partial<
+      Pick<
+        DiscussionSession,
+        "nextTurn" | "turnLimit" | "hardLimit" | "status" | "error"
+      >
+    >,
+  ): DiscussionSession {
+    this.getDiscussion(id);
+    this.database
+      .update(discussionSessions)
+      .set({ ...patch, updatedAt: now() })
+      .where(eq(discussionSessions.id, id))
+      .run();
+    return this.getDiscussion(id);
+  }
+
+  updateCoworker(
+    id: string,
+    input: UpdateCoworkerInput & { sharedFolders?: SharedFolder[] },
+  ): Coworker {
     this.getCoworker(id);
     const patch: Partial<typeof coworkers.$inferInsert> = { updatedAt: now() };
     if (input.name !== undefined) patch.name = input.name;
@@ -618,6 +859,7 @@ export class CoworkerDatabase {
     if (input.status !== undefined) patch.status = input.status;
     if (input.enabledTools !== undefined) patch.enabledToolsJson = json(input.enabledTools);
     if (input.policies !== undefined) patch.policiesJson = json(input.policies);
+    if (input.sharedFolders !== undefined) patch.sharedFoldersJson = json(input.sharedFolders);
     this.database.update(coworkers).set(patch).where(eq(coworkers.id, id)).run();
     if (input.enabledSkillIds !== undefined) {
       this.setCoworkerSkills(id, input.enabledSkillIds);
@@ -826,15 +1068,16 @@ export class CoworkerDatabase {
       .from(conversations)
       .where(eq(conversations.id, threadId))
       .get();
-    if (conversationRow && conversationRow.coworkerId !== input.coworkerId) {
-      throw new Error("Conversation does not belong to this coworker");
-    }
     if (!conversationRow) {
       this.createConversation(
         { coworkerId: input.coworkerId, title: input.title },
         threadId,
       );
     } else {
+      const conversation = this.getConversation(threadId);
+      if (!conversation.memberIds.includes(input.coworkerId)) {
+        throw new Error("Coworker is not a member of this conversation");
+      }
       const existingTitle = conversationRow.title;
       this.database
         .update(conversations)
@@ -853,6 +1096,9 @@ export class CoworkerDatabase {
         scheduleId: input.scheduleId ?? null,
         runId,
         threadId,
+        sourceMessageId: input.sourceMessageId ?? null,
+        discussionId: input.discussionId ?? null,
+        discussionTurn: input.discussionTurn ?? null,
         title: input.title,
         input: input.input,
         status: "QUEUED",
@@ -861,12 +1107,16 @@ export class CoworkerDatabase {
         createdAt: timestamp,
       })
       .run();
-    this.addMessage({
-      coworkerId: input.coworkerId,
-      taskId: id,
-      role: "user",
-      content: input.input,
-    });
+    if (input.persistUserMessage !== false) {
+      this.addMessage({
+        conversationId: threadId,
+        coworkerId: null,
+        authorName: "You",
+        taskId: id,
+        role: "user",
+        content: input.input,
+      });
+    }
     this.addActivity({
       coworkerId: input.coworkerId,
       taskId: id,
@@ -886,6 +1136,16 @@ export class CoworkerDatabase {
   getTaskByRunId(runId: string): Task | null {
     const row = this.database.select().from(tasks).where(eq(tasks.runId, runId)).get();
     return row ? taskFromRow(row) : null;
+  }
+
+  listTasksBySourceMessage(sourceMessageId: string): Task[] {
+    return this.database
+      .select()
+      .from(tasks)
+      .where(eq(tasks.sourceMessageId, sourceMessageId))
+      .orderBy(asc(tasks.createdAt))
+      .all()
+      .map(taskFromRow);
   }
 
   addTaskImageAttachment(
@@ -1052,54 +1312,142 @@ export class CoworkerDatabase {
     });
   }
 
-  addMessage(input: Omit<Message, "id" | "createdAt">, id = randomUUID()): Message {
+  addMessage(input: AddMessageInput, id: string = randomUUID()): Message {
     const timestamp = now();
+    const task = input.taskId ? this.getTask(input.taskId) : null;
+    const coworkerId =
+      input.coworkerId === undefined
+        ? input.role === "user"
+          ? null
+          : task?.coworkerId ?? null
+        : input.coworkerId;
+    const conversationId =
+      input.conversationId ??
+      task?.threadId ??
+      (coworkerId ? `coworker:${coworkerId}` : null);
+    if (!conversationId) throw new Error("A conversation is required for this message");
+    this.getConversation(conversationId);
+    const authorName =
+      input.authorName ??
+      (input.role === "user"
+        ? "You"
+        : coworkerId
+          ? this.getCoworker(coworkerId).name
+          : "Workroom");
+    const mentionedCoworkerIds = [...new Set(input.mentionedCoworkerIds ?? [])];
     this.database
       .insert(messages)
-      .values({ id, ...input, createdAt: timestamp })
+      .values({
+        id,
+        conversationId,
+        coworkerId,
+        authorName,
+        taskId: input.taskId,
+        role: input.role,
+        content: input.content,
+        createdAt: timestamp,
+      })
       .run();
+    if (mentionedCoworkerIds.length > 0) {
+      this.database
+        .insert(messageMentions)
+        .values(
+          mentionedCoworkerIds.map((coworkerId) => ({
+            messageId: id,
+            coworkerId,
+            createdAt: timestamp,
+          })),
+        )
+        .run();
+    }
     const row = this.database.select().from(messages).where(eq(messages.id, id)).get();
     if (!row) throw new Error(`Message ${id} was not found`);
-    return messageFromRow(row);
+    return this.withMessageMentions(messageFromRow(row));
   }
 
   listMessages(coworkerId: string, taskId?: string, limit = 500): Message[] {
-    const rows = taskId
-      ? this.database
-          .select()
-          .from(messages)
-          .where(and(eq(messages.coworkerId, coworkerId), eq(messages.taskId, taskId)))
-          .orderBy(asc(messages.createdAt))
-          .limit(limit)
-          .all()
-      : this.database
-          .select()
-          .from(messages)
-          .where(eq(messages.coworkerId, coworkerId))
-          .orderBy(asc(messages.createdAt))
-          .limit(limit)
-          .all();
-    return rows.map(messageFromRow);
+    this.getCoworker(coworkerId);
+    if (taskId) {
+      const task = this.getTask(taskId);
+      if (task.coworkerId !== coworkerId) throw new Error("Task does not belong to this coworker");
+      return this.database
+        .select()
+        .from(messages)
+        .where(eq(messages.taskId, taskId))
+        .orderBy(asc(messages.createdAt))
+        .limit(limit)
+        .all()
+        .map((row) => this.withMessageMentions(messageFromRow(row)));
+    }
+    const conversationIds = this.listConversations(coworkerId).map((conversation) => conversation.id);
+    if (conversationIds.length === 0) return [];
+    return this.database
+      .select()
+      .from(messages)
+      .where(inArray(messages.conversationId, conversationIds))
+      .orderBy(asc(messages.createdAt))
+      .limit(limit)
+      .all()
+      .map((row) => this.withMessageMentions(messageFromRow(row)));
   }
 
+  listAllMessages(limit = 2_000): Message[] {
+    return this.database
+      .select()
+      .from(messages)
+      .orderBy(asc(messages.createdAt))
+      .limit(limit)
+      .all()
+      .map((row) => this.withMessageMentions(messageFromRow(row)));
+  }
+
+  listConversationMessages(conversationId: string, limit?: number): Message[];
   listConversationMessages(
     coworkerId: string,
     conversationId: string,
-    limit = 500,
+    limit?: number,
+  ): Message[];
+  listConversationMessages(
+    firstId: string,
+    second?: string | number,
+    third = 500,
   ): Message[] {
+    const coworkerId = typeof second === "string" ? firstId : null;
+    const conversationId = typeof second === "string" ? second : firstId;
+    const limit = typeof second === "number" ? second : third;
     const conversation = this.getConversation(conversationId);
-    if (conversation.coworkerId !== coworkerId) {
-      throw new Error("Conversation does not belong to this coworker");
+    if (coworkerId && !conversation.memberIds.includes(coworkerId)) {
+      throw new Error("Coworker is not a member of this conversation");
     }
-    const rows = this.database
+    return this.database
       .select()
       .from(messages)
-      .innerJoin(tasks, eq(tasks.id, messages.taskId))
-      .where(and(eq(messages.coworkerId, coworkerId), eq(tasks.threadId, conversationId)))
+      .where(eq(messages.conversationId, conversationId))
       .orderBy(asc(messages.createdAt))
       .limit(limit)
-      .all();
-    return rows.map((row) => messageFromRow(row.messages));
+      .all()
+      .map((row) => this.withMessageMentions(messageFromRow(row)));
+  }
+
+  getMessage(id: string): Message {
+    const row = this.database.select().from(messages).where(eq(messages.id, id)).get();
+    if (!row) throw new Error(`Message ${id} was not found`);
+    return this.withMessageMentions(messageFromRow(row));
+  }
+
+  findMessage(id: string): Message | null {
+    const row = this.database.select().from(messages).where(eq(messages.id, id)).get();
+    return row ? this.withMessageMentions(messageFromRow(row)) : null;
+  }
+
+  private withMessageMentions(message: Message): Message {
+    const mentionedCoworkerIds = this.database
+      .select({ coworkerId: messageMentions.coworkerId })
+      .from(messageMentions)
+      .where(eq(messageMentions.messageId, message.id))
+      .all()
+      .map((row) => row.coworkerId);
+    return { ...message, mentionedCoworkerIds };
   }
 
   saveCheckpoint(taskId: string, messages: unknown[], pendingTool?: unknown): void {

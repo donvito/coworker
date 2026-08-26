@@ -19,7 +19,9 @@ import {
   type DocumentFormat,
 } from "@main/integrations/documents";
 import type { CredentialStore } from "@main/security/credential-store";
+import { readDocumentText } from "@main/integrations/document-text";
 import { createEmailDraft, sendEmail, type EmailPayload } from "@main/integrations/email";
+import { resolveSharedFolderPath } from "./shared-folders";
 import { resolveWorkspacePath } from "./workspace-path";
 import { searchWeb } from "@main/integrations/web-search";
 
@@ -40,6 +42,14 @@ const schemas = {
   "files.write": z.object({
     path: z.string().min(1).max(2_000),
     content: z.string().max(5_000_000),
+  }),
+  "folders.list": z.object({
+    folder: z.string().trim().min(1).max(200).optional(),
+    path: z.string().min(1).max(2_000).default("."),
+  }),
+  "folders.read": z.object({
+    folder: z.string().trim().min(1).max(200),
+    path: z.string().min(1).max(2_000),
   }),
   "invoice.create": z.object({
     client: z.string().trim().min(1).max(240),
@@ -194,6 +204,7 @@ export class ToolGateway {
     private readonly credentials: CredentialStore,
     private readonly outboxPath: string,
     private readonly actions: ToolGatewayActions = {},
+    private readonly options: { dataPath?: string } = {},
   ) {}
 
   validateArguments(toolName: string, argumentsValue: unknown): unknown {
@@ -233,7 +244,17 @@ export class ToolGateway {
     const enabledBySkill =
       (input.toolName === "skills.read" && skillNames.size > 0) ||
       (input.toolName === "web.search" && skillNames.has("web-search"));
-    if (!metadata || (!enabledBySkill && !input.coworker.enabledTools.includes(input.toolName))) {
+    // Shared-folder tools are granted by the user configuring folders, not by
+    // the generic tool toggles: the folder grant is the permission.
+    const enabledByFolderGrant =
+      ["folders.list", "folders.read"].includes(input.toolName) &&
+      input.coworker.sharedFolders.length > 0;
+    if (
+      !metadata ||
+      (!enabledBySkill &&
+        !enabledByFolderGrant &&
+        !input.coworker.enabledTools.includes(input.toolName))
+    ) {
       const reason = `${input.toolName} is not enabled for ${input.coworker.name}`;
       return {
         kind: "denied",
@@ -424,6 +445,45 @@ export class ToolGateway {
           filePath: path,
         });
         return { path: args.path, bytes: Buffer.byteLength(args.content), artifactId: artifact.id };
+      }
+      case "folders.list": {
+        const args = schemas["folders.list"].parse(rawArgs);
+        if (!args.folder) {
+          return {
+            readOnly: true,
+            folders: coworker.sharedFolders.map((folder) => ({
+              folder: folder.alias,
+              path: folder.path,
+            })),
+          };
+        }
+        const path = await resolveSharedFolderPath(
+          coworker.sharedFolders,
+          args.folder,
+          args.path,
+          { dataPath: this.options.dataPath },
+        );
+        const entries = await readdir(path, { withFileTypes: true });
+        return {
+          folder: args.folder,
+          path: args.path,
+          readOnly: true,
+          entries: entries.map((entry) => ({
+            name: entry.name,
+            type: entry.isDirectory() ? "directory" : "file",
+          })),
+        };
+      }
+      case "folders.read": {
+        const args = schemas["folders.read"].parse(rawArgs);
+        const path = await resolveSharedFolderPath(
+          coworker.sharedFolders,
+          args.folder,
+          args.path,
+          { dataPath: this.options.dataPath },
+        );
+        const document = await readDocumentText(path);
+        return { folder: args.folder, path: args.path, readOnly: true, ...document };
       }
       case "invoice.create": {
         const args = schemas["invoice.create"].parse(rawArgs);

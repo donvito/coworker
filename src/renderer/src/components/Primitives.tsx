@@ -127,8 +127,8 @@ export function CoworkerModelBadge({
       className={compact ? "coworker-model-badge compact" : "coworker-model-badge"}
       title={`Configured model: ${label}`}
     >
-      <span>{provider}</span>
       <code>{displayName}</code>
+      <span>{provider}</span>
     </span>
   );
 }

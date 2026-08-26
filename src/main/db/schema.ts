@@ -36,6 +36,14 @@ const toolCallStatuses = [
   "DENIED",
 ] as const;
 
+const discussionStatuses = [
+  "active",
+  "awaiting_user",
+  "completed",
+  "cancelled",
+  "failed",
+] as const;
+
 export const schemaMigrations = sqliteTable("schema_migrations", {
   version: integer("version").primaryKey(),
   appliedAt: text("applied_at").notNull(),
@@ -60,6 +68,7 @@ export const coworkers = sqliteTable(
     workspacePath: text("workspace_path").notNull(),
     enabledToolsJson: text("enabled_tools_json").notNull().default("[]"),
     policiesJson: text("policies_json").notNull().default("{}"),
+    sharedFoldersJson: text("shared_folders_json").notNull().default("[]"),
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull(),
   },
@@ -102,17 +111,71 @@ export const conversations = sqliteTable(
   {
     id: text("id").primaryKey(),
     coworkerId: text("coworker_id")
-      .notNull()
       .references(() => coworkers.id, { onDelete: "cascade" }),
+    kind: text("kind", { enum: ["direct", "group"] }).notNull().default("direct"),
     title: text("title").notNull(),
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull(),
   },
   (table) => [
+    check("conversations_kind_check", sql`${table.kind} in ('direct', 'group')`),
     index("conversations_coworker_updated_idx").on(
       table.coworkerId,
       sql`${table.updatedAt} desc`,
     ),
+  ],
+);
+
+export const conversationMembers = sqliteTable(
+  "conversation_members",
+  {
+    conversationId: text("conversation_id")
+      .notNull()
+      .references(() => conversations.id, { onDelete: "cascade" }),
+    coworkerId: text("coworker_id")
+      .notNull()
+      .references(() => coworkers.id, { onDelete: "cascade" }),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.conversationId, table.coworkerId] }),
+    index("conversation_members_coworker_idx").on(table.coworkerId, table.conversationId),
+  ],
+);
+
+export const discussionSessions = sqliteTable(
+  "discussion_sessions",
+  {
+    id: text("id").primaryKey(),
+    conversationId: text("conversation_id")
+      .notNull()
+      .references(() => conversations.id, { onDelete: "cascade" }),
+    sourceMessageId: text("source_message_id").notNull(),
+    participantIdsJson: text("participant_ids_json").notNull(),
+    nextTurn: integer("next_turn").notNull(),
+    turnLimit: integer("turn_limit").notNull(),
+    hardLimit: integer("hard_limit").notNull().default(8),
+    status: text("status", { enum: discussionStatuses }).notNull(),
+    error: text("error"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    check(
+      "discussion_sessions_status_check",
+      sql`${table.status} in ('active', 'awaiting_user', 'completed', 'cancelled', 'failed')`,
+    ),
+    check("discussion_sessions_next_turn_check", sql`${table.nextTurn} >= 0`),
+    check("discussion_sessions_turn_limit_check", sql`${table.turnLimit} > 0`),
+    check(
+      "discussion_sessions_hard_limit_check",
+      sql`${table.hardLimit} >= ${table.turnLimit}`,
+    ),
+    index("discussion_sessions_conversation_idx").on(
+      table.conversationId,
+      sql`${table.updatedAt} desc`,
+    ),
+    uniqueIndex("discussion_sessions_source_message_idx").on(table.sourceMessageId),
   ],
 );
 
@@ -125,7 +188,12 @@ export const tasks = sqliteTable(
       .references(() => coworkers.id, { onDelete: "cascade" }),
     scheduleId: text("schedule_id").references(() => schedules.id, { onDelete: "set null" }),
     runId: text("run_id"),
-    threadId: text("thread_id"),
+    threadId: text("thread_id").references(() => conversations.id, { onDelete: "cascade" }),
+    sourceMessageId: text("source_message_id"),
+    discussionId: text("discussion_id").references(() => discussionSessions.id, {
+      onDelete: "set null",
+    }),
+    discussionTurn: integer("discussion_turn"),
     title: text("title").notNull(),
     input: text("input").notNull(),
     status: text("status", { enum: taskStatuses }).notNull(),
@@ -146,6 +214,14 @@ export const tasks = sqliteTable(
     ),
     check("tasks_source_check", sql`${table.source} in ('manual', 'schedule', 'recovery')`),
     uniqueIndex("tasks_run_id_idx").on(table.runId).where(sql`${table.runId} is not null`),
+    uniqueIndex("tasks_source_message_coworker_idx")
+      .on(table.sourceMessageId, table.coworkerId)
+      .where(
+        sql`${table.sourceMessageId} is not null and ${table.discussionId} is null`,
+      ),
+    uniqueIndex("tasks_discussion_turn_idx")
+      .on(table.discussionId, table.discussionTurn)
+      .where(sql`${table.discussionId} is not null`),
     index("tasks_coworker_queue_idx").on(
       table.coworkerId,
       table.status,
@@ -184,20 +260,39 @@ export const messages = sqliteTable(
   "messages",
   {
     id: text("id").primaryKey(),
-    coworkerId: text("coworker_id")
+    conversationId: text("conversation_id")
       .notNull()
-      .references(() => coworkers.id, { onDelete: "cascade" }),
-    taskId: text("task_id").references(() => tasks.id, { onDelete: "cascade" }),
+      .references(() => conversations.id, { onDelete: "cascade" }),
+    coworkerId: text("coworker_id").references(() => coworkers.id, { onDelete: "set null" }),
+    authorName: text("author_name").notNull(),
+    taskId: text("task_id").references(() => tasks.id, { onDelete: "set null" }),
     role: text("role", { enum: ["user", "assistant", "system", "tool"] }).notNull(),
     content: text("content").notNull(),
     createdAt: text("created_at").notNull(),
   },
   (table) => [
     check("messages_role_check", sql`${table.role} in ('user', 'assistant', 'system', 'tool')`),
-    index("messages_coworker_created_idx").on(
-      table.coworkerId,
+    index("messages_conversation_created_idx").on(
+      table.conversationId,
       sql`${table.createdAt} asc`,
     ),
+  ],
+);
+
+export const messageMentions = sqliteTable(
+  "message_mentions",
+  {
+    messageId: text("message_id")
+      .notNull()
+      .references(() => messages.id, { onDelete: "cascade" }),
+    coworkerId: text("coworker_id")
+      .notNull()
+      .references(() => coworkers.id, { onDelete: "cascade" }),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.messageId, table.coworkerId] }),
+    index("message_mentions_coworker_idx").on(table.coworkerId, table.messageId),
   ],
 );
 
@@ -410,9 +505,12 @@ export const databaseSchema = {
   coworkers,
   schedules,
   conversations,
+  conversationMembers,
+  discussionSessions,
   tasks,
   taskImageAttachments,
   messages,
+  messageMentions,
   taskCheckpoints,
   toolCalls,
   approvals,

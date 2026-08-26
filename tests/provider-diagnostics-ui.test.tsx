@@ -23,7 +23,7 @@ describe("provider diagnostics settings", () => {
       },
     ]);
     const copyProviderReport = vi.fn().mockResolvedValue({ count: 1 });
-    const exportSupportBundle = vi.fn().mockResolvedValue("/tmp/Coworker-Support.zip");
+    const exportSupportBundle = vi.fn().mockResolvedValue("/tmp/Coworker-Diagnostics.zip");
     const exportDataBackup = vi.fn().mockResolvedValue("/tmp/Coworker-All-Data.zip");
     Object.defineProperty(window, "coworker", {
       configurable: true,
@@ -39,7 +39,6 @@ describe("provider diagnostics settings", () => {
         diagnostics: {
           listProviderErrors,
           copyProviderReport,
-          exportProviderReport: vi.fn().mockResolvedValue(null),
           exportSupportBundle,
         },
       },
@@ -77,9 +76,10 @@ describe("provider diagnostics settings", () => {
       "Copied a redacted report with 1 provider error.",
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /Download support ZIP/ }));
+    expect(screen.queryByRole("button", { name: /Export report/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Download diagnostics ZIP/ }));
     await waitFor(() => expect(exportSupportBundle).toHaveBeenCalledOnce());
-    expect(screen.getByRole("status").textContent).toContain("Support bundle saved");
+    expect(screen.getByRole("status").textContent).toContain("Diagnostics ZIP saved");
 
     fireEvent.click(screen.getByRole("button", { name: /Export all data/ }));
     await waitFor(() => expect(exportDataBackup).toHaveBeenCalledOnce());

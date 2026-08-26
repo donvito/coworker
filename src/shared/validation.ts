@@ -20,6 +20,7 @@ const maxImagesTotalBase64Length = Math.ceil(maxImagesTotalBytes / 3) * 4;
 
 export const idSchema = identifier;
 export const modelProviderSchema = z.enum(modelProviders);
+export const sharedFolderPathSchema = z.string().trim().min(1).max(1_000);
 
 export const createCoworkerSchema = z.object({
   name: z.string().trim().min(1).max(80),
@@ -31,6 +32,7 @@ export const createCoworkerSchema = z.object({
   enabledTools: z.array(z.string().min(1).max(128)).max(50),
   enabledSkillIds: z.array(identifier).max(100).optional(),
   policies: policyRecord.optional(),
+  sharedFolderPaths: z.array(z.string().trim().min(1).max(1_000)).max(20).optional(),
 });
 
 export const updateCoworkerSchema = createCoworkerSchema
@@ -52,10 +54,70 @@ export const createTaskSchema = z.object({
   threadId: identifier.optional(),
 });
 
-export const createConversationSchema = z.object({
-  coworkerId: identifier,
-  title: z.string().trim().min(1).max(160).optional(),
+export const createConversationSchema = z
+  .object({
+    coworkerId: identifier.optional(),
+    kind: z.enum(["direct", "group"]).optional(),
+    memberIds: z.array(identifier).min(1).max(50).optional(),
+    title: z.string().trim().min(1).max(160).optional(),
+  })
+  .superRefine((value, context) => {
+    const members = [...new Set([...(value.memberIds ?? []), ...(value.coworkerId ? [value.coworkerId] : [])])];
+    const kind = value.kind ?? (members.length > 1 ? "group" : "direct");
+    if (kind === "direct" && members.length !== 1) {
+      context.addIssue({
+        code: "custom",
+        message: "A direct conversation must have exactly one coworker",
+        path: ["memberIds"],
+      });
+    }
+    if (kind === "group" && members.length < 2) {
+      context.addIssue({
+        code: "custom",
+        message: "A group conversation must have at least two coworkers",
+        path: ["memberIds"],
+      });
+    }
+  });
+
+export const updateConversationSchema = z
+  .object({
+    title: z.string().trim().min(1).max(160).optional(),
+    memberIds: z.array(identifier).min(1).max(50).optional(),
+  })
+  .refine((value) => Object.keys(value).length > 0, "At least one field is required");
+
+const conversationImageSchema = z.object({
+  data: z.string().min(4).max(maxImageBase64Length),
+  mimeType: z.enum(["image/jpeg", "image/png", "image/webp", "image/gif"]),
+  name: z.string().trim().min(1).max(180),
+  size: z.number().int().positive().max(maxImageBytes),
 });
+
+export const sendConversationMessageSchema = z
+  .object({
+    conversationId: identifier,
+    clientMessageId: identifier,
+    content: z.string().trim().max(100_000),
+    mentionedCoworkerIds: z.array(identifier).max(50),
+    images: z.array(conversationImageSchema).max(4).optional(),
+  })
+  .superRefine((value, context) => {
+    if (!value.content && !value.images?.length) {
+      context.addIssue({ code: "custom", message: "A message or image is required" });
+    }
+    if (new Set(value.mentionedCoworkerIds).size !== value.mentionedCoworkerIds.length) {
+      context.addIssue({
+        code: "custom",
+        message: "Mentioned coworkers must be unique",
+        path: ["mentionedCoworkerIds"],
+      });
+    }
+    const totalLength = (value.images ?? []).reduce((sum, image) => sum + image.data.length, 0);
+    if (totalLength > maxImagesTotalBase64Length) {
+      context.addIssue({ code: "custom", message: "Attached images must be 20 MB or smaller in total" });
+    }
+  });
 
 export const conversationSearchSchema = z.string().trim().min(1).max(500);
 
@@ -233,6 +295,7 @@ export const configureModelSchema = z
     provider: z.enum(remoteModelProviders),
     apiKey: z.string().trim().max(2_000).optional(),
     baseUrl: modelBaseUrlSchema.optional(),
+    defaultModelName: z.string().trim().min(1).max(160).optional(),
   })
   .superRefine((value, context) => {
     if (value.provider === "openai-compatible" && !value.baseUrl) {

@@ -9,13 +9,14 @@ import { CoworkersPage } from "./pages/CoworkersPage";
 import { FilesPage } from "./pages/FilesPage";
 import { HomePage } from "./pages/HomePage";
 import { SchedulesPage } from "./pages/SchedulesPage";
-import { SettingsPage } from "./pages/SettingsPage";
+import { SettingsPage, type SettingsTab } from "./pages/SettingsPage";
 import { useAppData } from "./state/AppDataProvider";
 
 export default function App() {
   const { snapshot, loading, error, refresh, lastEvent } = useAppData();
   const [page, setPage] = useState<PageId>("home");
   const [selectedCoworkerId, setSelectedCoworkerId] = useState<string | null>(null);
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>("general");
   const theme = snapshot?.settings.theme ?? "graphite";
 
   useEffect(() => {
@@ -65,6 +66,13 @@ export default function App() {
   function navigate(nextPage: PageId) {
     setPage(nextPage);
     setSelectedCoworkerId(null);
+    setSettingsTab("general");
+  }
+
+  function openModelSettings() {
+    setSettingsTab("models");
+    setPage("settings");
+    setSelectedCoworkerId(null);
   }
 
   return (
@@ -73,6 +81,7 @@ export default function App() {
       conversationMode={page === "coworkers" && Boolean(selectedCoworker)}
       onNavigate={navigate}
       pendingApprovals={pendingApprovals}
+      version={snapshot.version}
     >
       {error ? (
         <div className="global-error">
@@ -97,15 +106,21 @@ export default function App() {
           coworker={selectedCoworker}
           coworkers={snapshot.coworkers}
           conversations={snapshot.conversations.filter(
-            (conversation) => conversation.coworkerId === selectedCoworker.id,
+            (conversation) => conversation.memberIds.includes(selectedCoworker.id),
           )}
+          discussions={snapshot.discussions}
           tasks={snapshot.tasks}
           approvals={snapshot.approvals}
           artifacts={snapshot.artifacts.filter(
             (artifact) => artifact.coworkerId === selectedCoworker.id,
           )}
           messages={snapshot.messages.filter(
-            (message) => message.coworkerId === selectedCoworker.id,
+            (message) =>
+              snapshot.conversations.some(
+                (conversation) =>
+                  conversation.id === message.conversationId &&
+                  conversation.memberIds.includes(selectedCoworker.id),
+              ),
           )}
           imageAttachments={snapshot.imageAttachments.filter(
             (attachment) => attachment.coworkerId === selectedCoworker.id,
@@ -116,6 +131,7 @@ export default function App() {
           onBack={() => setSelectedCoworkerId(null)}
           onChanged={refresh}
           onOpenApprovals={() => navigate("approvals")}
+          onOpenModelSettings={openModelSettings}
           onRemoved={() => setSelectedCoworkerId(null)}
           onSelectCoworker={(coworker) => setSelectedCoworkerId(coworker.id)}
         />
@@ -127,6 +143,7 @@ export default function App() {
           settings={snapshot.settings}
           onOpen={(coworker) => setSelectedCoworkerId(coworker.id)}
           onChanged={refresh}
+          onOpenModelSettings={openModelSettings}
         />
       ) : null}
 
@@ -167,6 +184,7 @@ export default function App() {
           coworkers={snapshot.coworkers}
           dataPath={snapshot.dataPath}
           version={snapshot.version}
+          initialTab={settingsTab}
           onChanged={refresh}
         />
       ) : null}

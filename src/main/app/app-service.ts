@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
+import type { Worker } from "node:worker_threads";
 import type {
   AgentRunReceipt,
   AgentRunRequest,
@@ -9,14 +10,19 @@ import type {
   Approval,
   ApprovalDecisionInput,
   ApprovalStatus,
+  ConfigureModelResult,
   CreateConversationInput,
   CreateCoworkerInput,
   CreateScheduleInput,
   CreateTaskInput,
   DesktopEvent,
+  DiscussionSession,
   Integration,
   ModelProvider,
   RemoteModelProvider,
+  SendConversationMessageInput,
+  Task,
+  UpdateConversationInput,
   WebSearchProvider,
   UpdateCoworkerInput,
   UpdateScheduleInput,
@@ -38,14 +44,17 @@ import { deleteArtifactFile } from "@main/integrations/artifact-files";
 import {
   loadImageAttachments,
   parseAgentPrompt,
+  parseConversationImages,
   persistImageAttachments,
   removePersistedImageAttachments,
+  type IncomingImageAttachment,
 } from "@main/integrations/image-attachments";
 import {
   CredentialDecryptionError,
   type CredentialStore,
 } from "@main/security/credential-store";
 import { SchedulerService } from "@main/scheduler/scheduler-service";
+import { resolveSharedFolderGrants } from "@main/tools/shared-folders";
 import { ToolGateway } from "@main/tools/tool-gateway";
 import { CoworkerRuntimeManager } from "@main/runtime/runtime-manager";
 import { ProviderErrorLogger } from "@main/runtime/provider-error-logger";
@@ -59,6 +68,7 @@ import {
 } from "@main/integrations/skills";
 import { createDataBackup } from "@main/integrations/archives";
 import { webSearchCredentialKey } from "@main/integrations/web-search";
+import { DISCUSSION_PASS_MARKER, isDiscussionPass } from "@shared/discussion";
 
 export interface DesktopAppServiceOptions {
   dataPath: string;
@@ -66,6 +76,7 @@ export interface DesktopAppServiceOptions {
   applicationLogger?: ApplicationLogger;
   database?: CoworkerDatabase;
   credentials: CredentialStore;
+  workerFactory?: () => Worker;
   onSettingsChanged?: (settings: AppSettings) => void | Promise<void>;
 }
 
@@ -120,6 +131,7 @@ export class DesktopAppService {
       {
         createSchedule: (input) => this.createSchedule(input),
       },
+      { dataPath: options.dataPath },
     );
     this.runtime = new CoworkerRuntimeManager({
       database: this.database,
@@ -128,6 +140,9 @@ export class DesktopAppService {
       emit: (event) => this.emit(event),
       providerErrors: this.providerErrors,
       applicationErrors: options.applicationLogger,
+      workerFactory: options.workerFactory,
+      onTaskCompleted: (task) => this.advanceDiscussion(task),
+      onTaskFailed: (task, error) => this.failDiscussion(task, error),
     });
     this.scheduler = new SchedulerService(this.database, async (task) => {
       this.emit({ type: "entity.changed", entity: "tasks", id: task.id });
@@ -162,6 +177,7 @@ export class DesktopAppService {
     this.enableScheduleCreation();
     await this.options.onSettingsChanged?.(this.database.getSettings());
     await this.scheduler.start();
+    await this.recoverDiscussions();
     for (const coworker of this.database.listCoworkers()) {
       if (this.database.listTasks(coworker.id).some((task) => task.status === "QUEUED")) {
         this.runtime.enqueueTask(coworker.id);
@@ -186,10 +202,9 @@ export class DesktopAppService {
     return {
       coworkers: this.database.listCoworkers(),
       conversations: this.database.listConversations(),
+      discussions: this.database.listDiscussions(),
       tasks: this.database.listTasks(),
-      messages: this.database
-        .listCoworkers()
-        .flatMap((coworker) => this.database.listMessages(coworker.id)),
+      messages: this.database.listAllMessages(),
       imageAttachments: this.database.listImageAttachments().map((attachment) => ({
         id: attachment.id,
         taskId: attachment.taskId,
@@ -212,6 +227,9 @@ export class DesktopAppService {
   }
 
   async createCoworker(input: CreateCoworkerInput) {
+    const sharedFolders = await resolveSharedFolderGrants(input.sharedFolderPaths ?? [], {
+      dataPath: this.options.dataPath,
+    });
     const provisionalPath = join(
       this.options.dataPath,
       "workspaces",
@@ -224,6 +242,7 @@ export class DesktopAppService {
         enabledSkillIds:
           input.enabledSkillIds ??
           this.database.listSkills().filter((skill) => skill.bundled).map((skill) => skill.id),
+        sharedFolders,
       },
       provisionalPath,
     );
@@ -233,7 +252,13 @@ export class DesktopAppService {
   }
 
   async updateCoworker(id: string, input: UpdateCoworkerInput) {
-    const coworker = this.database.updateCoworker(id, input);
+    const sharedFolders =
+      input.sharedFolderPaths === undefined
+        ? undefined
+        : await resolveSharedFolderGrants(input.sharedFolderPaths, {
+            dataPath: this.options.dataPath,
+          });
+    const coworker = this.database.updateCoworker(id, { ...input, sharedFolders });
     if (this.runtime) await this.runtime.stop(id);
     if (coworker.status === "active") this.runtime.enqueueTask(id);
     this.emit({ type: "entity.changed", entity: "coworkers", id });
@@ -252,6 +277,517 @@ export class DesktopAppService {
     const conversation = this.database.createConversation(input);
     this.emit({ type: "entity.changed", entity: "conversations", id: conversation.id });
     return conversation;
+  }
+
+  updateConversation(id: string, input: UpdateConversationInput) {
+    if (input.memberIds) {
+      const current = this.database.getConversation(id);
+      const nextMembers = new Set(input.memberIds);
+      const removed = current.memberIds.filter((memberId) => !nextMembers.has(memberId));
+      const activeRemovedTask = this.database
+        .listTasks()
+        .find(
+          (task) =>
+            task.threadId === id &&
+            removed.includes(task.coworkerId) &&
+            ["QUEUED", "RUNNING", "WAITING_FOR_APPROVAL"].includes(task.status),
+        );
+      if (activeRemovedTask) {
+        const coworker = this.database.getCoworker(activeRemovedTask.coworkerId);
+        throw new Error(`Wait for or cancel ${coworker.name}'s channel work before removing them`);
+      }
+    }
+    const conversation = this.database.updateConversation(id, input);
+    this.emit({ type: "entity.changed", entity: "conversations", id });
+    return conversation;
+  }
+
+  async sendConversationMessage(input: SendConversationMessageInput) {
+    const conversation = this.database.getConversation(input.conversationId);
+    const existingMessage = this.database.findMessage(input.clientMessageId);
+    if (existingMessage) {
+      if (existingMessage.conversationId !== input.conversationId) {
+        throw new Error("This message identifier is already used in another conversation");
+      }
+      const existingMentions = [...existingMessage.mentionedCoworkerIds].sort().join("\0");
+      const rawMentions = [...new Set(input.mentionedCoworkerIds)].sort().join("\0");
+      const expandedMentions = [
+        ...new Set(
+          input.mentionedCoworkerIds.length === 0
+            ? conversation.memberIds
+            : input.mentionedCoworkerIds,
+        ),
+      ]
+        .sort()
+        .join("\0");
+      if (
+        existingMessage.content !== (input.content || "Analyze the attached image.") ||
+        (existingMentions !== rawMentions && existingMentions !== expandedMentions)
+      ) {
+        throw new Error("This message identifier was already used with different content");
+      }
+      const existingDiscussion = this.database.findDiscussionBySourceMessage(
+        existingMessage.id,
+      );
+      return {
+        message: existingMessage,
+        runs: this.database.listTasksBySourceMessage(existingMessage.id).map((task) => ({
+          coworkerId: task.coworkerId,
+          runId: task.runId,
+          taskId: task.id,
+        })),
+        discussion: existingDiscussion,
+      };
+    }
+
+    const mentionedCoworkerIds = [...new Set(input.mentionedCoworkerIds)];
+    const ongoingDiscussion =
+      conversation.kind === "group"
+        ? this.database
+            .listDiscussions(conversation.id)
+            .find((item) => ["active", "awaiting_user"].includes(item.status))
+        : undefined;
+    if (ongoingDiscussion && mentionedCoworkerIds.length === 0) {
+      return this.interjectInDiscussion(conversation.id, ongoingDiscussion, input);
+    }
+    if (ongoingDiscussion) {
+      throw new Error(
+        "A discussion is in progress. Reply without mentions to join it, or end it before starting new work.",
+      );
+    }
+    const targetIds =
+      mentionedCoworkerIds.length === 0
+        ? conversation.memberIds
+        : mentionedCoworkerIds;
+    if (targetIds.length === 0) {
+      throw new Error("This conversation has no coworkers to respond");
+    }
+    const isDiscussion = targetIds.length >= 2;
+    if (targetIds.some((id) => !conversation.memberIds.includes(id))) {
+      throw new Error("Messages can only mention coworkers who belong to this conversation");
+    }
+    const targets = targetIds.map((id) => this.database.getCoworker(id));
+    const paused = targets.find((coworker) => coworker.status !== "active");
+    if (paused) throw new Error(`${paused.name} is paused`);
+
+    const images = parseConversationImages(input.images);
+    if (images.length > 0) {
+      const capabilities = await Promise.all(
+        targets.map((coworker) =>
+          getModelCapabilities(
+            coworker.modelProvider,
+            coworker.modelName,
+            this.options.credentials,
+          ),
+        ),
+      );
+      const unsupportedIndex = capabilities.findIndex((item) => !item.supportsImages);
+      if (unsupportedIndex >= 0) {
+        const unsupported = targets[unsupportedIndex]!;
+        throw new Error(
+          `${unsupported.modelName} does not support image input. Choose a vision-capable model for ${unsupported.name}.`,
+        );
+      }
+    }
+
+    const discussionId = isDiscussion ? randomUUID() : null;
+    const dispatchTargets = isDiscussion ? targets.slice(0, 1) : targets;
+    const prepared = dispatchTargets.map((coworker) => ({
+      coworker,
+      taskId: randomUUID(),
+      runId: randomUUID(),
+    }));
+    const persisted = new Map<string, Awaited<ReturnType<typeof persistImageAttachments>>>();
+    try {
+      for (const item of prepared) {
+        persisted.set(
+          item.taskId,
+          await persistImageAttachments(
+            item.coworker.workspacePath,
+            item.taskId,
+            images,
+          ),
+        );
+      }
+      const message = this.database.transaction(() => {
+        const createdMessage = this.database.addMessage(
+          {
+            conversationId: conversation.id,
+            coworkerId: null,
+            authorName: "You",
+            taskId: null,
+            role: "user",
+            content: input.content || "Analyze the attached image.",
+            mentionedCoworkerIds: targetIds,
+          },
+          input.clientMessageId,
+        );
+        if (discussionId) {
+          this.database.createDiscussion({
+            id: discussionId,
+            conversationId: conversation.id,
+            sourceMessageId: createdMessage.id,
+            participantIds: targetIds,
+          });
+        }
+        for (const item of prepared) {
+          const task = this.database.createTask(
+            {
+              coworkerId: item.coworker.id,
+              title: taskTitle(createdMessage.content),
+              input: createdMessage.content,
+              source: "manual",
+              runId: item.runId,
+              threadId: conversation.id,
+              sourceMessageId: createdMessage.id,
+              discussionId: discussionId ?? undefined,
+              discussionTurn: discussionId ? 0 : undefined,
+              persistUserMessage: false,
+            },
+            item.taskId,
+          );
+          for (const attachment of persisted.get(item.taskId) ?? []) {
+            this.database.addTaskImageAttachment({
+              ...attachment,
+              coworkerId: item.coworker.id,
+              taskId: task.id,
+            });
+          }
+        }
+        return createdMessage;
+      });
+      this.emit({ type: "entity.changed", entity: "conversations", id: conversation.id });
+      if (discussionId) {
+        this.emit({ type: "entity.changed", entity: "discussions", id: discussionId });
+      }
+      this.emit({ type: "entity.changed", entity: "tasks" });
+      this.emit({ type: "entity.changed", entity: "activity" });
+      for (const item of prepared) this.runtime.enqueueTask(item.coworker.id);
+      return {
+        message,
+        runs: prepared.map((item) => ({
+          coworkerId: item.coworker.id,
+          runId: item.runId,
+          taskId: item.taskId,
+        })),
+        discussion: discussionId ? this.database.getDiscussion(discussionId) : null,
+      };
+    } catch (error) {
+      await Promise.all(
+        prepared.map((item) =>
+          removePersistedImageAttachments(item.coworker.workspacePath, item.taskId).catch(
+            () => undefined,
+          ),
+        ),
+      );
+      throw error;
+    }
+  }
+
+  private async interjectInDiscussion(
+    conversationId: string,
+    discussion: DiscussionSession,
+    input: SendConversationMessageInput,
+  ) {
+    if (input.images && input.images.length > 0) {
+      throw new Error("Images cannot be attached while a discussion is in progress");
+    }
+    if (!input.content.trim()) {
+      throw new Error("Write a message to add to the discussion");
+    }
+    const message = this.database.addMessage(
+      {
+        conversationId,
+        coworkerId: null,
+        authorName: "You",
+        taskId: null,
+        role: "user",
+        content: input.content,
+        mentionedCoworkerIds: [],
+      },
+      input.clientMessageId,
+    );
+    this.emit({ type: "entity.changed", entity: "conversations", id: conversationId });
+    let run: (AgentRunReceipt & { coworkerId: string }) | null = null;
+    if (discussion.status === "awaiting_user") {
+      const extended = this.extendDiscussion(discussion);
+      try {
+        run = await this.createDiscussionTurn(extended, extended.nextTurn);
+      } catch (error) {
+        await this.markDiscussionFailed(
+          discussion.id,
+          error instanceof Error ? error.message : String(error),
+        );
+        throw error;
+      }
+    }
+    return {
+      message,
+      runs: run ? [run] : [],
+      discussion: this.database.getDiscussion(discussion.id),
+    };
+  }
+
+  async continueDiscussion(id: string) {
+    const discussion = this.database.getDiscussion(id);
+    if (discussion.status !== "awaiting_user") {
+      throw new Error("This discussion is not waiting to continue");
+    }
+    const extended = this.extendDiscussion(discussion);
+    try {
+      const run = await this.createDiscussionTurn(extended, extended.nextTurn);
+      return { discussion: this.database.getDiscussion(id), run };
+    } catch (error) {
+      await this.markDiscussionFailed(
+        id,
+        error instanceof Error ? error.message : String(error),
+      );
+      throw error;
+    }
+  }
+
+  /** Grants another two rounds of runway when a paused discussion resumes. */
+  private extendDiscussion(discussion: DiscussionSession): DiscussionSession {
+    const extension = discussion.participantIds.length * 2;
+    const hardLimit = Math.max(
+      discussion.hardLimit,
+      discussion.nextTurn + extension,
+    );
+    return this.database.updateDiscussion(discussion.id, {
+      status: "active",
+      turnLimit: hardLimit,
+      hardLimit,
+      error: null,
+    });
+  }
+
+  async stopDiscussion(id: string) {
+    const discussion = this.database.getDiscussion(id);
+    if (["completed", "cancelled"].includes(discussion.status)) return discussion;
+    const cancelled = this.database.updateDiscussion(id, {
+      status: "cancelled",
+      error: null,
+    });
+    this.emit({ type: "entity.changed", entity: "discussions", id });
+    const activeTasks = this.database
+      .listTasks()
+      .filter(
+        (task) =>
+          task.discussionId === id &&
+          ["QUEUED", "RUNNING", "WAITING_FOR_APPROVAL"].includes(task.status),
+      );
+    for (const task of activeTasks) await this.cancelTask(task.id);
+    return cancelled;
+  }
+
+  async advanceDiscussion(task: Task): Promise<void> {
+    if (!task.discussionId || task.discussionTurn === null) return;
+    try {
+      const discussion = this.database.getDiscussion(task.discussionId);
+      if (
+        discussion.status !== "active" ||
+        task.discussionTurn !== discussion.nextTurn - 1
+      ) {
+        return;
+      }
+      if (this.hasDiscussionConsensus(discussion)) {
+        this.database.updateDiscussion(discussion.id, { status: "completed" });
+        this.emit({
+          type: "entity.changed",
+          entity: "discussions",
+          id: discussion.id,
+        });
+        return;
+      }
+      if (discussion.nextTurn >= discussion.hardLimit) {
+        this.database.updateDiscussion(discussion.id, { status: "awaiting_user" });
+        this.emit({
+          type: "entity.changed",
+          entity: "discussions",
+          id: discussion.id,
+        });
+        return;
+      }
+      await this.createDiscussionTurn(discussion, discussion.nextTurn);
+    } catch (error) {
+      await this.markDiscussionFailed(
+        task.discussionId,
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  }
+
+  /**
+   * A discussion concludes when every participant has passed in a row: each
+   * coworker looked at the latest state and had nothing more to add.
+   */
+  private hasDiscussionConsensus(discussion: DiscussionSession): boolean {
+    const completedTurns = this.database
+      .listTasks()
+      .filter(
+        (task) =>
+          task.discussionId === discussion.id && task.status === "COMPLETED",
+      )
+      .sort((left, right) => (left.discussionTurn ?? 0) - (right.discussionTurn ?? 0));
+    let trailingPasses = 0;
+    for (let index = completedTurns.length - 1; index >= 0; index -= 1) {
+      if (!isDiscussionPass(completedTurns[index]?.result)) break;
+      trailingPasses += 1;
+    }
+    return trailingPasses >= discussion.participantIds.length;
+  }
+
+  private async failDiscussion(task: Task, error: string): Promise<void> {
+    if (!task.discussionId) return;
+    const discussion = this.database.getDiscussion(task.discussionId);
+    if (discussion.status !== "active") return;
+    await this.markDiscussionFailed(discussion.id, error);
+  }
+
+  private async markDiscussionFailed(id: string, error: string): Promise<void> {
+    this.database.updateDiscussion(id, { status: "failed", error });
+    this.emit({ type: "entity.changed", entity: "discussions", id });
+    await this.options.applicationLogger?.error(
+      "discussion.advance",
+      new Error(error),
+      { discussionId: id },
+    );
+  }
+
+  private async createDiscussionTurn(
+    discussion: DiscussionSession,
+    turn: number,
+  ): Promise<AgentRunReceipt & { coworkerId: string }> {
+    if (discussion.status !== "active") {
+      throw new Error("Discussion is not active");
+    }
+    if (turn >= discussion.hardLimit) {
+      throw new Error("Discussion turn limit reached");
+    }
+    const coworkerId =
+      discussion.participantIds[turn % discussion.participantIds.length];
+    if (!coworkerId) throw new Error("Discussion has no available speaker");
+    const coworker = this.database.getCoworker(coworkerId);
+    if (coworker.status !== "active") throw new Error(`${coworker.name} is paused`);
+    const sourceMessage = this.database.getMessage(discussion.sourceMessageId);
+    const taskId = randomUUID();
+    const runId = randomUUID();
+    const images = await this.loadDiscussionSourceImages(
+      discussion.sourceMessageId,
+    );
+    const persisted = await persistImageAttachments(
+      coworker.workspacePath,
+      taskId,
+      images,
+    );
+    try {
+      this.database.transaction(() => {
+        const task = this.database.createTask(
+          {
+            coworkerId,
+            title: taskTitle(sourceMessage.content),
+            input:
+              turn === 0
+                ? sourceMessage.content
+                : `[Channel discussion turn ${turn + 1}. First decide whether you can add real value right now: new information, a concrete disagreement, a resolved dependency, or a distinct perspective your role is suited for. If not, reply with exactly ${DISCUSSION_PASS_MARKER}. Otherwise react to the newest coworker and user messages before adding your own contribution.]\n\nOriginal request:\n${sourceMessage.content}`,
+            source: "manual",
+            runId,
+            threadId: discussion.conversationId,
+            sourceMessageId: sourceMessage.id,
+            discussionId: discussion.id,
+            discussionTurn: turn,
+            persistUserMessage: false,
+          },
+          taskId,
+        );
+        for (const attachment of persisted) {
+          this.database.addTaskImageAttachment({
+            ...attachment,
+            coworkerId,
+            taskId: task.id,
+          });
+        }
+        this.database.updateDiscussion(discussion.id, {
+          nextTurn: turn + 1,
+          status: "active",
+          error: null,
+        });
+      });
+    } catch (error) {
+      await removePersistedImageAttachments(coworker.workspacePath, taskId).catch(
+        () => undefined,
+      );
+      throw error;
+    }
+    this.emit({ type: "entity.changed", entity: "tasks", id: taskId });
+    this.emit({
+      type: "entity.changed",
+      entity: "discussions",
+      id: discussion.id,
+    });
+    this.emit({
+      type: "entity.changed",
+      entity: "conversations",
+      id: discussion.conversationId,
+    });
+    this.emit({ type: "entity.changed", entity: "activity" });
+    this.runtime.enqueueTask(coworkerId);
+    return { coworkerId, runId, taskId };
+  }
+
+  private async loadDiscussionSourceImages(
+    sourceMessageId: string,
+  ): Promise<IncomingImageAttachment[]> {
+    for (const task of this.database.listTasksBySourceMessage(sourceMessageId)) {
+      const attachments = this.database.listTaskImageAttachments(task.id);
+      if (attachments.length === 0) continue;
+      const coworker = this.database.getCoworker(task.coworkerId);
+      const images = await loadImageAttachments(
+        coworker.workspacePath,
+        attachments,
+      );
+      return images.map((image, index) => ({
+        data: Buffer.from(image.data, "base64"),
+        mimeType: image.mimeType as IncomingImageAttachment["mimeType"],
+        name: attachments[index]?.name ?? `image-${index + 1}`,
+      }));
+    }
+    return [];
+  }
+
+  private async recoverDiscussions(): Promise<void> {
+    for (const discussion of this.database
+      .listDiscussions()
+      .filter((item) => item.status === "active")) {
+      const tasks = this.database
+        .listTasks()
+        .filter((task) => task.discussionId === discussion.id)
+        .sort(
+          (left, right) =>
+            (left.discussionTurn ?? -1) - (right.discussionTurn ?? -1),
+        );
+      if (
+        tasks.some((task) =>
+          ["QUEUED", "RUNNING", "WAITING_FOR_APPROVAL"].includes(task.status),
+        )
+      ) {
+        continue;
+      }
+      const latest = tasks.at(-1);
+      if (!latest) {
+        await this.markDiscussionFailed(
+          discussion.id,
+          "Discussion has no durable task to resume",
+        );
+      } else if (latest.status === "COMPLETED") {
+        await this.advanceDiscussion(latest);
+      } else if (latest.status === "FAILED") {
+        await this.failDiscussion(
+          latest,
+          latest.error ?? "The latest discussion turn failed",
+        );
+      }
+    }
   }
 
   createTask(input: CreateTaskInput) {
@@ -420,7 +956,8 @@ export class DesktopAppService {
     provider: RemoteModelProvider;
     apiKey?: string;
     baseUrl?: string;
-  }) {
+    defaultModelName?: string;
+  }): Promise<ConfigureModelResult> {
     try {
       const definition = getModelProviderDefinition(input.provider);
       const key = modelProviderCredentialKey(input.provider);
@@ -453,11 +990,30 @@ export class DesktopAppService {
           `${modelProviderName(input.provider)} returned no compatible chat models`,
         );
       }
+      if (
+        input.defaultModelName !== undefined &&
+        !availableModels.some((model) => model.id === input.defaultModelName)
+      ) {
+        throw new Error(
+          `Model ${input.defaultModelName} is not available to this ${modelProviderName(input.provider)} credential`,
+        );
+      }
       await this.options.credentials.set(key, apiKey);
       if (definition.baseUrlMode !== "none" && baseUrl) {
         await this.options.credentials.set(modelProviderBaseUrlKey(input.provider), baseUrl);
       }
-      return { key, configured: true };
+      if (input.defaultModelName !== undefined) {
+        await this.updateSettings({
+          defaultModelProvider: input.provider,
+          defaultModelName: input.defaultModelName,
+        });
+      }
+      return {
+        key,
+        configured: true,
+        models: availableModels,
+        defaultApplied: input.defaultModelName !== undefined,
+      };
     } catch (error) {
       await this.providerErrors.log(
         { phase: "configuration", provider: input.provider },
@@ -726,7 +1282,7 @@ export class DesktopAppService {
   }
 
   private enableBundledSkills(): void {
-    const migrationKey = "bundled-skills-enabled-v2";
+    const migrationKey = "bundled-skills-enabled-v3";
     if (this.database.getMetadata(migrationKey) === "true") return;
     const bundledIds = this.database
       .listSkills()

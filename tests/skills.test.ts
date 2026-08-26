@@ -9,6 +9,8 @@ import { MemoryCredentialStore } from "@main/security/credential-store";
 import { ToolGateway } from "@main/tools/tool-gateway";
 import {
   bundledDocumentAuthoringSkill,
+  bundledFolderAccessSkill,
+  bundledTeamChannelSkill,
   bundledWebSearchSkill,
   downloadSkillFromUrl,
   installSkillFromUrl,
@@ -34,6 +36,29 @@ describe("Agent Skills support", () => {
       description: expect.stringContaining("Do not use for merely reviewing"),
     });
     expect(bundledDocumentAuthoringSkill.bundled).toBe(true);
+  });
+
+  it("ships shared-channel guidance without routing ordinary direct chats", () => {
+    expect(parseSkillMarkdown(bundledTeamChannelSkill.content)).toMatchObject({
+      name: "team-channel-collaboration",
+      description: expect.stringContaining(
+        "Do not use for an ordinary direct conversation",
+      ),
+    });
+    expect(bundledTeamChannelSkill.content).toContain(
+      "Respond only as yourself",
+    );
+  });
+
+  it("ships folder-access guidance without routing workspace file work", () => {
+    expect(parseSkillMarkdown(bundledFolderAccessSkill.content)).toMatchObject({
+      name: "folder-access",
+      description: expect.stringContaining(
+        "Do not use for files in the coworker workspace",
+      ),
+    });
+    expect(bundledFolderAccessSkill.bundled).toBe(true);
+    expect(bundledFolderAccessSkill.content).toContain("strictly read-only");
   });
 
   it("seeds and enables the bundled authoring skill for existing coworkers", async () => {

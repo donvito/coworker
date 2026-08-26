@@ -54,6 +54,13 @@
         "filter": [
           "**/*"
         ]
+      },
+      {
+        "from": "skills",
+        "to": "skills",
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "npmRebuild": false,
@@ -147,6 +154,7 @@
     "remark-breaks": "^4.0.0",
     "remark-gfm": "4.0.1",
     "rxjs": "7.8.1",
+    "unpdf": "^1.8.1",
     "zod": "^4.4.3"
   },
   "devDependencies": {

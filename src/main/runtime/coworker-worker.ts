@@ -165,6 +165,21 @@ const parameterSchemas: Record<string, ReturnType<typeof Type.Object>> = {
     path: Type.String({ description: "Relative destination path inside the coworker workspace" }),
     content: Type.String({ description: "UTF-8 file contents" }),
   }),
+  "folders.list": Type.Object({
+    folder: Type.Optional(
+      Type.String({
+        description:
+          "Alias of a granted read-only folder. Omit to list every folder the user granted.",
+      }),
+    ),
+    path: Type.Optional(
+      Type.String({ description: "Relative directory path inside the folder; use . for the root" }),
+    ),
+  }),
+  "folders.read": Type.Object({
+    folder: Type.String({ description: "Alias of a granted read-only folder from folders.list" }),
+    path: Type.String({ description: "Relative file path inside that granted folder" }),
+  }),
   "invoice.create": Type.Object({
     client: Type.String(),
     recipientEmail: Type.Optional(Type.String()),
@@ -340,7 +355,13 @@ function durableHistory(messages: unknown[]): string {
     if (!("role" in message) || !("content" in message)) return [];
     const role = String(message.role);
     if (!["user", "assistant"].includes(role) || typeof message.content !== "string") return [];
-    return [`${role === "user" ? "User" : "Coworker"}: ${message.content}`];
+    const author =
+      "authorName" in message && typeof message.authorName === "string"
+        ? message.authorName
+        : role === "user"
+          ? "User"
+          : "Coworker";
+    return [`${author}: ${message.content}`];
   });
   return lines.join("\n\n").slice(-20_000);
 }
@@ -409,7 +430,15 @@ async function initialize(workerConfig: WorkerCoworkerConfig): Promise<void> {
   if (workerConfig.skills.some((skill) => skill.name === "web-search")) {
     skillToolNames.push("web.search");
   }
-  const enabledToolNames = [...new Set([...workerConfig.coworker.enabledTools, ...skillToolNames])];
+  const folderToolNames =
+    workerConfig.coworker.sharedFolders.length > 0 ? ["folders.list", "folders.read"] : [];
+  const enabledToolNames = [
+    ...new Set([
+      ...workerConfig.coworker.enabledTools,
+      ...skillToolNames,
+      ...folderToolNames,
+    ]),
+  ];
   const tools = enabledToolNames.map((controlledName) => {
     const providerName = usePortableToolNames
       ? toProviderToolName(controlledName)

@@ -12,6 +12,7 @@ export interface WorkerCoworkerConfig {
     | "modelProvider"
     | "modelName"
     | "enabledTools"
+    | "sharedFolders"
   >;
   modelApiKey?: string;
   modelBaseUrl?: string;

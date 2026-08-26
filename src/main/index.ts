@@ -10,6 +10,7 @@ import {
   Tray,
 } from "electron";
 import { DesktopAppService } from "@main/app/app-service";
+import { prepareAppProfile, resolveAppProfile } from "@main/app/app-profile";
 import { registerIpc } from "@main/ipc/register-ipc";
 import { ApplicationLogger } from "@main/runtime/application-logger";
 import { SecureCredentialStore } from "@main/security/credential-store";
@@ -23,6 +24,16 @@ function ignoreBrokenPipe(stream: NodeJS.WriteStream): void {
 
 ignoreBrokenPipe(process.stdout);
 ignoreBrokenPipe(process.stderr);
+
+const appProfile = resolveAppProfile({
+  override: process.env.COWORKER_DATA_PATH,
+  isPackaged: app.isPackaged,
+  appDataPath: app.getPath("appData"),
+  defaultUserDataPath: app.getPath("userData"),
+});
+prepareAppProfile(appProfile);
+app.setPath("userData", appProfile.dataPath);
+app.setPath("sessionData", appProfile.sessionPath);
 
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) app.quit();
@@ -45,13 +56,15 @@ process.on("unhandledRejection", (reason) => {
 });
 
 function createMainWindow(): BrowserWindow {
+  const appTitle =
+    appProfile.label === "Production" ? "Coworker" : `Coworker — ${appProfile.label}`;
   const window = new BrowserWindow({
     width: 1560,
     height: 980,
     minWidth: 1180,
     minHeight: 760,
     show: false,
-    title: "Coworker",
+    title: appTitle,
     backgroundColor: "#f2efe8",
     icon: appIcon(),
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
@@ -199,7 +212,7 @@ function rebuildTrayMenu(): void {
 }
 
 async function start(): Promise<void> {
-  const dataPath = process.env.COWORKER_DATA_PATH || app.getPath("userData");
+  const dataPath = appProfile.dataPath;
   applicationLogger = new ApplicationLogger(join(dataPath, "logs", "app.jsonl"));
   await applicationLogger.info("app.lifecycle", "Starting Coworker", {
     version: app.getVersion(),
@@ -236,7 +249,9 @@ async function start(): Promise<void> {
   }
   mainWindow = createMainWindow();
   tray = new Tray(trayImage());
-  tray.setToolTip("Coworker");
+  tray.setToolTip(
+    appProfile.label === "Production" ? "Coworker" : `Coworker — ${appProfile.label}`,
+  );
   tray.on("click", () => {
     if (isQuitting || shutdownStarted) return;
     if (!mainWindow) mainWindow = createMainWindow();

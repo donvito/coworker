@@ -1,11 +1,14 @@
+import { existsSync, readFileSync } from "node:fs";
 import { isIP } from "node:net";
-import { extname } from "node:path";
+import { extname, join } from "node:path";
 import JSZip from "jszip";
 import type { Skill } from "@shared/contracts";
 import type { CoworkerDatabase } from "@main/db/database";
 
 export const bundledWebSearchSkillId = "bundled:web-search";
 export const bundledDocumentAuthoringSkillId = "bundled:document-authoring";
+export const bundledTeamChannelSkillId = "bundled:team-channel-collaboration";
+export const bundledFolderAccessSkillId = "bundled:folder-access";
 
 export interface PackagedSkillResource {
   path: string;
@@ -16,6 +19,25 @@ export interface PackagedSkillResource {
 export interface ParsedSkillPackage {
   skill: Pick<Skill, "name" | "description" | "content">;
   resources: PackagedSkillResource[];
+}
+
+function loadBundledSkill(folderName: string, id: string) {
+  const resourcesPath = Reflect.get(process, "resourcesPath");
+  const candidates = [
+    typeof resourcesPath === "string"
+      ? join(resourcesPath, "skills", folderName, "SKILL.md")
+      : null,
+    join(process.cwd(), "skills", folderName, "SKILL.md"),
+  ].filter((path): path is string => Boolean(path));
+  const path = candidates.find((candidate) => existsSync(candidate));
+  if (!path) throw new Error(`Bundled skill ${folderName} was not found`);
+  const content = readFileSync(path, "utf8");
+  return {
+    id,
+    ...parseSkillMarkdown(content),
+    sourceUrl: null,
+    bundled: true,
+  } as const;
 }
 
 const maxSkillPackageBytes = 10_000_000;
@@ -248,7 +270,22 @@ For Excel XLSX and CSV:
   bundled: true,
 } as const;
 
-export const bundledSkills = [bundledWebSearchSkill, bundledDocumentAuthoringSkill] as const;
+export const bundledTeamChannelSkill = loadBundledSkill(
+  "team-channel-collaboration",
+  bundledTeamChannelSkillId,
+);
+
+export const bundledFolderAccessSkill = loadBundledSkill(
+  "folder-access",
+  bundledFolderAccessSkillId,
+);
+
+export const bundledSkills = [
+  bundledWebSearchSkill,
+  bundledDocumentAuthoringSkill,
+  bundledTeamChannelSkill,
+  bundledFolderAccessSkill,
+] as const;
 
 function unquote(value: string): string {
   const trimmed = value.trim();

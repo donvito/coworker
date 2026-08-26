@@ -17,11 +17,13 @@ export function CoworkersPage({
   settings,
   onOpen,
   onChanged,
+  onOpenModelSettings,
 }: {
   coworkers: Coworker[];
   settings: AppSettings;
   onOpen: (coworker: Coworker) => void;
   onChanged: () => Promise<void>;
+  onOpenModelSettings?: () => void;
 }) {
   const [creating, setCreating] = useState(false);
   const [view, setView] = useState<CoworkerView>(() =>
@@ -121,6 +123,7 @@ export function CoworkersPage({
           onChanged={onChanged}
           onClose={() => setCreating(false)}
           onCreated={onOpen}
+          onOpenModelSettings={onOpenModelSettings}
         />
       ) : null}
     </div>
@@ -132,11 +135,13 @@ export function CreateCoworkerModal({
   onChanged,
   onClose,
   onCreated,
+  onOpenModelSettings,
 }: {
   settings: Pick<AppSettings, "defaultModelProvider" | "defaultModelName">;
   onChanged: () => Promise<void>;
   onClose: () => void;
   onCreated: (coworker: Coworker) => void;
+  onOpenModelSettings?: () => void;
 }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -246,6 +251,11 @@ export function CreateCoworkerModal({
             <div className="model-not-configured create-coworker-model-empty">
               <strong>No model configured</strong>
               <small>Add an API key and select a default model in Settings before creating a coworker.</small>
+              {onOpenModelSettings ? (
+                <button className="text-button" onClick={onOpenModelSettings} type="button">
+                  Open model settings
+                </button>
+              ) : null}
             </div>
           )}
           {error ? <div className="inline-error">{error}</div> : null}

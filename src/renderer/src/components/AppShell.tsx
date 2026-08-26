@@ -17,12 +17,14 @@ export function AppShell({
   conversationMode = false,
   onNavigate,
   pendingApprovals,
+  version,
   children,
 }: {
   activePage: PageId;
   conversationMode?: boolean;
   onNavigate: (page: PageId) => void;
   pendingApprovals: number;
+  version?: string;
   children: ReactNode;
 }) {
   return (
@@ -57,6 +59,11 @@ export function AppShell({
           </nav>
 
           <div className="sidebar-spacer" />
+          {version ? (
+            <span className="sidebar-version" title={`Coworker ${version}`}>
+              {/^\d/.test(version) ? `v${version}` : version}
+            </span>
+          ) : null}
           <button
             className={activePage === "settings" ? "nav-item active" : "nav-item"}
             onClick={() => onNavigate("settings")}

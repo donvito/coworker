@@ -43,6 +43,8 @@ export interface CoworkerRuntimeManagerOptions {
       details?: Record<string, string | number | boolean | null>,
     ): Promise<void>;
   };
+  onTaskCompleted?: (task: Task) => void | Promise<void>;
+  onTaskFailed?: (task: Task, error: string) => void | Promise<void>;
 }
 
 export class CoworkerRuntimeManager {
@@ -275,11 +277,23 @@ export class CoworkerRuntimeManager {
         this.options.emit({ type: "entity.changed", entity: "approvals", id: approval.id });
       }
       const checkpoint = this.options.database.getCheckpoint(task.id);
+      const sourceMessage = task.sourceMessageId
+        ? this.options.database.getMessage(task.sourceMessageId)
+        : null;
       const threadMessages = resume
         ? undefined
         : this.options.database
-            .listConversationMessages(coworker.id, task.threadId)
-            .filter((message) => message.taskId !== task.id)
+            .listConversationMessages(task.threadId)
+            .filter(
+              (message) =>
+                message.taskId !== task.id &&
+                message.id !== task.sourceMessageId &&
+                (task.discussionId !== null ||
+                  !sourceMessage ||
+                  message.createdAt < sourceMessage.createdAt ||
+                  (message.createdAt === sourceMessage.createdAt &&
+                    message.id < sourceMessage.id)),
+            )
             .slice(-100);
       const images = resume
         ? undefined
@@ -304,6 +318,8 @@ export class CoworkerRuntimeManager {
       const message = error instanceof Error ? error.message : String(error);
       if (taskId) {
         this.options.database.setTaskStatus(taskId, "FAILED", { error: message });
+        const failedTask = this.options.database.getTask(taskId);
+        await this.options.onTaskFailed?.(failedTask, message);
         if (runtime) {
           runtime.currentTaskId = null;
           runtime.currentRunId = null;
@@ -316,6 +332,7 @@ export class CoworkerRuntimeManager {
         this.options.emit({
           type: "agent.event",
           coworkerId,
+          conversationId: claimedTask.threadId,
           taskId: claimedTask.id,
           runId: claimedTask.runId,
           event: {
@@ -356,9 +373,11 @@ export class CoworkerRuntimeManager {
     }
     if (message.type === "agui.event") {
       this.persistAgentEvent(message.coworkerId, message.taskId, message.runId, message.event);
+      const task = this.options.database.getTask(message.taskId);
       this.options.emit({
         type: "agent.event",
         coworkerId: message.coworkerId,
+        conversationId: task.threadId,
         taskId: message.taskId,
         runId: message.runId,
         event: message.event,
@@ -437,6 +456,9 @@ export class CoworkerRuntimeManager {
         this.options.database.setTaskStatus(message.taskId, "COMPLETED", {
           result: message.result || "Completed",
         });
+        await this.options.onTaskCompleted?.(
+          this.options.database.getTask(message.taskId),
+        );
         this.setStatus(message.coworkerId, "IDLE");
       } else {
         this.setStatus(message.coworkerId, "IDLE");
@@ -453,6 +475,10 @@ export class CoworkerRuntimeManager {
       const task = this.options.database.getTask(message.taskId);
       if (task.status !== "CANCELLED" && task.status !== "WAITING_FOR_APPROVAL") {
         this.options.database.setTaskStatus(message.taskId, "FAILED", { error: message.error });
+        await this.options.onTaskFailed?.(
+          this.options.database.getTask(message.taskId),
+          message.error,
+        );
         this.setStatus(message.coworkerId, "ERROR", message.taskId);
       } else if (task.status === "CANCELLED") {
         this.setStatus(message.coworkerId, "IDLE");

@@ -19,6 +19,7 @@ const coworker: Coworker = {
   enabledTools: [],
   enabledSkillIds: [],
   policies: {},
+  sharedFolders: [],
   createdAt: "2026-08-23T00:00:00.000Z",
   updatedAt: "2026-08-23T00:00:00.000Z",
 };

@@ -1,5 +1,12 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import type { ImageInputContent, ToolMessage, UserMessage } from "@ag-ui/core";
+import {
+  Fragment,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
+import { EventType, type ImageInputContent, type ToolMessage, type UserMessage } from "@ag-ui/core";
 import {
   UseAgentUpdate,
   useAgent,
@@ -12,12 +19,15 @@ import type {
   AppSettings,
   Artifact,
   Conversation,
+  ConversationImageInput,
   Coworker,
+  DiscussionSession,
   Message as StoredMessage,
   Task,
   TaskImageAttachmentSummary,
   Skill,
 } from "@shared/contracts";
+import { isDiscussionPass } from "@shared/discussion";
 import { IpcCoworkerAgent } from "../copilot/IpcCoworkerAgent";
 import { LocalCopilotProvider } from "../copilot/LocalCopilotProvider";
 import {
@@ -236,10 +246,141 @@ function PersistedMessageImages({
   );
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Finds channel members mentioned in free-typed text so users don't have to
+ * click a suggestion. Matches "@Full Name" case-insensitively, and "@First"
+ * when the first name is unambiguous among members.
+ */
+export function mentionedCoworkerIdsInText(
+  text: string,
+  members: ReadonlyArray<Pick<Coworker, "id" | "name">>,
+): string[] {
+  const firstNameCounts = new Map<string, number>();
+  for (const member of members) {
+    const first = member.name.trim().split(/\s+/)[0]!.toLocaleLowerCase();
+    firstNameCounts.set(first, (firstNameCounts.get(first) ?? 0) + 1);
+  }
+  return members
+    .filter((member) => {
+      const fullName = member.name.trim();
+      const firstName = fullName.split(/\s+/)[0]!;
+      const patterns =
+        firstNameCounts.get(firstName.toLocaleLowerCase()) === 1
+          ? [fullName, firstName]
+          : [fullName];
+      return patterns.some((name) =>
+        new RegExp(`@${escapeRegExp(name)}(?!\\w)`, "i").test(text),
+      );
+    })
+    .map((member) => member.id);
+}
+
+export function latestDirectConversation(
+  conversations: Conversation[],
+  coworkerId: string,
+): Conversation | null {
+  return conversations
+    .filter(
+      (conversation) =>
+        conversation.kind === "direct" &&
+        conversation.memberIds.includes(coworkerId),
+    )
+    .reduce<Conversation | null>(
+      (latest, conversation) =>
+        !latest || conversation.updatedAt > latest.updatedAt
+          ? conversation
+          : latest,
+      null,
+    );
+}
+
+const conversationRosterWidthKey = "conversation-roster-width";
+const minConversationRosterWidth = 200;
+const maxConversationRosterWidth = 340;
+
+function clampConversationRosterWidth(value: number): number {
+  return Math.min(maxConversationRosterWidth, Math.max(minConversationRosterWidth, value));
+}
+
+/**
+ * User-adjustable width for the conversation roster sidebar, clamped to a
+ * modest range and remembered across sessions. Null means the CSS default.
+ */
+function useConversationRosterWidth(): {
+  rosterStyle: CSSProperties | undefined;
+  resizeRoster: (width: number) => void;
+  resetRoster: () => void;
+} {
+  const [width, setWidth] = useState<number | null>(() => {
+    const stored = Number(window.localStorage.getItem(conversationRosterWidthKey));
+    return Number.isFinite(stored) && stored > 0
+      ? clampConversationRosterWidth(stored)
+      : null;
+  });
+  return {
+    rosterStyle:
+      width === null
+        ? undefined
+        : ({ "--conversation-roster-width": `${width}px` } as CSSProperties),
+    resizeRoster: (next: number) => {
+      const clamped = clampConversationRosterWidth(next);
+      setWidth(clamped);
+      window.localStorage.setItem(conversationRosterWidthKey, String(clamped));
+    },
+    resetRoster: () => {
+      setWidth(null);
+      window.localStorage.removeItem(conversationRosterWidthKey);
+    },
+  };
+}
+
+function ConversationRosterResizeHandle({
+  onResize,
+  onReset,
+}: {
+  onResize: (width: number) => void;
+  onReset: () => void;
+}) {
+  return (
+    <div
+      aria-hidden="true"
+      className="conversation-roster-resize"
+      onDoubleClick={onReset}
+      onPointerDown={(event) => {
+        if (event.button !== 0) return;
+        event.preventDefault();
+        const handle = event.currentTarget;
+        const panel = handle.parentElement;
+        if (!panel) return;
+        const startX = event.clientX;
+        const startWidth = panel.getBoundingClientRect().width;
+        handle.setPointerCapture(event.pointerId);
+        const move = (moveEvent: PointerEvent) => {
+          onResize(startWidth + (moveEvent.clientX - startX));
+        };
+        const stop = () => {
+          handle.removeEventListener("pointermove", move);
+          handle.removeEventListener("pointerup", stop);
+          handle.removeEventListener("pointercancel", stop);
+        };
+        handle.addEventListener("pointermove", move);
+        handle.addEventListener("pointerup", stop);
+        handle.addEventListener("pointercancel", stop);
+      }}
+      title="Drag to resize · double-click to reset"
+    />
+  );
+}
+
 export function CoworkerDetailPage({
   coworker,
   coworkers,
   conversations,
+  discussions,
   tasks,
   approvals,
   artifacts,
@@ -250,12 +391,14 @@ export function CoworkerDetailPage({
   onBack,
   onChanged,
   onOpenApprovals,
+  onOpenModelSettings,
   onRemoved,
   onSelectCoworker,
 }: {
   coworker: Coworker;
   coworkers: Coworker[];
   conversations: Conversation[];
+  discussions: DiscussionSession[];
   tasks: Task[];
   approvals: Approval[];
   artifacts: Artifact[];
@@ -266,22 +409,21 @@ export function CoworkerDetailPage({
   onBack: () => void;
   onChanged: () => Promise<void>;
   onOpenApprovals: () => void;
+  onOpenModelSettings?: () => void;
   onRemoved: () => void;
   onSelectCoworker: (coworker: Coworker) => void;
 }) {
   const [managingCoworkerId, setManagingCoworkerId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [creatingGroup, setCreatingGroup] = useState(false);
+  const [editingGroup, setEditingGroup] = useState<Conversation | null>(null);
   const [loadedConversationHistory, setLoadedConversationHistory] = useState<{
     conversationId: string;
     messages: StoredMessage[];
   } | null>(null);
   const managingCoworker =
     coworkers.find((candidate) => candidate.id === managingCoworkerId) ?? null;
-  const latestConversation = conversations.reduce<Conversation | null>(
-    (latest, conversation) =>
-      !latest || conversation.updatedAt > latest.updatedAt ? conversation : latest,
-    null,
-  );
+  const latestConversation = latestDirectConversation(conversations, coworker.id);
   const [selectedConversationId, setSelectedConversationId] = useState(
     latestConversation?.id ?? `coworker:${coworker.id}`,
   );
@@ -304,11 +446,7 @@ export function CoworkerDetailPage({
     loadedConversationHistory?.conversationId === activeConversationId;
 
   useEffect(() => {
-    const next = conversations.reduce<Conversation | null>(
-      (latest, conversation) =>
-        !latest || conversation.updatedAt > latest.updatedAt ? conversation : latest,
-      null,
-    );
+    const next = latestDirectConversation(conversations, coworker.id);
     setSelectedConversationId(next?.id ?? `coworker:${coworker.id}`);
   }, [coworker.id]);
 
@@ -316,7 +454,7 @@ export function CoworkerDetailPage({
     let cancelled = false;
     setLoadedConversationHistory(null);
     void window.coworker.messages
-      .listConversation(coworker.id, activeConversationId)
+      .listConversation(activeConversationId)
       .then((history) => {
         if (!cancelled) {
           setLoadedConversationHistory({
@@ -344,6 +482,20 @@ export function CoworkerDetailPage({
     await onChanged();
   }
 
+  function openCoworkerConversation(target: Coworker) {
+    if (target.id === coworker.id) {
+      const directConversation = latestDirectConversation(
+        conversations,
+        target.id,
+      );
+      setSelectedConversationId(
+        directConversation?.id ?? `coworker:${target.id}`,
+      );
+      return;
+    }
+    onSelectCoworker(target);
+  }
+
   const agent = useMemo(
     () =>
       new IpcCoworkerAgent(coworker.id, {
@@ -363,7 +515,27 @@ export function CoworkerDetailPage({
 
   return (
     <>
-      {conversationHistoryReady ? (
+      {conversationHistoryReady && selectedConversation?.kind === "group" ? (
+        <GroupConversationSurface
+          approvals={approvals}
+          conversation={selectedConversation}
+          conversations={conversations}
+          coworkers={coworkers}
+          discussions={discussions.filter(
+            (discussion) => discussion.conversationId === selectedConversation.id,
+          )}
+          imageAttachments={imageAttachments}
+          messages={conversationMessages}
+          onBack={onBack}
+          onChanged={onChanged}
+          onCreateGroup={() => setCreatingGroup(true)}
+          onEditGroup={() => setEditingGroup(selectedConversation)}
+          onOpenApprovals={onOpenApprovals}
+          onSelectConversation={setSelectedConversationId}
+          onSelectCoworker={openCoworkerConversation}
+          tasks={tasks}
+        />
+      ) : conversationHistoryReady ? (
         <LocalCopilotProvider
           agentId={coworker.id}
           agent={agent}
@@ -385,10 +557,11 @@ export function CoworkerDetailPage({
             onBack={onBack}
             onChanged={onChanged}
             onCreate={() => setCreating(true)}
+            onCreateGroup={() => setCreatingGroup(true)}
             onManageCoworker={(target) => setManagingCoworkerId(target.id)}
             onNewConversation={createConversation}
             onOpenApprovals={onOpenApprovals}
-            onSelectCoworker={onSelectCoworker}
+            onSelectCoworker={openCoworkerConversation}
             onSelectConversation={setSelectedConversationId}
           />
         </LocalCopilotProvider>
@@ -408,6 +581,7 @@ export function CoworkerDetailPage({
           skills={skills}
           onChanged={onChanged}
           onClose={() => setManagingCoworkerId(null)}
+          onOpenModelSettings={onOpenModelSettings}
           onRemoved={() => {
             setManagingCoworkerId(null);
             if (managingCoworker.id === coworker.id) onRemoved();
@@ -420,9 +594,847 @@ export function CoworkerDetailPage({
           onChanged={onChanged}
           onClose={() => setCreating(false)}
           onCreated={onSelectCoworker}
+          onOpenModelSettings={onOpenModelSettings}
+        />
+      ) : null}
+      {creatingGroup ? (
+        <CreateGroupChannelModal
+          coworkers={coworkers}
+          initialCoworkerId={coworker.id}
+          onClose={() => setCreatingGroup(false)}
+          onCreated={async (conversation) => {
+            setCreatingGroup(false);
+            setSelectedConversationId(conversation.id);
+            await onChanged();
+          }}
+        />
+      ) : null}
+      {editingGroup ? (
+        <CreateGroupChannelModal
+          conversation={editingGroup}
+          coworkers={coworkers}
+          initialCoworkerId={coworker.id}
+          onClose={() => setEditingGroup(null)}
+          onCreated={async () => {
+            setEditingGroup(null);
+            await onChanged();
+          }}
         />
       ) : null}
     </>
+  );
+}
+
+interface LiveChannelResponse {
+  coworkerId: string;
+  taskId: string;
+  content: string;
+  status: "queued" | "running" | "failed";
+  error?: string;
+}
+
+function GroupConversationSurface({
+  conversation,
+  conversations,
+  coworkers,
+  discussions,
+  messages,
+  tasks,
+  approvals,
+  imageAttachments,
+  onBack,
+  onChanged,
+  onCreateGroup,
+  onEditGroup,
+  onOpenApprovals,
+  onSelectConversation,
+  onSelectCoworker,
+}: {
+  conversation: Conversation;
+  conversations: Conversation[];
+  coworkers: Coworker[];
+  discussions: DiscussionSession[];
+  messages: StoredMessage[];
+  tasks: Task[];
+  approvals: Approval[];
+  imageAttachments: TaskImageAttachmentSummary[];
+  onBack: () => void;
+  onChanged: () => Promise<void>;
+  onCreateGroup: () => void;
+  onEditGroup: () => void;
+  onOpenApprovals: () => void;
+  onSelectConversation: (conversationId: string) => void;
+  onSelectCoworker: (coworker: Coworker) => void;
+}) {
+  const members = conversation.memberIds.flatMap((id) => {
+    const member = coworkers.find((candidate) => candidate.id === id);
+    return member ? [member] : [];
+  });
+  const [draft, setDraft] = useState("");
+  const [channelMessages, setChannelMessages] = useState(messages);
+  const [highlightedSuggestion, setHighlightedSuggestion] = useState(0);
+  const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
+  const [liveResponses, setLiveResponses] = useState<Record<string, LiveChannelResponse>>({});
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const { rosterStyle, resizeRoster, resetRoster } = useConversationRosterWidth();
+  const transcript = useRef<HTMLDivElement>(null);
+  const mentionMatch = draft.match(/(?:^|\s)@([^@\n]*)$/);
+  const mentionQuery = mentionMatch?.[1]?.trim().toLocaleLowerCase() ?? null;
+  const currentDiscussion = [...discussions]
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+    .find((discussion) =>
+      ["active", "awaiting_user", "failed"].includes(discussion.status),
+    );
+  const discussionOngoing =
+    currentDiscussion?.status === "active" ||
+    currentDiscussion?.status === "awaiting_user";
+  const mentionedIds = mentionedCoworkerIdsInText(draft, members);
+  const mentionSuggestions =
+    mentionQuery === null || discussionOngoing
+      ? []
+      : members.filter(
+          (member) =>
+            !mentionedIds.includes(member.id) &&
+            `${member.name} ${member.role}`.toLocaleLowerCase().includes(mentionQuery),
+        );
+  const channelTasks = tasks.filter((task) => task.threadId === conversation.id);
+  const pendingApprovals = approvals.filter(
+    (approval) =>
+      approval.status === "PENDING" &&
+      channelTasks.some((task) => task.id === approval.taskId),
+  );
+  useEffect(() => {
+    setChannelMessages(messages);
+  }, [conversation.id, messages]);
+
+  useEffect(() => {
+    return window.coworker.events.subscribe((event) => {
+      if (event.type !== "agent.event" || event.conversationId !== conversation.id) return;
+      setLiveResponses((current) => {
+        const existing = current[event.runId] ?? {
+          coworkerId: event.coworkerId,
+          taskId: event.taskId,
+          content: "",
+          status: "queued" as const,
+        };
+        if (
+          event.event.type === EventType.TEXT_MESSAGE_CONTENT &&
+          "delta" in event.event
+        ) {
+          return {
+            ...current,
+            [event.runId]: {
+              ...existing,
+              content: existing.content + String(event.event.delta),
+              status: "running",
+            },
+          };
+        }
+        if (event.event.type === EventType.RUN_STARTED) {
+          return {
+            ...current,
+            [event.runId]: { ...existing, status: "running" },
+          };
+        }
+        if (event.event.type === EventType.RUN_ERROR) {
+          return {
+            ...current,
+            [event.runId]: {
+              ...existing,
+              status: "failed",
+              error:
+                "message" in event.event
+                  ? String(event.event.message)
+                  : "The coworker could not finish.",
+            },
+          };
+        }
+        if (event.event.type === EventType.RUN_FINISHED) {
+          void Promise.all([
+            onChanged(),
+            window.coworker.messages.listConversation(conversation.id),
+          ]).then(([, history]) => {
+            setChannelMessages(history);
+            setLiveResponses((latest) => {
+              const next = { ...latest };
+              delete next[event.runId];
+              return next;
+            });
+          });
+        }
+        return current;
+      });
+    });
+  }, [conversation.id, onChanged]);
+
+  useEffect(() => {
+    transcript.current?.scrollTo({
+      top: transcript.current.scrollHeight,
+      behavior: "smooth",
+    });
+  }, [channelMessages.length, liveResponses]);
+
+  async function attachGroupImages(files: FileList | null) {
+    if (!files?.length) return;
+    setError(null);
+    try {
+      const selected = [...files];
+      if (pendingImages.length + selected.length > maxImageCount) {
+        throw new Error(`Attach up to ${maxImageCount} images at a time.`);
+      }
+      for (const file of selected) {
+        if (!acceptedImageTypes.has(file.type)) {
+          throw new Error(`${file.name} is not a JPEG, PNG, WebP, or GIF image.`);
+        }
+        if (file.size === 0 || file.size > maxImageBytes) {
+          throw new Error(`${file.name} must be 8 MB or smaller.`);
+        }
+      }
+      const loaded = await Promise.all(
+        selected.map(async (file) => ({
+          id: crypto.randomUUID(),
+          name: file.name,
+          mimeType: file.type,
+          size: file.size,
+          data: await fileAsBase64(file),
+        })),
+      );
+      setPendingImages((current) => [...current, ...loaded]);
+    } catch (attachmentError) {
+      setError(
+        attachmentError instanceof Error ? attachmentError.message : String(attachmentError),
+      );
+    } finally {
+      if (fileInput.current) fileInput.current.value = "";
+    }
+  }
+
+  function selectMention(member: Coworker) {
+    const atIndex = draft.lastIndexOf("@");
+    const prefix = atIndex >= 0 ? draft.slice(0, atIndex) : `${draft} `;
+    setDraft(`${prefix}@${member.name} `);
+    setHighlightedSuggestion(0);
+  }
+
+  async function submit() {
+    const content = draft.trim();
+    const activeMentionIds = discussionOngoing
+      ? []
+      : mentionedCoworkerIdsInText(content, members);
+    if ((!content && pendingImages.length === 0) || submitting) return;
+    if (discussionOngoing) {
+      if (!content) {
+        setError("Write a message to add to the discussion.");
+        return;
+      }
+      if (pendingImages.length > 0) {
+        setError("Images can be attached once the discussion has ended.");
+        return;
+      }
+    }
+    setSubmitting(true);
+    setError(null);
+    try {
+      const receipt = await window.coworker.conversations.send({
+        conversationId: conversation.id,
+        clientMessageId: crypto.randomUUID(),
+        content,
+        mentionedCoworkerIds: activeMentionIds,
+        images: pendingImages.map((image) => ({
+          data: image.data,
+          mimeType: image.mimeType as ConversationImageInput["mimeType"],
+          name: image.name,
+          size: image.size,
+        })),
+      });
+      setLiveResponses((current) => ({
+        ...current,
+        ...Object.fromEntries(
+          receipt.runs.map((run) => [
+            run.runId,
+            {
+              coworkerId: run.coworkerId,
+              taskId: run.taskId,
+              content: "",
+              status: "queued" as const,
+            },
+          ]),
+        ),
+      }));
+      setDraft("");
+      setPendingImages([]);
+      setChannelMessages((current) =>
+        current.some((message) => message.id === receipt.message.id)
+          ? current
+          : [...current, receipt.message],
+      );
+      await onChanged();
+    } catch (submitError) {
+      setError(submitError instanceof Error ? submitError.message : String(submitError));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function continueDiscussion() {
+    if (!currentDiscussion || submitting) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      const receipt = await window.coworker.conversations.continueDiscussion(
+        currentDiscussion.id,
+      );
+      if (receipt.run) {
+        setLiveResponses((current) => ({
+          ...current,
+          [receipt.run!.runId]: {
+            coworkerId: receipt.run!.coworkerId,
+            taskId: receipt.run!.taskId,
+            content: "",
+            status: "queued",
+          },
+        }));
+      }
+      await onChanged();
+    } catch (continueError) {
+      setError(
+        continueError instanceof Error
+          ? continueError.message
+          : String(continueError),
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function stopDiscussion() {
+    if (!currentDiscussion || submitting) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      await window.coworker.conversations.stopDiscussion(
+        currentDiscussion.id,
+      );
+      setLiveResponses({});
+      await onChanged();
+    } catch (stopError) {
+      setError(stopError instanceof Error ? stopError.message : String(stopError));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div
+      className="coworker-detail conversation-layout channel-conversation-layout"
+      style={rosterStyle}
+    >
+      <div className="conversation-window-drag" />
+      <aside className="conversation-roster-panel">
+        <ConversationRosterResizeHandle onReset={resetRoster} onResize={resizeRoster} />
+        <header className="conversation-roster-head">
+          <h1>Channels</h1>
+          <button
+            aria-label="Create group channel"
+            className="conversation-icon-button"
+            onClick={onCreateGroup}
+            type="button"
+          >
+            <Icon name="plus" />
+          </button>
+        </header>
+        <nav className="conversation-roster" aria-label="Channels and coworkers">
+          {conversations
+            .filter((item) => item.kind === "group")
+            .map((item) => (
+              <button
+                aria-current={item.id === conversation.id ? "page" : undefined}
+                className={
+                  item.id === conversation.id
+                    ? "conversation-roster-item selected"
+                    : "conversation-roster-item"
+                }
+                key={item.id}
+                onClick={() => onSelectConversation(item.id)}
+                type="button"
+              >
+                <span className="conversation-avatar group-channel-avatar">
+                  <Icon name="spark" />
+                </span>
+                <span className="conversation-roster-copy">
+                  <strong>{item.title}</strong>
+                  <small>{item.memberIds.length} coworkers</small>
+                </span>
+              </button>
+            ))}
+          {coworkers.map((item) => (
+            <CoworkerRosterItem
+              coworker={item}
+              key={item.id}
+              onOpenContextMenu={() => undefined}
+              onSelect={() => onSelectCoworker(item)}
+              selected={false}
+              waiting={approvals.filter(
+                (approval) =>
+                  approval.coworkerId === item.id && approval.status === "PENDING",
+              ).length}
+            />
+          ))}
+        </nav>
+        <button className="conversation-workroom-link" onClick={onBack}>
+          <Icon name="home" />
+          <span>Back to workspace</span>
+        </button>
+      </aside>
+
+      <section className="conversation-main">
+        <header className="conversation-main-head group-channel-head">
+          <div className="conversation-head-profile">
+            <span className="conversation-avatar group-channel-avatar active">
+              <Icon name="people" />
+            </span>
+            <span className="conversation-identity">
+              <strong>{conversation.title}</strong>
+              <small>
+                You · {members.map((member) => member.name).join(" · ")}
+              </small>
+            </span>
+          </div>
+          <span className="conversation-roster-actions">
+            {pendingApprovals.length > 0 ? (
+              <button className="conversation-history-trigger" onClick={onOpenApprovals}>
+                <Icon name="shield" />
+                {pendingApprovals.length} approval
+                {pendingApprovals.length === 1 ? "" : "s"}
+              </button>
+            ) : null}
+            <button
+              aria-label="Edit channel members"
+              className="conversation-icon-button"
+              onClick={onEditGroup}
+              type="button"
+            >
+              <Icon name="settings" />
+            </button>
+          </span>
+        </header>
+
+        <div className="conversation-thread">
+          <div className="workroom-chat">
+            <div className="workroom-messages" ref={transcript}>
+              {channelMessages.length === 0 ? (
+                <div className="conversation-welcome">
+                  <span className="welcome-glyph">
+                    <Icon name="people" />
+                  </span>
+                  <span className="eyebrow">Shared channel</span>
+                  <h2>Talk to the room.</h2>
+                  <p>
+                    Messages reach every channel member unless you @mention
+                    specific coworkers. They respond in turn with shared
+                    context, pass when they have nothing to add, and wrap up on
+                    their own — reply anytime to steer.
+                  </p>
+                </div>
+              ) : null}
+              {channelMessages.map((message) => {
+                const author = message.coworkerId
+                  ? coworkers.find((item) => item.id === message.coworkerId)
+                  : null;
+                const sourceTasks = tasks.filter(
+                  (task) => task.sourceMessageId === message.id,
+                );
+                const sourceTaskIds = new Set(sourceTasks.map((task) => task.id));
+                const attachments = imageAttachments.filter((attachment) =>
+                  sourceTaskIds.has(attachment.taskId),
+                );
+                const uniqueAttachments = attachments.filter(
+                  (attachment, index) =>
+                    attachments.findIndex(
+                      (candidate) =>
+                        candidate.name === attachment.name &&
+                        candidate.size === attachment.size,
+                    ) === index,
+                );
+                if (message.role === "assistant" && isDiscussionPass(message.content)) {
+                  return (
+                    <div className="discussion-pass-note" key={message.id}>
+                      {author ? (
+                        <CoworkerAvatar className="discussion-pass-avatar" coworker={author} />
+                      ) : null}
+                      <span>{message.authorName} had nothing to add</span>
+                    </div>
+                  );
+                }
+                return (
+                  <div
+                    className={`workroom-turn workroom-turn-${message.role}`}
+                    data-message-role={message.role}
+                    key={message.id}
+                  >
+                    {author ? (
+                      <CoworkerAvatar className="conversation-message-avatar" coworker={author} />
+                    ) : null}
+                    <div className="channel-message-stack">
+                      <small className="channel-message-author">{message.authorName}</small>
+                      <div className="workroom-bubble">
+                        {uniqueAttachments.length > 0 ? (
+                          <PersistedMessageImages attachments={uniqueAttachments} />
+                        ) : null}
+                        <ChatMarkdown>{message.content}</ChatMarkdown>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+              {Object.entries(liveResponses).map(([runId, response]) => {
+                const member = coworkers.find((item) => item.id === response.coworkerId);
+                if (isDiscussionPass(response.content)) {
+                  return (
+                    <div className="discussion-pass-note" key={runId}>
+                      {member ? (
+                        <CoworkerAvatar className="discussion-pass-avatar" coworker={member} />
+                      ) : null}
+                      <span>{member?.name ?? "Coworker"} had nothing to add</span>
+                    </div>
+                  );
+                }
+                return (
+                  <div className="workroom-turn workroom-turn-assistant" key={runId}>
+                    {member ? (
+                      <CoworkerAvatar className="conversation-message-avatar" coworker={member} />
+                    ) : null}
+                    <div className="channel-message-stack">
+                      <small className="channel-message-author">
+                        {member?.name ?? "Coworker"}
+                      </small>
+                      <div className="workroom-bubble">
+                        {response.content ? (
+                          <ChatMarkdown>{response.content}</ChatMarkdown>
+                        ) : response.status === "failed" ? (
+                          <span>{response.error}</span>
+                        ) : (
+                          <span className="workroom-running">
+                            <span />
+                            <span />
+                            <span />
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="conversation-composer channel-composer">
+              {currentDiscussion ? (
+                <div
+                  className={`discussion-status discussion-${currentDiscussion.status}`}
+                >
+                  <span>
+                    <Icon name="people" />
+                    <span>
+                      <strong>
+                        {currentDiscussion.status === "active"
+                          ? "Coworkers are discussing"
+                          : currentDiscussion.status === "awaiting_user"
+                            ? "Long discussion — checking in"
+                            : "Discussion paused"}
+                      </strong>
+                      <small>
+                        {currentDiscussion.status === "active"
+                          ? `Turn ${currentDiscussion.nextTurn} — reply anytime to steer the discussion`
+                          : currentDiscussion.status === "awaiting_user"
+                            ? "Reply or continue if they should keep going, or end it here."
+                            : currentDiscussion.error ?? "Start a new discussion when ready."}
+                      </small>
+                    </span>
+                  </span>
+                  <span className="discussion-status-actions">
+                    {currentDiscussion.status === "awaiting_user" ? (
+                      <button
+                        className="primary-button"
+                        disabled={submitting}
+                        onClick={() => void continueDiscussion()}
+                        type="button"
+                      >
+                        Continue discussion
+                      </button>
+                    ) : null}
+                    {currentDiscussion.status !== "failed" ? (
+                      <button
+                        className="secondary-button"
+                        disabled={submitting}
+                        onClick={() => void stopDiscussion()}
+                        type="button"
+                      >
+                        {currentDiscussion.status === "active" ? "Stop" : "End"}
+                      </button>
+                    ) : null}
+                  </span>
+                </div>
+              ) : null}
+              {mentionSuggestions.length > 0 ? (
+                <div className="mention-suggestions" role="listbox">
+                  {mentionSuggestions.map((member, index) => {
+                    const highlighted =
+                      index ===
+                      Math.min(highlightedSuggestion, mentionSuggestions.length - 1);
+                    return (
+                      <button
+                        aria-selected={highlighted}
+                        className={highlighted ? "highlighted" : undefined}
+                        key={member.id}
+                        onClick={() => selectMention(member)}
+                        onMouseEnter={() => setHighlightedSuggestion(index)}
+                        role="option"
+                        type="button"
+                      >
+                        <CoworkerAvatar className="mention-avatar" coworker={member} />
+                        <span>
+                          <strong>@{member.name}</strong>
+                          <small>{member.role}</small>
+                        </span>
+                      </button>
+                    );
+                  })}
+                  <small className="mention-suggestions-hint">
+                    ↑↓ to choose · Enter or Tab to add
+                  </small>
+                </div>
+              ) : null}
+              {pendingImages.length > 0 ? (
+                <div className="composer-image-list">
+                  {pendingImages.map((image) => (
+                    <button
+                      key={image.id}
+                      onClick={() =>
+                        setPendingImages((current) =>
+                          current.filter((candidate) => candidate.id !== image.id),
+                        )
+                      }
+                      title={`Remove ${image.name}`}
+                      type="button"
+                    >
+                      {image.name}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+              <textarea
+                aria-label="Message the channel"
+                onChange={(event) => {
+                  setDraft(event.target.value);
+                  setHighlightedSuggestion(0);
+                  setError(null);
+                }}
+                onKeyDown={(event) => {
+                  if (mentionSuggestions.length > 0) {
+                    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                      event.preventDefault();
+                      const delta = event.key === "ArrowDown" ? 1 : -1;
+                      setHighlightedSuggestion(
+                        (current) =>
+                          (current + delta + mentionSuggestions.length) %
+                          mentionSuggestions.length,
+                      );
+                      return;
+                    }
+                    if (event.key === "Enter" || event.key === "Tab") {
+                      event.preventDefault();
+                      const choice =
+                        mentionSuggestions[
+                          Math.min(highlightedSuggestion, mentionSuggestions.length - 1)
+                        ];
+                      if (choice) selectMention(choice);
+                      return;
+                    }
+                  }
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    void submit();
+                  }
+                }}
+                placeholder={
+                  currentDiscussion?.status === "active"
+                    ? "Add to the discussion — the next turn will see your message"
+                    : currentDiscussion?.status === "awaiting_user"
+                      ? "Reply to keep the discussion going…"
+                      : "Message everyone, or @mention specific coworkers"
+                }
+                value={draft}
+              />
+              <input
+                accept={[...acceptedImageTypes].join(",")}
+                hidden
+                multiple
+                onChange={(event) => void attachGroupImages(event.target.files)}
+                ref={fileInput}
+                type="file"
+              />
+              <div className="channel-composer-actions">
+                {!discussionOngoing ? (
+                  <button
+                    aria-label="Attach images"
+                    className="conversation-icon-button"
+                    onClick={() => fileInput.current?.click()}
+                    type="button"
+                  >
+                    <Icon name="file" />
+                  </button>
+                ) : null}
+                {Object.keys(liveResponses).length > 0 && !currentDiscussion ? (
+                  <button
+                    className="conversation-icon-button"
+                    onClick={() => {
+                      void Promise.all(
+                        Object.values(liveResponses).map((response) =>
+                          window.coworker.tasks.cancel(response.taskId),
+                        ),
+                      ).then(onChanged);
+                    }}
+                    title="Stop channel work"
+                    type="button"
+                  >
+                    <Icon name="stop" />
+                  </button>
+                ) : null}
+                <button
+                  className="primary-button"
+                  disabled={submitting}
+                  onClick={() => void submit()}
+                  type="button"
+                >
+                  <Icon name="send" />
+                  {submitting ? "Sending…" : "Send"}
+                </button>
+              </div>
+              {error ? (
+                <small className="composer-error" role="alert">
+                  {error}
+                </small>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+export function CreateGroupChannelModal({
+  conversation,
+  coworkers,
+  initialCoworkerId,
+  onClose,
+  onCreated,
+}: {
+  conversation?: Conversation;
+  coworkers: Coworker[];
+  initialCoworkerId: string;
+  onClose: () => void;
+  onCreated: (conversation: Conversation) => Promise<void>;
+}) {
+  const [title, setTitle] = useState(conversation?.title ?? "");
+  const [memberIds, setMemberIds] = useState<string[]>(
+    conversation?.memberIds ?? [initialCoworkerId],
+  );
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function create() {
+    if (memberIds.length < 2 || saving) {
+      setError("Choose at least two coworkers for a group channel.");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const saved = conversation
+        ? await window.coworker.conversations.update(conversation.id, {
+            memberIds,
+            title: title.trim() || conversation.title,
+          })
+        : await window.coworker.conversations.create({
+            kind: "group",
+            memberIds,
+            title: title.trim() || undefined,
+          });
+      await onCreated(saved);
+    } catch (createError) {
+      setError(createError instanceof Error ? createError.message : String(createError));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="modal-backdrop" onMouseDown={onClose} role="presentation">
+      <form
+        className="modal-card group-channel-modal"
+        onMouseDown={(event) => event.stopPropagation()}
+        onSubmit={(event) => {
+          event.preventDefault();
+          void create();
+        }}
+      >
+        <div>
+          <span className="eyebrow">{conversation ? "Channel settings" : "New channel"}</span>
+          <h2>{conversation ? "Update the channel" : "Choose the coworkers"}</h2>
+          <p>You remain the owner and observer of every channel.</p>
+        </div>
+        <label>
+          Channel name
+          <input
+            maxLength={160}
+            onChange={(event) => setTitle(event.target.value)}
+            placeholder="Launch planning"
+            value={title}
+          />
+        </label>
+        <fieldset className="group-member-picker">
+          <legend>Coworkers</legend>
+          {coworkers.map((coworker) => (
+            <label key={coworker.id}>
+              <input
+                checked={memberIds.includes(coworker.id)}
+                onChange={(event) =>
+                  setMemberIds((current) =>
+                    event.target.checked
+                      ? [...new Set([...current, coworker.id])]
+                      : current.filter((id) => id !== coworker.id),
+                  )
+                }
+                type="checkbox"
+              />
+              <CoworkerAvatar className="mention-avatar" coworker={coworker} />
+              <span>
+                <strong>{coworker.name}</strong>
+                <small>{coworker.role}</small>
+              </span>
+            </label>
+          ))}
+        </fieldset>
+        {error ? <small className="form-error">{error}</small> : null}
+        <div className="modal-actions">
+          <button className="secondary-button" onClick={onClose} type="button">
+            Cancel
+          </button>
+          <button className="primary-button" disabled={saving} type="submit">
+            {saving
+              ? conversation
+                ? "Saving…"
+                : "Creating…"
+              : conversation
+                ? "Save channel"
+                : "Create channel"}
+          </button>
+        </div>
+      </form>
+    </div>
   );
 }
 
@@ -488,6 +1500,7 @@ function CoworkerSurface({
   onBack,
   onChanged,
   onCreate,
+  onCreateGroup,
   onManageCoworker,
   onNewConversation,
   onOpenApprovals,
@@ -509,6 +1522,7 @@ function CoworkerSurface({
   onBack: () => void;
   onChanged: () => Promise<void>;
   onCreate: () => void;
+  onCreateGroup: () => void;
   onManageCoworker: (coworker: Coworker) => void;
   onNewConversation: () => Promise<void>;
   onOpenApprovals: () => void;
@@ -533,6 +1547,10 @@ function CoworkerSurface({
   );
   const pending = approvals.filter((approval) => approval.status === "PENDING");
   const renderToolCall = useRenderToolCall();
+  const { rosterStyle, resizeRoster, resetRoster } = useConversationRosterWidth();
+  const [railHidden, setRailHidden] = useState(
+    () => window.localStorage.getItem("conversation-rail-hidden") === "true",
+  );
   const [draft, setDraft] = useState("");
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
   const [imageError, setImageError] = useState<string | null>(null);
@@ -991,15 +2009,37 @@ function CoworkerSurface({
   let previousMessageDay: string | null = null;
 
   return (
-    <div className="coworker-detail conversation-layout">
+    <div
+      className={
+        railHidden
+          ? "coworker-detail conversation-layout rail-hidden"
+          : "coworker-detail conversation-layout"
+      }
+      style={rosterStyle}
+    >
       <div className="conversation-window-drag" />
 
       <aside className="conversation-roster-panel">
+        <ConversationRosterResizeHandle onReset={resetRoster} onResize={resizeRoster} />
         <header className="conversation-roster-head">
           <h1>Coworkers</h1>
-          <button className="conversation-icon-button" onClick={onCreate} aria-label="Create coworker">
-            <Icon name="plus" />
-          </button>
+          <span className="conversation-roster-actions">
+            <button
+              className="conversation-icon-button"
+              onClick={onCreateGroup}
+              aria-label="Create group channel"
+              title="Create group channel"
+            >
+              <Icon name="spark" />
+            </button>
+            <button
+              className="conversation-icon-button"
+              onClick={onCreate}
+              aria-label="Create coworker"
+            >
+              <Icon name="plus" />
+            </button>
+          </span>
         </header>
         <label className="conversation-search">
           <Icon name="search" />
@@ -1011,6 +2051,32 @@ function CoworkerSurface({
           />
         </label>
         <nav className="conversation-roster" aria-label="Coworker conversations">
+          {conversations
+            .filter((conversation) => conversation.kind === "group")
+            .map((conversation) => (
+              <button
+                className="conversation-roster-item channel-roster-item"
+                key={conversation.id}
+                onClick={() => onSelectConversation(conversation.id)}
+                type="button"
+              >
+                <span className="conversation-avatar group-channel-avatar">
+                  <Icon name="spark" />
+                </span>
+                <span className="conversation-roster-copy">
+                  <span>
+                    <strong>{conversation.title}</strong>
+                    <time>{formatRelativeTime(conversation.updatedAt)}</time>
+                  </span>
+                  <small>
+                    {conversation.memberIds
+                      .map((id) => coworkers.find((item) => item.id === id)?.name)
+                      .filter(Boolean)
+                      .join(", ")}
+                  </small>
+                </span>
+              </button>
+            ))}
           {visibleCoworkers.map((item) => {
             const latestTask = tasks
               .filter((task) => task.coworkerId === item.id)
@@ -1197,6 +2263,30 @@ function CoworkerSurface({
               title={`Configure ${coworker.name}`}
             >
               <Icon name="settings" />
+            </button>
+            <button
+              aria-label={railHidden ? "Show the side panel" : "Hide the side panel"}
+              aria-pressed={!railHidden}
+              className={
+                railHidden
+                  ? "conversation-icon-button"
+                  : "conversation-icon-button active"
+              }
+              onClick={() =>
+                setRailHidden((current) => {
+                  const next = !current;
+                  window.localStorage.setItem("conversation-rail-hidden", String(next));
+                  return next;
+                })
+              }
+              title={
+                railHidden
+                  ? "Show the files and approvals panel"
+                  : "Hide the files and approvals panel"
+              }
+              type="button"
+            >
+              <Icon name="panel" />
             </button>
           </div>
           {conversationError ? (
@@ -1508,6 +2598,7 @@ function CoworkerSurface({
         </div>
       </section>
 
+      {railHidden ? null : (
       <aside className="conversation-approval-rail conversation-right-rail">
         <header className="conversation-rail-tabs" role="tablist" aria-label="Coworker details">
           <button
@@ -1686,6 +2777,7 @@ function CoworkerSurface({
           </section>
         )}
       </aside>
+      )}
     </div>
   );
 }

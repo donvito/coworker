@@ -1,4 +1,4 @@
-import { copyFile, writeFile } from "node:fs/promises";
+import { copyFile } from "node:fs/promises";
 import { basename, extname, resolve } from "node:path";
 import {
   BrowserWindow,
@@ -31,6 +31,9 @@ import {
   listLimitSchema,
   modelProviderSchema,
   settingsPatchSchema,
+  sendConversationMessageSchema,
+  sharedFolderPathSchema,
+  updateConversationSchema,
   updateCoworkerSchema,
   updateScheduleSchema,
 } from "@shared/validation";
@@ -46,6 +49,10 @@ const mutationChannels = new Set<string>([
   ipcChannels.coworkersUpdate,
   ipcChannels.coworkersRemove,
   ipcChannels.conversationsCreate,
+  ipcChannels.conversationsUpdate,
+  ipcChannels.conversationsSend,
+  ipcChannels.conversationsContinueDiscussion,
+  ipcChannels.conversationsStopDiscussion,
   ipcChannels.tasksCreate,
   ipcChannels.tasksCancel,
   ipcChannels.approvalsDecide,
@@ -143,6 +150,28 @@ export function registerIpc(input: {
   handle(ipcChannels.coworkersRemove, (_event, id) =>
     input.service.removeCoworker(idSchema.parse(id)),
   );
+  handle(ipcChannels.foldersPick, async () => {
+    const window = input.getMainWindow();
+    const options = {
+      title: "Grant read-only folder access",
+      buttonLabel: "Grant read-only access",
+      properties: ["openDirectory", "multiSelections", "dontAddToRecent"],
+    } satisfies Electron.OpenDialogOptions;
+    const result = window
+      ? await dialog.showOpenDialog(window, options)
+      : await dialog.showOpenDialog(options);
+    return result.canceled ? [] : result.filePaths;
+  });
+  handle(ipcChannels.foldersReveal, async (_event, coworkerId, path) => {
+    const coworker = input.service.database.getCoworker(idSchema.parse(coworkerId));
+    const requestedPath = sharedFolderPathSchema.parse(path);
+    const folder = coworker.sharedFolders.find((candidate) => candidate.path === requestedPath);
+    if (!folder) {
+      throw new Error("Only folders granted to this coworker can be opened from here");
+    }
+    const error = await shell.openPath(folder.path);
+    if (error) throw new Error(`Could not open ${folder.path}: ${error}`);
+  });
 
   handle(ipcChannels.conversationsList, (_event, coworkerId) =>
     input.service.database.listConversations(
@@ -157,6 +186,21 @@ export function registerIpc(input: {
   );
   handle(ipcChannels.conversationsCreate, (_event, value) =>
     input.service.createConversation(createConversationSchema.parse(value)),
+  );
+  handle(ipcChannels.conversationsUpdate, (_event, id, value) =>
+    input.service.updateConversation(
+      idSchema.parse(id),
+      updateConversationSchema.parse(value),
+    ),
+  );
+  handle(ipcChannels.conversationsSend, (_event, value) =>
+    input.service.sendConversationMessage(sendConversationMessageSchema.parse(value)),
+  );
+  handle(ipcChannels.conversationsContinueDiscussion, (_event, id) =>
+    input.service.continueDiscussion(idSchema.parse(id)),
+  );
+  handle(ipcChannels.conversationsStopDiscussion, (_event, id) =>
+    input.service.stopDiscussion(idSchema.parse(id)),
   );
 
   handle(ipcChannels.tasksList, (_event, coworkerId) =>
@@ -176,9 +220,8 @@ export function registerIpc(input: {
       taskId === undefined ? undefined : idSchema.parse(taskId),
     ),
   );
-  handle(ipcChannels.messagesListConversation, (_event, coworkerId, conversationId) =>
+  handle(ipcChannels.messagesListConversation, (_event, conversationId) =>
     input.service.database.listConversationMessages(
-      idSchema.parse(coworkerId),
       idSchema.parse(conversationId),
       Number.MAX_SAFE_INTEGER,
     ),
@@ -267,41 +310,16 @@ export function registerIpc(input: {
     clipboard.writeText(report.text);
     return { count: report.count };
   });
-  handle(ipcChannels.diagnosticsProviderReportExport, async () => {
-    const report = await input.service.providerErrors.report({
-      "App version": app.getVersion(),
-      Platform: `${process.platform} ${process.arch}`,
-      Electron: process.versions.electron,
-    });
-    const window = input.getMainWindow();
-    const result = window
-      ? await dialog.showSaveDialog(window, {
-          title: "Export provider error report",
-          defaultPath: `Coworker-Provider-Report-${new Date().toISOString().slice(0, 10)}.txt`,
-          filters: [{ name: "Text report", extensions: ["txt"] }],
-        })
-      : await dialog.showSaveDialog({
-          title: "Export provider error report",
-          defaultPath: `Coworker-Provider-Report-${new Date().toISOString().slice(0, 10)}.txt`,
-          filters: [{ name: "Text report", extensions: ["txt"] }],
-        });
-    if (result.canceled || !result.filePath) return null;
-    await writeFile(result.filePath, report.text, { encoding: "utf8", mode: 0o600 });
-    return result.filePath;
-  });
   handle(ipcChannels.diagnosticsSupportBundleExport, async () => {
+    const options = {
+      title: "Download Coworker diagnostics",
+      defaultPath: `Coworker-Diagnostics-${new Date().toISOString().slice(0, 10)}.zip`,
+      filters: [{ name: "ZIP archive", extensions: ["zip"] }],
+    };
     const window = input.getMainWindow();
     const result = window
-      ? await dialog.showSaveDialog(window, {
-          title: "Export Coworker support bundle",
-          defaultPath: `Coworker-Support-${new Date().toISOString().slice(0, 10)}.zip`,
-          filters: [{ name: "ZIP archive", extensions: ["zip"] }],
-        })
-      : await dialog.showSaveDialog({
-          title: "Export Coworker support bundle",
-          defaultPath: `Coworker-Support-${new Date().toISOString().slice(0, 10)}.zip`,
-          filters: [{ name: "ZIP archive", extensions: ["zip"] }],
-        });
+      ? await dialog.showSaveDialog(window, options)
+      : await dialog.showSaveDialog(options);
     if (result.canceled || !result.filePath) return null;
     if (!input.logger) {
       throw new Error("Application diagnostics are not available");

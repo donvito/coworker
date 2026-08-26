@@ -1,0 +1,1 @@
+ALTER TABLE `coworkers` ADD `shared_folders_json` text DEFAULT '[]' NOT NULL;

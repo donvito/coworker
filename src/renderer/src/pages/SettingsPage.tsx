@@ -22,7 +22,7 @@ import { ModelSelector } from "../components/ModelSelector";
 import { PageHeader } from "../components/Primitives";
 import { readableError } from "../lib/errors";
 
-type SettingsTab = "general" | "models" | "skills" | "integrations" | "data";
+export type SettingsTab = "general" | "models" | "skills" | "integrations" | "data";
 
 const themeOptions: Array<{ id: AppTheme; label: string; description: string }> = [
   { id: "graphite", label: "Graphite", description: "Neutral monochrome, the default" },
@@ -48,6 +48,7 @@ export function SettingsPage({
   coworkers,
   dataPath,
   version = "development",
+  initialTab = "general",
   onChanged,
 }: {
   settings: AppSettings;
@@ -56,9 +57,10 @@ export function SettingsPage({
   coworkers: Coworker[];
   dataPath: string;
   version?: string;
+  initialTab?: SettingsTab;
   onChanged: () => Promise<void>;
 }) {
-  const [tab, setTab] = useState<SettingsTab>("general");
+  const [tab, setTab] = useState<SettingsTab>(initialTab);
   const [working, setWorking] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [noticeKind, setNoticeKind] = useState<"success" | "error">("success");
@@ -66,10 +68,8 @@ export function SettingsPage({
   const [unreadableKeys, setUnreadableKeys] = useState<string[]>([]);
   const [credentialsLoaded, setCredentialsLoaded] = useState(false);
   const [modelProvider, setModelProvider] = useState<RemoteModelProvider>("anthropic");
-  const [catalogProvider, setCatalogProvider] = useState<RemoteModelProvider | "">(
-    settings.defaultModelProvider ?? "",
-  );
-  const [catalogModel, setCatalogModel] = useState(settings.defaultModelName ?? "");
+  const [makeDefaultModel, setMakeDefaultModel] = useState(true);
+  const [defaultModelChoice, setDefaultModelChoice] = useState("");
   const [webSearchProvider, setWebSearchProvider] = useState<WebSearchProvider>("tavily");
   const [providerErrors, setProviderErrors] = useState<ProviderErrorDiagnostic[]>([]);
   const [diagnosticsLoading, setDiagnosticsLoading] = useState(false);
@@ -116,9 +116,10 @@ export function SettingsPage({
   }, [integrations]);
 
   useEffect(() => {
-    setCatalogProvider(settings.defaultModelProvider ?? "");
-    setCatalogModel(settings.defaultModelName ?? "");
-  }, [settings.defaultModelName, settings.defaultModelProvider]);
+    const providerIsDefault = settings.defaultModelProvider === modelProvider;
+    setMakeDefaultModel(providerIsDefault || !settings.defaultModelProvider);
+    setDefaultModelChoice(providerIsDefault ? settings.defaultModelName ?? "" : "");
+  }, [modelProvider, settings.defaultModelName, settings.defaultModelProvider]);
 
   useEffect(() => {
     setGlobalInstructions(settings.globalOperatingInstructions);
@@ -155,24 +156,12 @@ export function SettingsPage({
     }
   }
 
-  async function exportProviderReport() {
-    try {
-      const path = await window.coworker.diagnostics.exportProviderReport();
-      if (!path) return;
-      setNoticeKind("success");
-      setNotice(`Provider report saved to ${path}`);
-    } catch (exportError) {
-      setNoticeKind("error");
-      setNotice(exportError instanceof Error ? exportError.message : String(exportError));
-    }
-  }
-
   async function exportSupportBundle() {
     try {
       const path = await window.coworker.diagnostics.exportSupportBundle();
       if (!path) return;
       setNoticeKind("success");
-      setNotice(`Support bundle saved to ${path}`);
+      setNotice(`Diagnostics ZIP saved to ${path}`);
     } catch (exportError) {
       setNoticeKind("error");
       setNotice(exportError instanceof Error ? exportError.message : String(exportError));
@@ -222,34 +211,6 @@ export function SettingsPage({
     }
   }
 
-  async function selectDefaultModel(modelName: string) {
-    setCatalogModel(modelName);
-    if (!catalogProvider || !modelName) return;
-    if (
-      catalogProvider === settings.defaultModelProvider &&
-      modelName === settings.defaultModelName
-    ) {
-      return;
-    }
-
-    setWorking(true);
-    setNotice(null);
-    try {
-      await window.coworker.app.updateSettings({
-        defaultModelProvider: catalogProvider,
-        defaultModelName: modelName,
-      });
-      await onChanged();
-      setNoticeKind("success");
-      setNotice(`${modelProviderName(catalogProvider)} · ${modelName} is now the global default.`);
-    } catch (saveError) {
-      setNoticeKind("error");
-      setNotice(saveError instanceof Error ? saveError.message : String(saveError));
-    } finally {
-      setWorking(false);
-    }
-  }
-
   async function configureModel(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = event.currentTarget;
@@ -264,11 +225,29 @@ export function SettingsPage({
         provider,
         apiKey: apiKey || undefined,
         baseUrl: baseUrl || undefined,
+        defaultModelName:
+          makeDefaultModel && defaultModelChoice ? defaultModelChoice : undefined,
       });
       setCredentialStatus((current) => ({ ...current, [result.key]: true }));
+      let appliedDefault = result.defaultApplied ? defaultModelChoice : "";
+      if (makeDefaultModel && !result.defaultApplied && result.models[0]) {
+        // First-time connection: the model list only became known during this
+        // save, so apply the first available model and let the user adjust it.
+        appliedDefault = result.models[0].id;
+        await window.coworker.app.updateSettings({
+          defaultModelProvider: provider,
+          defaultModelName: appliedDefault,
+        });
+        setDefaultModelChoice(appliedDefault);
+      }
+      await onChanged();
       form.reset();
       setNoticeKind("success");
-      setNotice(`${modelProviderName(provider)} configuration stored securely.`);
+      setNotice(
+        appliedDefault
+          ? `${modelProviderName(provider)} configuration stored securely. ${modelProviderName(provider)} · ${appliedDefault} is now the global default model.`
+          : `${modelProviderName(provider)} configuration stored securely.`,
+      );
     } catch (configureError) {
       setNoticeKind("error");
       setNotice(
@@ -644,6 +623,7 @@ export function SettingsPage({
                         {credentialStatus[modelProviderCredentialKey(provider.id)]
                           ? "Connected"
                           : "Not connected"}
+                        {settings.defaultModelProvider === provider.id ? " · Default" : ""}
                       </small>
                     </span>
                     <span
@@ -699,78 +679,51 @@ export function SettingsPage({
                     !credentialStatus[modelProviderCredentialKey(modelProvider)]
                   }
                 />
+                <div className="credential-default-model">
+                  <label className="settings-row">
+                    <span>
+                      <strong>Use as the global default model</strong>
+                      <small>
+                        New coworkers start with this model. You can override it per coworker.
+                      </small>
+                    </span>
+                    <span className="toggle">
+                      <input
+                        checked={makeDefaultModel}
+                        disabled={working}
+                        onChange={(event) => setMakeDefaultModel(event.target.checked)}
+                        type="checkbox"
+                      />
+                      <span />
+                    </span>
+                  </label>
+                  {makeDefaultModel ? (
+                    credentialStatus[modelProviderCredentialKey(modelProvider)] &&
+                    credentialsLoaded ? (
+                      <ModelSelector
+                        disabled={working}
+                        onChange={setDefaultModelChoice}
+                        provider={modelProvider}
+                        value={defaultModelChoice}
+                      />
+                    ) : (
+                      <small className="credential-default-model-hint">
+                        The model list loads once the key is verified. Saving connects the
+                        provider and makes its first available model the default; you can change
+                        it here right after.
+                      </small>
+                    )
+                  ) : null}
+                </div>
                 <button className="primary-button" disabled={working}>
                   Verify and save
                 </button>
               </form>
-              <div className="settings-model-browser">
-                <span>
-                  <strong>Default model</strong>
-                  <small>
-                    New coworkers start with this model. You can override it in each coworker.
-                  </small>
-                </span>
-                <div className="form-split settings-model-browser-fields">
-                  <label>
-                    <span>Provider</span>
-                    <select
-                      disabled={
-                        working ||
-                        !credentialsLoaded ||
-                        !remoteModelProviderDefinitions.some(
-                          (provider) =>
-                            credentialStatus[modelProviderCredentialKey(provider.id)],
-                        )
-                      }
-                      onChange={(event) => {
-                        setCatalogProvider(event.target.value as RemoteModelProvider | "");
-                        setCatalogModel("");
-                      }}
-                      value={catalogProvider}
-                    >
-                      <option value="">
-                        {remoteModelProviderDefinitions.some(
-                          (provider) =>
-                            credentialStatus[modelProviderCredentialKey(provider.id)],
-                        )
-                          ? "Select a provider"
-                          : "No model configured"}
-                      </option>
-                      {remoteModelProviderDefinitions
-                        .filter(
-                          (provider) =>
-                            credentialStatus[modelProviderCredentialKey(provider.id)],
-                        )
-                        .map((provider) => (
-                          <option key={provider.id} value={provider.id}>
-                            {provider.label}
-                          </option>
-                        ))}
-                    </select>
-                  </label>
-                  {catalogProvider ? (
-                    <ModelSelector
-                      disabled={working || !credentialsLoaded}
-                      onChange={(modelName) => void selectDefaultModel(modelName)}
-                      provider={catalogProvider}
-                      value={catalogModel}
-                    />
-                  ) : (
-                    <div className="model-not-configured-field">
-                      <span>Model</span>
-                      <div className="model-not-configured">
-                        <strong>No model configured</strong>
-                        <small>Add an API key above, then choose a provider and model.</small>
-                      </div>
-                    </div>
-                  )}
-                </div>
-                <small className="settings-model-default-note">
-                  {settings.defaultModelProvider && settings.defaultModelName
-                    ? `Connected providers only · current default: ${modelProviderName(settings.defaultModelProvider)} · ${settings.defaultModelName}`
-                    : "No model configured"}
-                </small>
-              </div>
+              <small className="settings-model-default-note">
+                {settings.defaultModelProvider && settings.defaultModelName
+                  ? `Current global default: ${modelProviderName(settings.defaultModelProvider)} · ${settings.defaultModelName}`
+                  : "No global default model configured yet. Connect a provider with the switch on to set one."}
+              </small>
             </section>
           ) : null}
 
@@ -1027,17 +980,10 @@ export function SettingsPage({
                     </button>
                     <button
                       className="primary-button"
-                      onClick={() => void exportProviderReport()}
-                      type="button"
-                    >
-                      <Icon name="download" /> Export report
-                    </button>
-                    <button
-                      className="primary-button"
                       onClick={() => void exportSupportBundle()}
                       type="button"
                     >
-                      <Icon name="download" /> Download support ZIP
+                      <Icon name="download" /> Download diagnostics ZIP
                     </button>
                   </div>
                 </header>

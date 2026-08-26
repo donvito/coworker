@@ -3,7 +3,7 @@ import { readFile, rm, writeFile } from "node:fs/promises";
 import { posix } from "node:path";
 import type { ImageContent } from "@earendil-works/pi-ai";
 import type { RunAgentInput } from "@ag-ui/core";
-import type { TaskImageAttachment } from "@shared/contracts";
+import type { ConversationImageInput, TaskImageAttachment } from "@shared/contracts";
 import { resolveWorkspacePath } from "@main/tools/workspace-path";
 
 export const supportedImageMimeTypes = [
@@ -145,6 +145,32 @@ export function parseAgentPrompt(input: RunAgentInput): ParsedAgentPrompt {
   const text =
     enteredText || (images.length > 0 ? "Analyze the attached image." : "Continue the current task");
   return { images, text };
+}
+
+export function parseConversationImages(images: ConversationImageInput[] = []): IncomingImageAttachment[] {
+  let totalBytes = 0;
+  return images.map((image, index) => {
+    const mimeType = image.mimeType.toLowerCase() as SupportedImageMimeType;
+    if (!supportedImageMimeTypes.includes(mimeType)) {
+      throw new Error("Attach a JPEG, PNG, WebP, or GIF image");
+    }
+    const data = decodeBase64Image(image.data);
+    if (!hasImageSignature(data, mimeType)) {
+      throw new Error(`${attachmentName({ name: image.name }, index, mimeType)} does not match its declared image format`);
+    }
+    if (image.size !== data.length) {
+      throw new Error(`${image.name} size does not match its encoded data`);
+    }
+    totalBytes += data.length;
+    if (totalBytes > maxAttachedImagesTotalBytes) {
+      throw new Error("Attached images must be 20 MB or smaller in total");
+    }
+    return {
+      data,
+      mimeType,
+      name: attachmentName({ name: image.name }, index, mimeType),
+    };
+  });
 }
 
 export async function persistImageAttachments(
