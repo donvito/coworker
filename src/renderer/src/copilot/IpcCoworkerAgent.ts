@@ -38,6 +38,11 @@ function compactImageHistory(input: RunAgentInput): RunAgentInput {
 export class IpcCoworkerAgent extends AbstractAgent {
   private activeRunId: string | null = null;
 
+  /** True while a run started from this surface is still streaming events. */
+  get isStreaming(): boolean {
+    return this.activeRunId !== null;
+  }
+
   constructor(
     readonly coworkerId: string,
     config: AgentConfig = {},

@@ -98,6 +98,9 @@ export default function App() {
             setSelectedCoworkerId(coworker.id);
           }}
           onOpenApprovals={() => navigate("approvals")}
+          onManageCoworkers={() => navigate("coworkers")}
+          onOpenActivity={() => navigate("activity")}
+          onChanged={refresh}
         />
       ) : null}
 
@@ -129,7 +132,7 @@ export default function App() {
           skills={snapshot.skills}
           settings={snapshot.settings}
           modelEndpoints={snapshot.modelEndpoints}
-          onBack={() => setSelectedCoworkerId(null)}
+          onBack={() => navigate("home")}
           onChanged={refresh}
           onOpenApprovals={() => navigate("approvals")}
           onOpenModelSettings={openModelSettings}

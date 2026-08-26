@@ -425,6 +425,7 @@ export function CoworkerDetailPage({
     conversationId: string;
     messages: StoredMessage[];
   } | null>(null);
+  const [historyVersion, setHistoryVersion] = useState(0);
   const managingCoworker =
     coworkers.find((candidate) => candidate.id === managingCoworkerId) ?? null;
   const latestConversation = latestDirectConversation(conversations, coworker.id);
@@ -465,6 +466,7 @@ export function CoworkerDetailPage({
             conversationId: activeConversationId,
             messages: history,
           });
+          setHistoryVersion((version) => version + 1);
         }
       })
       .catch(() => {
@@ -473,6 +475,7 @@ export function CoworkerDetailPage({
             conversationId: activeConversationId,
             messages: boundedConversationMessages,
           });
+          setHistoryVersion((version) => version + 1);
         }
       });
     return () => {
@@ -514,8 +517,38 @@ export function CoworkerDetailPage({
             content: message.content,
           })),
       }),
-    [coworker.id, activeConversationId, conversationHistoryReady],
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reseeded via historyVersion
+    [coworker.id, activeConversationId, historyVersion],
   );
+
+  // Background runs (Put someone to work, schedules) persist their replies
+  // without streaming through this surface. When stored messages outgrow what
+  // the agent is showing and nothing is streaming, reload and reseed.
+  const snapshotVisibleCount = boundedConversationMessages.filter(
+    (message) => message.role === "user" || message.role === "assistant",
+  ).length;
+  useEffect(() => {
+    if (!conversationHistoryReady || agent.isStreaming) return;
+    const agentVisibleCount = agent.messages.filter(
+      (message) => message.role === "user" || message.role === "assistant",
+    ).length;
+    if (snapshotVisibleCount <= agentVisibleCount) return;
+    let cancelled = false;
+    void window.coworker.messages
+      .listConversation(activeConversationId)
+      .then((history) => {
+        if (cancelled) return;
+        setLoadedConversationHistory({
+          conversationId: activeConversationId,
+          messages: history,
+        });
+        setHistoryVersion((version) => version + 1);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [snapshotVisibleCount, conversationHistoryReady, activeConversationId, agent]);
 
   return (
     <>
