@@ -1362,6 +1362,7 @@ function GroupConversationSurface({
                   <button
                     aria-label="Attach images"
                     className="conversation-icon-button"
+                    title="Attach images"
                     onClick={() => fileInput.current?.click()}
                     type="button"
                   >
@@ -1690,6 +1691,7 @@ function CoworkerSurface({
   } | null>(null);
   const [conversationBusy, setConversationBusy] = useState(false);
   const [conversationError, setConversationError] = useState<string | null>(null);
+  const [pendingArchive, setPendingArchive] = useState<Conversation | null>(null);
   const [approvalInFlight, setApprovalInFlight] = useState<string | null>(null);
   const [approvalError, setApprovalError] = useState<string | null>(null);
   const [rightRailTab, setRightRailTab] = useState<"files" | "approvals">(
@@ -1761,6 +1763,7 @@ function CoworkerSurface({
     }
   }
 
+
   useEffect(() => {
     liveMessageTimes.current.clear();
   }, [conversationId]);
@@ -1777,9 +1780,25 @@ function CoworkerSurface({
     const close = (event: PointerEvent) => {
       if (!historyRef.current?.contains(event.target as Node)) setHistoryOpen(false);
     };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setHistoryOpen(false);
+    };
     document.addEventListener("pointerdown", close);
-    return () => document.removeEventListener("pointerdown", close);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", close);
+      document.removeEventListener("keydown", onKey);
+    };
   }, [historyOpen]);
+
+  useEffect(() => {
+    if (!pendingArchive) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setPendingArchive(null);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [pendingArchive]);
 
   useEffect(() => {
     const query = conversationSearch.trim();
@@ -2143,6 +2162,33 @@ function CoworkerSurface({
 
   let previousMessageDay: string | null = null;
 
+  const railToggle = (
+    <button
+      aria-label={railHidden ? "Show the side panel" : "Hide the side panel"}
+      aria-pressed={!railHidden}
+      className={
+        railHidden
+          ? "conversation-icon-button conversation-rail-toggle"
+          : "conversation-icon-button conversation-rail-toggle active"
+      }
+      onClick={() =>
+        setRailHidden((current) => {
+          const next = !current;
+          window.localStorage.setItem("conversation-rail-hidden", String(next));
+          return next;
+        })
+      }
+      title={
+        railHidden
+          ? "Show the files and approvals panel"
+          : "Hide the files and approvals panel"
+      }
+      type="button"
+    >
+      <Icon name="panel" />
+    </button>
+  );
+
   return (
     <div
       className={
@@ -2164,6 +2210,7 @@ function CoworkerSurface({
               className="conversation-icon-button"
               onClick={onCreate}
               aria-label="Create coworker"
+              title="Create coworker"
             >
               <Icon name="plus" />
             </button>
@@ -2319,14 +2366,22 @@ function CoworkerSurface({
               <button
                 aria-expanded={historyOpen}
                 aria-haspopup="dialog"
-                className="conversation-history-trigger"
+                aria-label="Conversation history"
+                className="conversation-icon-button"
                 disabled={agent.isRunning}
                 onClick={() => setHistoryOpen((open) => !open)}
+                title="Conversation history"
                 type="button"
               >
                 <Icon name="clock" />
-                <span>History</span>
               </button>
+              {historyOpen ? (
+                <div
+                  className="menu-backdrop"
+                  onPointerDown={() => setHistoryOpen(false)}
+                  role="presentation"
+                />
+              ) : null}
               {historyOpen ? (
                 <div
                   aria-label="Conversation history"
@@ -2341,6 +2396,7 @@ function CoworkerSurface({
                     <button
                       aria-label="Start a new conversation"
                       onClick={() => void startNewConversation()}
+                      title="Start a new conversation"
                       type="button"
                     >
                       <Icon name="plus" />
@@ -2388,8 +2444,11 @@ function CoworkerSurface({
                           <button
                             aria-label={`Archive “${conversation.title}”`}
                             className="conversation-history-archive"
-                            onClick={() => void archiveConversation(conversation)}
-                            title="Archive conversation (restore it from Settings → Archived)"
+                            onClick={() => {
+                              setHistoryOpen(false);
+                              setPendingArchive(conversation);
+                            }}
+                            title="Archive conversation"
                             type="button"
                           >
                             <Icon name="archive" />
@@ -2413,8 +2472,8 @@ function CoworkerSurface({
                 aria-label="Archive this conversation"
                 className="conversation-icon-button"
                 disabled={agent.isRunning || conversationBusy}
-                onClick={() => void archiveConversation(selectedConversation)}
-                title="Archive this conversation (restore it from Settings → Archived)"
+                onClick={() => setPendingArchive(selectedConversation)}
+                title="Archive this conversation"
                 type="button"
               >
                 <Icon name="archive" />
@@ -2429,30 +2488,7 @@ function CoworkerSurface({
               <Icon name="plus" />
               <span>{conversationBusy ? "Starting…" : "New"}</span>
             </button>
-            <button
-              aria-label={railHidden ? "Show the side panel" : "Hide the side panel"}
-              aria-pressed={!railHidden}
-              className={
-                railHidden
-                  ? "conversation-icon-button"
-                  : "conversation-icon-button active"
-              }
-              onClick={() =>
-                setRailHidden((current) => {
-                  const next = !current;
-                  window.localStorage.setItem("conversation-rail-hidden", String(next));
-                  return next;
-                })
-              }
-              title={
-                railHidden
-                  ? "Show the files and approvals panel"
-                  : "Hide the files and approvals panel"
-              }
-              type="button"
-            >
-              <Icon name="panel" />
-            </button>
+            {railHidden ? railToggle : null}
           </div>
           {conversationError ? (
             <small className="conversation-head-error" role="alert">
@@ -2728,6 +2764,7 @@ function CoworkerSurface({
                   aria-label="Stop current task"
                   className="composer-send composer-stop"
                   onClick={() => agent.abortRun()}
+                  title="Stop current task"
                   type="button"
                 >
                   <Icon name="stop" />
@@ -2736,6 +2773,7 @@ function CoworkerSurface({
                 <button
                   aria-label="Send message"
                   className="composer-send"
+                  title="Send message"
                   disabled={
                     (!draft.trim() && pendingImages.length === 0) || !isReady || readingImages
                   }
@@ -2764,7 +2802,6 @@ function CoworkerSurface({
         </div>
       </section>
 
-      {railHidden ? null : (
       <aside className="conversation-approval-rail conversation-right-rail">
         <header className="conversation-rail-tabs" role="tablist" aria-label="Coworker details">
           <button
@@ -2793,6 +2830,7 @@ function CoworkerSurface({
             <span>Approvals</span>
             {pending.length > 0 ? <b className="attention">{pending.length}</b> : null}
           </button>
+          {railToggle}
         </header>
 
         {rightRailTab === "files" ? (
@@ -2943,7 +2981,49 @@ function CoworkerSurface({
           </section>
         )}
       </aside>
-      )}
+
+      {pendingArchive ? (
+        <div
+          className="modal-backdrop"
+          onMouseDown={() => setPendingArchive(null)}
+          role="presentation"
+        >
+          <section
+            aria-labelledby="archive-confirm-title"
+            aria-modal="true"
+            className="modal-card archive-confirm-modal"
+            onMouseDown={(event) => event.stopPropagation()}
+            role="dialog"
+          >
+            <span className="eyebrow">Archive conversation</span>
+            <h2 id="archive-confirm-title">Archive “{pendingArchive.title}”?</h2>
+            <p>
+              It will be hidden from your history. You can restore it — or delete it
+              permanently — anytime from Settings → Archived.
+            </p>
+            <div className="modal-actions">
+              <button
+                className="secondary-button"
+                onClick={() => setPendingArchive(null)}
+                type="button"
+              >
+                Cancel
+              </button>
+              <button
+                className="primary-button"
+                onClick={() => {
+                  const target = pendingArchive;
+                  setPendingArchive(null);
+                  void archiveConversation(target);
+                }}
+                type="button"
+              >
+                Archive
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
     </div>
   );
 }

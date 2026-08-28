@@ -159,7 +159,8 @@ svg {
 }
 
 /* Window-wide titlebar drag strip over the main content; the sidebar keeps
-   its own drag region so its buttons stay clickable. */
+   its own drag region so its buttons stay clickable. The top-right corner is
+   left free for the panel toggle. */
 .app-window-drag {
   position: fixed;
   z-index: 15;
@@ -1764,6 +1765,7 @@ svg {
   display: grid;
   place-items: center;
   padding: 28px;
+  -webkit-app-region: no-drag;
   background: radial-gradient(
     110% 110% at 50% 12%,
     rgba(19, 36, 29, 0.28) 0%,
@@ -3053,7 +3055,7 @@ select:focus {
 .conversation-layout {
   position: relative;
   display: grid;
-  grid-template-columns: var(--conversation-roster-width, 260px) minmax(540px, 1fr) 340px;
+  grid-template-columns: var(--conversation-roster-width, 260px) minmax(540px, 1fr) auto;
   width: 100%;
   height: 100%;
   min-height: 0;
@@ -3061,8 +3063,31 @@ select:focus {
   background: var(--paper);
 }
 
-.conversation-layout.rail-hidden {
-  grid-template-columns: var(--conversation-roster-width, 260px) minmax(0, 1fr);
+.conversation-layout .conversation-right-rail {
+  width: var(--conversation-rail-width, 340px);
+  overflow: hidden;
+  visibility: visible;
+  opacity: 1;
+  transition:
+    width 280ms cubic-bezier(0.32, 0.72, 0.24, 1),
+    opacity 200ms ease,
+    visibility 0s linear 0s;
+}
+
+/* Pin inner content so it clips instead of reflowing while the rail animates. */
+.conversation-layout .conversation-right-rail > * {
+  min-width: min(280px, var(--conversation-rail-width, 340px));
+}
+
+.conversation-layout.rail-hidden .conversation-right-rail {
+  width: 0;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    width 280ms cubic-bezier(0.32, 0.72, 0.24, 1),
+    opacity 200ms ease,
+    visibility 0s linear 280ms;
 }
 
 .conversation-history-loading {
@@ -3523,6 +3548,27 @@ select:focus {
   margin-top: 3px;
 }
 
+/* The rail toggle rides the top-right: inside the rail's tab header when the
+   panel is open, at the end of the header controls when hidden. The active
+   state means "panel visible", not a tab, so keep the icon-button look. */
+.conversation-rail-tabs .conversation-rail-toggle,
+.conversation-rail-tabs .conversation-rail-toggle.active {
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  margin-bottom: 5px;
+  padding: 0;
+  align-self: center;
+  color: var(--ink-soft);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.conversation-rail-tabs .conversation-rail-toggle:hover {
+  color: var(--ink);
+  background: var(--forest-soft);
+}
+
 .conversation-profile-tools {
   display: flex;
   align-items: center;
@@ -3698,6 +3744,23 @@ select:focus {
 .conversation-history-archive svg {
   width: 13px;
   height: 13px;
+}
+
+/* Invisible click-catcher behind popover menus; also covers window drag strips. */
+.menu-backdrop {
+  position: fixed;
+  z-index: 39;
+  inset: 0;
+  background: transparent;
+  -webkit-app-region: no-drag;
+}
+
+.archive-confirm-modal {
+  width: min(440px, calc(100vw - 48px));
+}
+
+.archive-confirm-modal h2 {
+  overflow-wrap: anywhere;
 }
 
 .conversation-history-select > span {
@@ -4894,7 +4957,7 @@ select:focus {
   position: relative;
   z-index: 13;
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr 1fr auto;
   min-height: 52px;
   padding: 5px 9px 0;
   background: rgba(255, 255, 255, 0.72);
@@ -6808,7 +6871,8 @@ button.floor-activity-row:hover {
   }
 
   .conversation-layout {
-    grid-template-columns: var(--conversation-roster-width, 214px) minmax(430px, 1fr) 282px;
+    --conversation-rail-width: 282px;
+    grid-template-columns: var(--conversation-roster-width, 214px) minmax(430px, 1fr) auto;
   }
 
   .page {
