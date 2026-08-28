@@ -42,6 +42,75 @@ describe("markdown → Telegram HTML", () => {
     );
   });
 
+  it("flattens a wide table into labelled rows", () => {
+    // Telegram has no table markup, so raw pipes used to reach the chat.
+    const converted = markdownToTelegramHtml(
+      [
+        "| Rank | Model | Provider | Context window |",
+        "|---|---|---|---|",
+        "| 1 | **Claude Opus 5** | Anthropic | ~1M tokens |",
+        "| 2 | **GPT-5.6 Sol** | OpenAI | ~1.1M tokens |",
+      ].join("\n"),
+    );
+    expect(converted).toBe(
+      [
+        "1. <b>Claude Opus 5</b>",
+        "Provider: Anthropic",
+        "Context window: ~1M tokens",
+        "",
+        "2. <b>GPT-5.6 Sol</b>",
+        "Provider: OpenAI",
+        "Context window: ~1.1M tokens",
+      ].join("\n"),
+    );
+    expect(converted).not.toContain("|");
+  });
+
+  it("reads a two-column table as key — value lines", () => {
+    expect(
+      markdownToTelegramHtml(
+        [
+          "| Need | Recommended model |",
+          "|---|---|",
+          "| Best overall | Claude Opus 5 |",
+          "| Best for coding | [Opus](https://example.test) |",
+        ].join("\n"),
+      ),
+    ).toBe(
+      [
+        "<b>Best overall</b> — Claude Opus 5",
+        '<b>Best for coding</b> — <a href="https://example.test">Opus</a>',
+      ].join("\n"),
+    );
+  });
+
+  it("leaves pipe characters alone outside tables", () => {
+    expect(markdownToTelegramHtml("run `a | b` or a | b")).toBe(
+      "run <code>a | b</code> or a | b",
+    );
+  });
+
+  it("splits an oversize table between rows, never mid-row", () => {
+    const rows = Array.from(
+      { length: 40 },
+      (_, index) => `| ${index + 1} | Model ${index} | Provider ${index} | ${index} tokens |`,
+    );
+    const chunks = markdownToTelegramChunks(
+      ["| Rank | Model | Provider | Context |", "|---|---|---|---|", ...rows].join("\n"),
+      600,
+    );
+    expect(chunks.length).toBeGreaterThan(1);
+    for (const chunk of chunks) {
+      expect(chunk.length).toBeLessThanOrEqual(600);
+      // Every row that appears is whole: a title always keeps its fields.
+      for (const title of chunk.match(/^\d+\. <b>Model \d+<\/b>$/gm) ?? []) {
+        const index = Number(title.match(/Model (\d+)/)![1]);
+        expect(chunk).toContain(`Provider: Provider ${index}`);
+        expect(chunk).toContain(`Context: ${index} tokens`);
+      }
+    }
+  });
+
   it("renders fenced code blocks with their language", () => {
     expect(markdownToTelegramHtml("```ts\nconst a = 1;\n```")).toBe(
       '<pre><code class="language-ts">const a = 1;</code></pre>',

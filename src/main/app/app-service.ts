@@ -91,7 +91,11 @@ export interface DesktopAppServiceOptions {
   workerFactory?: () => Worker;
   onSettingsChanged?: (settings: AppSettings) => void | Promise<void>;
   /** Test hooks for the Telegram bridge (fake fetch, short poll windows). */
-  telegram?: { fetchImpl?: typeof fetch; pollTimeoutSeconds?: number };
+  telegram?: {
+    fetchImpl?: typeof fetch;
+    pollTimeoutSeconds?: number;
+    draftKeepAliveMs?: number;
+  };
 }
 
 function safeDirectoryName(name: string): string {
@@ -173,6 +177,7 @@ export class DesktopAppService {
       onError: (scope, error) => void options.applicationLogger?.error(scope, error),
       fetchImpl: options.telegram?.fetchImpl,
       pollTimeoutSeconds: options.telegram?.pollTimeoutSeconds,
+      draftKeepAliveMs: options.telegram?.draftKeepAliveMs,
     });
   }
 

@@ -217,7 +217,7 @@ function fakeTelegram(options: { threadsEnabled?: boolean } = {}) {
   };
 }
 
-async function setup(options: { threadsEnabled?: boolean } = {}) {
+async function setup(options: { threadsEnabled?: boolean; draftKeepAliveMs?: number } = {}) {
   const root = await mkdtemp(join(tmpdir(), "coworker-telegram-"));
   temporaryPaths.push(root);
   const database = new CoworkerDatabase(join(root, "coworker.db"));
@@ -238,7 +238,11 @@ async function setup(options: { threadsEnabled?: boolean } = {}) {
     dataPath: root,
     database,
     credentials,
-    telegram: { fetchImpl: fake.fetchImpl, pollTimeoutSeconds: 0 },
+    telegram: {
+      fetchImpl: fake.fetchImpl,
+      pollTimeoutSeconds: 0,
+      draftKeepAliveMs: options.draftKeepAliveMs,
+    },
   });
   services.push(service);
   const enqueue = vi.spyOn(service.runtime, "enqueueTask").mockImplementation(() => undefined);
@@ -453,18 +457,18 @@ describe("telegram bridge", () => {
       () =>
         context.fake
           .sent("sendMessageDraft")
-          .some(
-            (body) =>
-              body.text === "**Done!** See `report.txt`" &&
-              body.can_stop === true &&
-              body.keep_on_stop === true,
-          ),
+          .some((body) => body.text === "**Done!** See `report.txt`"),
       "the streamed Telegram draft",
     );
     context.emit({
       type: "agent.event",
       ...base,
       event: { type: EventType.TEXT_MESSAGE_END, messageId: "m1" } as never,
+    });
+    context.emit({
+      type: "agent.event",
+      ...base,
+      event: { type: EventType.RUN_FINISHED } as never,
     });
     await waitFor(
       () =>
@@ -483,7 +487,12 @@ describe("telegram bridge", () => {
         .sent("sendMessage")
         .filter((body) => String(body.text).includes("do not echo")),
     ).toHaveLength(0);
-    expect(context.fake.sent("sendMessageDraft")[0]?.text).toBe("");
+    const drafts = context.fake.sent("sendMessageDraft");
+    expect(drafts[0]?.text).toBe("…");
+    expect(drafts.every((body) => String(body.text).length > 0)).toBe(true);
+    // can_stop makes the client wipe the chat white as the draft appears, so
+    // stopping from Telegram runs through /stop instead.
+    expect(drafts.every((body) => body.can_stop !== true)).toBe(true);
   });
 
   it("cancels a run from Telegram Stop and finalizes its partial response once", async () => {
@@ -561,6 +570,219 @@ describe("telegram bridge", () => {
         .sent("sendMessage")
         .some((body) => String(body.text).includes("hit an error")),
     ).toBe(false);
+  });
+
+  it("stops a run from the /stop command and finalizes its partial answer", async () => {
+    const context = await setup();
+    await connectAndPair(context);
+    const conversationId = `coworker:${context.ava.id}`;
+    const cancel = vi
+      .spyOn(context.service, "cancelTask")
+      .mockResolvedValue({} as Awaited<ReturnType<DesktopAppService["cancelTask"]>>);
+
+    // Nothing running: the command says so instead of cancelling blindly.
+    context.fake.push({ chatId: 777, text: "/stop" });
+    await waitFor(
+      () =>
+        context.fake
+          .sent("sendMessage")
+          .some((body) => String(body.text).includes("isn't working on anything")),
+      "the idle stop reply",
+    );
+    expect(cancel).not.toHaveBeenCalled();
+
+    const base = {
+      coworkerId: context.ava.id,
+      conversationId,
+      runId: "run-command-stop",
+      taskId: "task-command-stop",
+    };
+    context.emit({
+      type: "agent.event",
+      ...base,
+      event: { type: EventType.RUN_STARTED } as never,
+    });
+    context.emit({
+      type: "agent.event",
+      ...base,
+      event: {
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        messageId: "cmd-stop",
+        delta: "Partial **answer**",
+      } as never,
+    });
+    await waitFor(
+      () =>
+        context.fake
+          .sent("sendMessageDraft")
+          .some((body) => body.text === "Partial **answer**"),
+      "the partial draft",
+    );
+
+    context.fake.push({ chatId: 777, text: "/stop" });
+    await waitFor(() => cancel.mock.calls.length === 1, "the /stop cancellation");
+    expect(cancel).toHaveBeenCalledWith("task-command-stop");
+    // The command must not reach the coworker as chat.
+    expect(
+      context.database
+        .listConversationMessages(conversationId)
+        .some((message) => message.content.includes("/stop")),
+    ).toBe(false);
+
+    context.emit({
+      type: "agent.event",
+      ...base,
+      event: {
+        type: EventType.RUN_ERROR,
+        message: "Stopped",
+        code: "RUN_ABORTED",
+      } as never,
+    });
+    await waitFor(
+      () =>
+        context.fake
+          .sent("sendMessage")
+          .some((body) => body.text === "Partial <b>answer</b>"),
+      "the finalized partial response",
+    );
+  });
+
+  it("streams one animated draft across a tool call and posts a single reply", async () => {
+    const context = await setup();
+    await connectAndPair(context);
+    const conversationId = `coworker:${context.ava.id}`;
+    const base = {
+      coworkerId: context.ava.id,
+      conversationId,
+      runId: "run-tools",
+      taskId: "task-tools",
+    };
+    const stream = (event: Record<string, unknown>) =>
+      context.emit({ type: "agent.event", ...base, event } as never);
+
+    stream({ type: EventType.RUN_STARTED });
+    stream({ type: EventType.TEXT_MESSAGE_START, messageId: "a1" });
+    stream({ type: EventType.TEXT_MESSAGE_CONTENT, messageId: "a1", delta: "Checking that" });
+    stream({ type: EventType.TEXT_MESSAGE_END, messageId: "a1" });
+    // A tool call runs here, then the coworker keeps writing in the same turn.
+    stream({ type: EventType.TEXT_MESSAGE_START, messageId: "a2" });
+    stream({ type: EventType.TEXT_MESSAGE_CONTENT, messageId: "a2", delta: "All clear" });
+    stream({ type: EventType.TEXT_MESSAGE_END, messageId: "a2" });
+    await waitFor(
+      () =>
+        context.fake
+          .sent("sendMessageDraft")
+          .some((body) => body.text === "Checking that\n\nAll clear"),
+      "the continued draft",
+    );
+    // Nothing is posted until the run itself ends, so the draft is never
+    // cleared and restarted under a second draft id.
+    expect(
+      context.fake
+        .sent("sendMessage")
+        .filter((body) => String(body.text).includes("Checking that")),
+    ).toHaveLength(0);
+    expect(new Set(context.fake.sent("sendMessageDraft").map((body) => body.draft_id)).size).toBe(
+      1,
+    );
+
+    stream({ type: EventType.RUN_FINISHED });
+    await waitFor(
+      () =>
+        context.fake
+          .sent("sendMessage")
+          .some((body) => body.text === "Checking that\n\nAll clear"),
+      "the single finalized reply",
+    );
+    expect(
+      context.fake
+        .sent("sendMessage")
+        .filter((body) => String(body.text).includes("All clear")),
+    ).toHaveLength(1);
+  });
+
+  it("refreshes a quiet draft so Telegram never expires it mid-run", async () => {
+    const context = await setup({ draftKeepAliveMs: 30 });
+    await connectAndPair(context);
+    const conversationId = `coworker:${context.ava.id}`;
+    const base = {
+      coworkerId: context.ava.id,
+      conversationId,
+      runId: "run-quiet",
+      taskId: "task-quiet",
+    };
+    context.emit({
+      type: "agent.event",
+      ...base,
+      event: { type: EventType.RUN_STARTED } as never,
+    });
+    context.emit({
+      type: "agent.event",
+      ...base,
+      event: {
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        messageId: "quiet",
+        delta: "Working on it",
+      } as never,
+    });
+    // No further deltas arrive while a long tool call runs; the bridge keeps
+    // re-sending the same preview so the bubble and its Stop button survive.
+    await waitFor(
+      () =>
+        context.fake.sent("sendMessageDraft").filter((body) => body.text === "Working on it")
+          .length >= 3,
+      "the draft keepalive",
+    );
+    const drafts = context.fake.sent("sendMessageDraft");
+    expect(new Set(drafts.map((body) => body.draft_id)).size).toBe(1);
+  });
+
+  it("restores the live draft after another message goes out mid-run", async () => {
+    const context = await setup();
+    await connectAndPair(context);
+    const conversationId = `coworker:${context.ava.id}`;
+    context.emit({
+      type: "agent.event",
+      coworkerId: context.ava.id,
+      conversationId,
+      runId: "run-mirror",
+      taskId: "task-mirror",
+      event: {
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        messageId: "mirror",
+        delta: "Half an answer",
+      } as never,
+    });
+    await waitFor(
+      () =>
+        context.fake.sent("sendMessageDraft").some((body) => body.text === "Half an answer"),
+      "the streamed draft",
+    );
+
+    // Telegram drops a draft as soon as the bot sends a real message, so the
+    // desktop mirror below has to be followed by another draft push.
+    await context.service.sendConversationMessage({
+      conversationId,
+      clientMessageId: "desk-mid-run",
+      content: "typed on desktop",
+      mentionedCoworkerIds: [],
+    });
+    await waitFor(() => {
+      const mirrored = context.fake.calls.findIndex(
+        (call) =>
+          call.method === "sendMessage" &&
+          String(call.body.text).includes("You (desktop): typed on desktop"),
+      );
+      return (
+        mirrored >= 0 &&
+        context.fake.calls
+          .slice(mirrored)
+          .some(
+            (call) =>
+              call.method === "sendMessageDraft" && call.body.text === "Half an answer",
+          )
+      );
+    }, "the draft restored behind the mirror");
   });
 
   it("imports inbound photos as conversation images for vision models", async () => {
@@ -741,6 +963,11 @@ describe("telegram bridge", () => {
       type: "agent.event",
       ...base,
       event: { type: EventType.TEXT_MESSAGE_END, messageId: "m2" } as never,
+    });
+    context.emit({
+      type: "agent.event",
+      ...base,
+      event: { type: EventType.RUN_FINISHED } as never,
     });
     await waitFor(
       () =>

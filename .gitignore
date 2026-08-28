@@ -18,3 +18,5 @@ eval-results/
 
 # Model recordings are local for now; CI gates on the contract evals only.
 evals/recordings/
+
+tmp/

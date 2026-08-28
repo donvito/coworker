@@ -57,24 +57,62 @@ export interface TelegramBridgeOptions {
   fetchImpl?: typeof fetch;
   /** Long-poll window; tests shrink this to keep the loop fast. */
   pollTimeoutSeconds?: number;
+  /** Draft refresh cadence; tests shrink this to keep the loop fast. */
+  draftKeepAliveMs?: number;
 }
 
 const maxBackoffMs = 60_000;
 const conflictPauseMs = 60_000;
 const draftUpdateIntervalMs = 1_000;
 const stoppedDraftFallbackMs = 5_000;
+/** Telegram drops a streamed draft ~30s after its last update. */
+const draftKeepAliveMs = 20_000;
+/** A typing status lapses after 5s, so the fallback refreshes sooner. */
+const typingKeepAliveMs = 4_000;
+/** Backstop for a run that stops reporting entirely (a crashed runtime). */
+const draftMaxIdleMs = 10 * 60_000;
+/** Consecutive draft failures tolerated before falling back to typing. */
+const maxDraftFailures = 3;
+/**
+ * Telegram renders an empty draft as its own “Thinking…” placeholder, so the
+ * draft opens with a visible character instead.
+ */
+const draftPlaceholder = "…";
+/**
+ * can_stop paints a native Stop button on the draft — and on the clients we
+ * tested (Telegram macOS 12.9 and iOS, against the Bot API 10.3 parameters
+ * released 2026-08-24) creating a draft that carries it wipes the whole chat
+ * area white before the button animates in, and the macOS client traps on an
+ * IndexSet precondition while doing it. An A/B against the live Bot API pinned
+ * it exactly: a fresh draft without can_stop is silent, the same draft with it
+ * flashes. Stopping from Telegram runs through /stop until that is fixed;
+ * flipping this back on restores the native button and its
+ * stopped_message_generation updates, which are still handled below.
+ */
+const draftStopButton = false;
+/** Drafts live 30s, so a small counter can wrap long before it collides. */
+const maxDraftId = 1_000_000;
 
 interface TelegramRunDraft {
   taskId: string;
+  conversationId: string;
   draftId: number;
   text: string;
   lastPreview: string;
   lastDraftAt: number;
+  /** Last sign of life from the run, used by the idle backstop. */
+  lastActivityAt: number;
   target: { chatId: number; threadId: number | undefined };
   updateTimer: NodeJS.Timeout | null;
+  keepAliveTimer: NodeJS.Timeout | null;
   stopTimer: NodeJS.Timeout | null;
   stopRequested: boolean;
   draftEnabled: boolean;
+  /** Set once real text replaced the placeholder, so the first token is instant. */
+  contentStarted: boolean;
+  /** An assistant message ended; the next one continues the same draft. */
+  pendingSeparator: boolean;
+  draftFailures: number;
   finalized: boolean;
 }
 
@@ -135,7 +173,13 @@ export class TelegramBridgeService {
   private readonly draftRuns = new Map<number, string>();
   /** Runs stopped from Telegram; suppress their expected abort errors. */
   private readonly stoppedRuns = new Set<string>();
-  private nextDraftId = Math.max(1, Math.floor(Date.now() % 0x7fffffff));
+  /**
+   * Draft ids start small and count up. A clock-derived id (~1.2 billion) is
+   * legal per the API but sits near the Int32 ceiling, and Telegram clients
+   * appear to treat it as a position in the message list — a huge value takes
+   * the draft's insert animation with it.
+   */
+  private nextDraftId = 1;
   private readonly refusedChats = new Set<number>();
   private readonly topicFailureLogged = new Set<string>();
   /**
@@ -191,6 +235,7 @@ export class TelegramBridgeService {
     this.config = null;
     for (const buffer of this.runBuffers.values()) {
       if (buffer.updateTimer) clearTimeout(buffer.updateTimer);
+      if (buffer.keepAliveTimer) clearTimeout(buffer.keepAliveTimer);
       if (buffer.stopTimer) clearTimeout(buffer.stopTimer);
     }
     this.runBuffers.clear();
@@ -338,6 +383,10 @@ export class TelegramBridgeService {
         await this.handlePairing(message, text);
         return;
       }
+      if (text.startsWith("/stop") && config.chatId === message.chat.id) {
+        await this.handleStopCommand(message);
+        return;
+      }
       // Some Telegram clients drop the deep link's start payload when the bot
       // chat already exists, so the raw pairing code pasted as a message must
       // also pair. In a chat that is already paired (for example after the
@@ -454,6 +503,14 @@ export class TelegramBridgeService {
     if (!buffer || buffer.finalized || buffer.stopRequested) return;
     if (buffer.target.threadId !== stopped.message_thread_id) return;
 
+    await this.requestStop(runId, buffer);
+  }
+
+  /**
+   * Cancels a run and lets its partial answer land as a real message. Shared by
+   * the native Stop button and the /stop command.
+   */
+  private async requestStop(runId: string, buffer: TelegramRunDraft): Promise<boolean> {
     buffer.stopRequested = true;
     this.stoppedRuns.add(runId);
     if (buffer.updateTimer) {
@@ -465,12 +522,13 @@ export class TelegramBridgeService {
       // The runtime normally closes the partial assistant message immediately.
       // Keep a fallback so a provider that fails to emit TEXT_MESSAGE_END can
       // never strand the ephemeral draft.
-      if (this.runBuffers.get(runId) !== buffer || buffer.finalized) return;
+      if (this.runBuffers.get(runId) !== buffer || buffer.finalized) return true;
       buffer.stopTimer = setTimeout(() => {
         buffer.stopTimer = null;
         this.finalizeRunDraft(runId, true);
       }, stoppedDraftFallbackMs);
       buffer.stopTimer.unref?.();
+      return true;
     } catch (error) {
       buffer.stopRequested = false;
       this.stoppedRuns.delete(runId);
@@ -483,6 +541,46 @@ export class TelegramBridgeService {
           }`,
           buffer.target.threadId,
         ),
+      );
+      return false;
+    }
+  }
+
+  /**
+   * /stop cancels whatever the coworker is working on in that conversation.
+   * It stands in for the draft's native Stop button, which this Telegram
+   * version cannot paint without flashing the whole chat (see
+   * {@link draftStopButton}).
+   */
+  private async handleStopCommand(message: TelegramMessage): Promise<void> {
+    // Read-only resolution: a command must never spin up a conversation the
+    // way an ordinary message in a fresh topic does.
+    const config = this.config!;
+    const threadId = message.message_thread_id;
+    const conversationId =
+      threadId === undefined
+        ? config.conversationId
+        : config.topics[String(threadId)] ?? config.conversationId;
+    const running = [...this.runBuffers].filter(
+      ([, buffer]) =>
+        buffer.conversationId === conversationId && !buffer.finalized && !buffer.stopRequested,
+    );
+    if (running.length === 0) {
+      await this.sendPlain(
+        message.chat.id,
+        `${this.linkedCoworkerName()} isn't working on anything right now.`,
+        message.message_thread_id,
+      );
+      return;
+    }
+    const stopped = await Promise.all(
+      running.map(([runId, buffer]) => this.requestStop(runId, buffer)),
+    );
+    if (stopped.some(Boolean)) {
+      await this.sendPlain(
+        message.chat.id,
+        `Stopping ${this.linkedCoworkerName()}…`,
+        message.message_thread_id,
       );
     }
   }
@@ -827,6 +925,10 @@ export class TelegramBridgeService {
 
     const taskId = event.taskId;
     const type = event.event.type;
+    // Every AG-UI event counts as a sign of life, tool calls included, so the
+    // idle backstop only fires for a run that has genuinely stopped talking.
+    const live = this.runBuffers.get(event.runId);
+    if (live) live.lastActivityAt = Date.now();
     if (type === EventType.RUN_STARTED || type === EventType.TEXT_MESSAGE_START) {
       if (!this.runBuffers.has(event.runId)) {
         this.startRunDraft(event.runId, conversationId, taskId);
@@ -841,21 +943,33 @@ export class TelegramBridgeService {
         buffer = this.runBuffers.get(event.runId);
       }
       if (!buffer || buffer.finalized) return;
+      if (buffer.pendingSeparator) {
+        if (buffer.text.trim() && delta.trim()) buffer.text += "\n\n";
+        buffer.pendingSeparator = false;
+      }
       buffer.text += delta;
       if (!buffer.stopRequested) this.scheduleDraftUpdate(event.runId, buffer);
       return;
     }
     if (type === EventType.TEXT_MESSAGE_END) {
-      this.finalizeRunDraft(event.runId, this.stoppedRuns.has(event.runId));
+      // One draft spans the whole run: an agentic turn can answer, call a
+      // tool, then answer again, and finalizing between blocks would post a
+      // message (which clears the draft) and restart streaming under a new
+      // draft id — Telegram replaces those without animation.
+      const buffer = this.runBuffers.get(event.runId);
+      if (buffer) buffer.pendingSeparator = true;
       return;
     }
     if (type === EventType.RUN_ERROR) {
-      const stopped = this.stoppedRuns.delete(event.runId);
-      if (stopped) {
+      const aborted =
+        this.stoppedRuns.delete(event.runId) ||
+        (event.event as { code?: string }).code === "RUN_ABORTED";
+      if (aborted) {
         this.finalizeRunDraft(event.runId, true);
         return;
       }
-      this.discardRunDraft(event.runId);
+      // Whatever streamed before the failure is still worth keeping.
+      this.finalizeRunDraft(event.runId, false);
       const message = (event.event as { message?: string }).message;
       this.enqueueOutbound(async () => {
         const target = this.outboundTarget(conversationId, taskId);
@@ -869,54 +983,129 @@ export class TelegramBridgeService {
       return;
     }
     if (type === EventType.RUN_FINISHED) {
-      this.stoppedRuns.delete(event.runId);
-      this.discardRunDraft(event.runId);
+      this.finalizeRunDraft(event.runId, this.stoppedRuns.delete(event.runId));
     }
   }
 
   private startRunDraft(runId: string, conversationId: string, taskId: string): void {
     const target = this.outboundTarget(conversationId, taskId);
     if (!target) return;
+    // A crashed runtime re-queues its task under a fresh run id; close the
+    // abandoned draft so its keepalive never outlives the run it belongs to.
+    for (const [staleRunId, stale] of [...this.runBuffers]) {
+      if (staleRunId !== runId && stale.taskId === taskId) {
+        this.finalizeRunDraft(staleRunId, false);
+      }
+    }
     const draftId = this.allocateDraftId();
+    const now = Date.now();
     const buffer: TelegramRunDraft = {
       taskId,
+      conversationId,
       draftId,
       text: "",
       lastPreview: "",
-      lastDraftAt: Date.now(),
+      lastDraftAt: now,
+      lastActivityAt: now,
       target,
       updateTimer: null,
+      keepAliveTimer: null,
       stopTimer: null,
       stopRequested: false,
       draftEnabled: true,
+      contentStarted: false,
+      pendingSeparator: false,
+      draftFailures: 0,
       finalized: false,
     };
     this.runBuffers.set(runId, buffer);
     this.draftRuns.set(draftId, runId);
-    this.enqueueOutbound(() => this.pushDraft(runId, buffer, ""));
+    this.scheduleKeepAlive(runId, buffer);
+    this.enqueueOutbound(() => this.pushDraft(runId, buffer, draftPlaceholder));
   }
 
   private allocateDraftId(): number {
     let candidate = this.nextDraftId;
     while (this.draftRuns.has(candidate)) {
-      candidate = candidate >= 0x7ffffffe ? 1 : candidate + 1;
+      candidate = candidate >= maxDraftId ? 1 : candidate + 1;
     }
-    this.nextDraftId = candidate >= 0x7ffffffe ? 1 : candidate + 1;
+    this.nextDraftId = candidate >= maxDraftId ? 1 : candidate + 1;
     return candidate;
   }
 
+  /**
+   * What the draft should show right now. Past Telegram's message limit it
+   * tails the newest text so the bubble keeps animating — and keeps its Stop
+   * button — while a long answer finishes.
+   */
+  private previewFor(buffer: TelegramRunDraft): string {
+    if (!buffer.text) return draftPlaceholder;
+    if (buffer.text.length <= telegramMessageLimit) return buffer.text;
+    return `…${buffer.text.slice(-(telegramMessageLimit - 1))}`;
+  }
+
   private scheduleDraftUpdate(runId: string, buffer: TelegramRunDraft): void {
-    if (!buffer.draftEnabled || buffer.updateTimer || buffer.text === buffer.lastPreview) return;
-    const wait = Math.max(0, draftUpdateIntervalMs - (Date.now() - buffer.lastDraftAt));
+    if (!buffer.draftEnabled || buffer.finalized || buffer.updateTimer) return;
+    if (this.previewFor(buffer) === buffer.lastPreview) return;
+    // The first token replaces the placeholder immediately; only the stream
+    // behind it is throttled. A rate-limited push parks lastDraftAt in the
+    // future, and that backoff outranks the fast path.
+    const immediate = !buffer.contentStarted && buffer.lastDraftAt <= Date.now();
+    const wait = immediate
+      ? 0
+      : Math.max(0, draftUpdateIntervalMs - (Date.now() - buffer.lastDraftAt));
     buffer.updateTimer = setTimeout(() => {
       buffer.updateTimer = null;
       const current = this.runBuffers.get(runId);
       if (current !== buffer || buffer.finalized || buffer.stopRequested) return;
-      const preview = buffer.text.slice(0, telegramMessageLimit);
+      const preview = this.previewFor(buffer);
       if (preview === buffer.lastPreview) return;
       this.enqueueOutbound(() => this.pushDraft(runId, buffer, preview));
     }, wait);
     buffer.updateTimer.unref?.();
+  }
+
+  /**
+   * Telegram expires a draft ~30s after its last update, which would drop the
+   * streaming bubble and its Stop button during a long tool call. Re-send the
+   * current preview on a timer so the draft survives quiet stretches.
+   */
+  private scheduleKeepAlive(runId: string, buffer: TelegramRunDraft): void {
+    if (buffer.keepAliveTimer) clearTimeout(buffer.keepAliveTimer);
+    const keepAliveMs = this.options.draftKeepAliveMs ?? draftKeepAliveMs;
+    const interval = buffer.draftEnabled ? keepAliveMs : typingKeepAliveMs;
+    buffer.keepAliveTimer = setTimeout(() => {
+      buffer.keepAliveTimer = null;
+      if (this.runBuffers.get(runId) !== buffer || buffer.finalized) return;
+      if (Date.now() - buffer.lastActivityAt > draftMaxIdleMs) {
+        // The run went silent for good (a crashed runtime emits no RUN_ERROR),
+        // so deliver what streamed instead of holding it forever.
+        this.finalizeRunDraft(runId, false);
+        return;
+      }
+      this.scheduleKeepAlive(runId, buffer);
+      if (buffer.stopRequested) return;
+      if (!buffer.draftEnabled) {
+        this.enqueueOutbound(() => this.pushTyping(buffer));
+        return;
+      }
+      if (Date.now() - buffer.lastDraftAt < keepAliveMs) return;
+      this.enqueueOutbound(() => this.pushDraft(runId, buffer, this.previewFor(buffer)));
+    }, interval);
+    buffer.keepAliveTimer.unref?.();
+  }
+
+  /**
+   * Telegram clears a live draft as soon as the bot sends a real message, so
+   * anything else we post mid-run (an approval notice, a desktop mirror) takes
+   * the stream down with it. Push the draft again right behind that send.
+   */
+  private refreshDraftsAfterSend(chatId: number, threadId: number | undefined): void {
+    for (const [runId, buffer] of this.runBuffers) {
+      if (buffer.finalized || buffer.stopRequested || !buffer.draftEnabled) continue;
+      if (buffer.target.chatId !== chatId || buffer.target.threadId !== threadId) continue;
+      this.enqueueOutbound(() => this.pushDraft(runId, buffer, this.previewFor(buffer)));
+    }
   }
 
   private async pushDraft(
@@ -931,14 +1120,14 @@ export class TelegramBridgeService {
         messageThreadId: buffer.target.threadId,
         draftId: buffer.draftId,
         text: preview,
-        canStop: true,
-        keepOnStop: true,
+        canStop: draftStopButton,
+        keepOnStop: draftStopButton,
       });
       buffer.lastPreview = preview;
       buffer.lastDraftAt = Date.now();
-      if (buffer.text.slice(0, telegramMessageLimit) !== buffer.lastPreview) {
-        this.scheduleDraftUpdate(runId, buffer);
-      }
+      buffer.draftFailures = 0;
+      if (preview !== draftPlaceholder) buffer.contentStarted = true;
+      if (this.previewFor(buffer) !== preview) this.scheduleDraftUpdate(runId, buffer);
     } catch (error) {
       if (
         error instanceof TelegramApiError &&
@@ -949,17 +1138,31 @@ export class TelegramBridgeService {
         this.scheduleDraftUpdate(runId, buffer);
         return;
       }
-      buffer.draftEnabled = false;
       this.options.onError?.("telegram.draft", error);
-      try {
-        await this.api.sendChatAction({
-          chatId: buffer.target.chatId,
-          action: "typing",
-          messageThreadId: buffer.target.threadId,
-        });
-      } catch (typingError) {
-        this.options.onError?.("telegram.draft", typingError);
+      // A single failed update shouldn't end the stream; only give up on
+      // drafts once Telegram refuses them repeatedly.
+      buffer.draftFailures += 1;
+      if (buffer.draftFailures < maxDraftFailures) {
+        this.scheduleDraftUpdate(runId, buffer);
+        return;
       }
+      buffer.draftEnabled = false;
+      this.scheduleKeepAlive(runId, buffer);
+      await this.pushTyping(buffer);
+    }
+  }
+
+  /** Fallback presence for a run whose drafts Telegram keeps refusing. */
+  private async pushTyping(buffer: TelegramRunDraft): Promise<void> {
+    if (!this.api || buffer.finalized) return;
+    try {
+      await this.api.sendChatAction({
+        chatId: buffer.target.chatId,
+        action: "typing",
+        messageThreadId: buffer.target.threadId,
+      });
+    } catch (error) {
+      this.options.onError?.("telegram.draft", error);
     }
   }
 
@@ -981,6 +1184,7 @@ export class TelegramBridgeService {
     const buffer = this.runBuffers.get(runId);
     if (!buffer) return;
     if (buffer.updateTimer) clearTimeout(buffer.updateTimer);
+    if (buffer.keepAliveTimer) clearTimeout(buffer.keepAliveTimer);
     if (buffer.stopTimer) clearTimeout(buffer.stopTimer);
     this.runBuffers.delete(runId);
     if (this.draftRuns.get(buffer.draftId) === runId) {
@@ -1166,6 +1370,7 @@ export class TelegramBridgeService {
         }
       }
     }
+    this.refreshDraftsAfterSend(chatId, threadId);
   }
 
   private async sendPlain(
@@ -1177,6 +1382,7 @@ export class TelegramBridgeService {
     for (const chunk of plainTextChunks(text)) {
       await this.api.sendMessage({ chatId, text: chunk, messageThreadId: threadId });
     }
+    this.refreshDraftsAfterSend(chatId, threadId);
   }
 
   private topicForConversation(conversationId: string): number | undefined {

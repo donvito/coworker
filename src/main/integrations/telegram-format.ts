@@ -3,7 +3,8 @@ import { telegramMessageLimit } from "./telegram";
 /**
  * Markdown → Telegram HTML. Telegram only accepts a small inline tag set
  * (<b> <i> <s> <u> <code> <pre> <a> <blockquote>), so block structure is
- * flattened: headings become bold lines, list items become "• " lines.
+ * flattened: headings become bold lines, list items become "• " lines, and
+ * tables become labelled lines (see {@link tableBlocks}).
  * Conversion happens block by block so every emitted chunk has balanced tags.
  */
 
@@ -63,6 +64,73 @@ function codeBlockHtml(language: string | undefined, escapedContent: string): st
     ? `<pre><code class="language-${language}">`
     : "<pre><code>";
   return `${openTag}${escapedContent}</code></pre>`;
+}
+
+/** Bolds a rendered cell unless inline markdown already put tags in it. */
+function boldIfPlain(html: string): string {
+  return html.includes("<") ? html : `<b>${html}</b>`;
+}
+
+function isTableSeparator(line: string | undefined): boolean {
+  if (line === undefined || !line.includes("|")) return false;
+  return /^\s*\|?\s*:?-{2,}:?\s*(?:\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(line);
+}
+
+function splitTableRow(row: string): string[] {
+  const trimmed = row.trim().replace(/^\|/, "").replace(/\|$/, "");
+  return trimmed
+    .split(/(?<!\\)\|/)
+    .map((cell) => cell.replaceAll("\\|", "|").trim());
+}
+
+/**
+ * Telegram has no table markup and a phone has no width to spare, so a table
+ * is flattened into text instead of being dumped as raw pipes.
+ *
+ * Two columns read as "key — value" lines in one block; the header of such a
+ * table is almost always a restatement of the surrounding text ("Need |
+ * Recommended model"), so it is dropped. Wider tables become one block per
+ * row — a title line plus "header: value" lines — which also lets an oversize
+ * table split between rows rather than mid-row.
+ */
+function tableBlocks(headers: string[], rows: string[][]): string[] {
+  if (rows.length === 0) {
+    const heading = headers.filter(Boolean).map(formatInline).join(" · ");
+    return heading ? [boldIfPlain(heading)] : [];
+  }
+
+  if (headers.length <= 2) {
+    const lines = rows
+      .map((cells) => {
+        const left = formatInline(cells[0] ?? "");
+        const right = formatInline(cells[1] ?? "");
+        if (!left) return right;
+        if (!right) return left;
+        return `${boldIfPlain(left)} — ${right}`;
+      })
+      .filter(Boolean);
+    return lines.length > 0 ? [lines.join("\n")] : [];
+  }
+
+  const blocks: string[] = [];
+  for (const cells of rows) {
+    const lines: string[] = [];
+    // A leading rank or index column reads as a title prefix, not a field.
+    const index = (cells[0] ?? "").trim();
+    const indexed = /^\d{1,3}[.)]?$/.test(index) && Boolean(cells[1]);
+    const title = indexed
+      ? `${index.replace(/[.)]$/, "")}. ${formatInline(cells[1]!)}`
+      : formatInline(cells[0] ?? "");
+    if (title) lines.push(boldIfPlain(title));
+    for (let column = indexed ? 2 : 1; column < cells.length; column += 1) {
+      const value = formatInline(cells[column] ?? "");
+      if (!value) continue;
+      const label = formatInline(headers[column] ?? "");
+      lines.push(label ? `${label}: ${value}` : value);
+    }
+    if (lines.length > 0) blocks.push(lines.join("\n"));
+  }
+  return blocks;
 }
 
 function parseBlocks(markdown: string): Block[] {
@@ -141,6 +209,18 @@ function parseBlocks(markdown: string): Block[] {
       continue;
     }
 
+    if (line.includes("|") && isTableSeparator(lines[index + 1])) {
+      const headers = splitTableRow(line);
+      index += 2; // The header row and its separator.
+      const rows: string[][] = [];
+      while (index < lines.length && lines[index]!.trim() && lines[index]!.includes("|")) {
+        rows.push(splitTableRow(lines[index]!));
+        index += 1;
+      }
+      for (const html of tableBlocks(headers, rows)) pushText(html);
+      continue;
+    }
+
     const paragraph: string[] = [];
     while (
       index < lines.length &&
@@ -148,7 +228,8 @@ function parseBlocks(markdown: string): Block[] {
       !/^\s*```/.test(lines[index]!) &&
       !/^\s*#{1,6}\s+/.test(lines[index]!) &&
       !/^\s*>/.test(lines[index]!) &&
-      !/^\s*(?:[-*+]|\d{1,3}[.)])\s+/.test(lines[index]!)
+      !/^\s*(?:[-*+]|\d{1,3}[.)])\s+/.test(lines[index]!) &&
+      !(lines[index]!.includes("|") && isTableSeparator(lines[index + 1]))
     ) {
       paragraph.push(formatInline(lines[index]!));
       index += 1;
