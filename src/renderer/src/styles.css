@@ -4838,6 +4838,63 @@ select:focus {
   display: none;
 }
 
+.composer-footer {
+  display: flex;
+  grid-column: 1 / -1;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1px 3px 11px;
+  gap: 10px;
+}
+
+.composer-footer > small {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-thread .workroom-composer .composer-footer small {
+  text-align: left;
+}
+
+.conversation-model-switcher.chip-mode {
+  margin-top: 0;
+}
+
+.quick-model-trigger.chip,
+.workroom-composer .quick-model-trigger.chip {
+  display: inline-flex;
+  width: auto;
+  max-width: min(360px, 42vw);
+  min-height: 30px;
+  padding: 5px 13px;
+  gap: 7px;
+  align-items: center;
+  color: #33443c;
+  font-size: 12px;
+  background: var(--white);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+}
+
+.quick-model-trigger.chip:hover,
+.quick-model-trigger.chip[aria-expanded="true"] {
+  color: var(--forest);
+  border-color: #9dbcac;
+}
+
+.conversation-model-switcher.up .quick-model-popover {
+  top: auto;
+  right: 0;
+  bottom: calc(100% + 10px);
+  left: auto;
+  /* Fixed height: the popover hangs upward, so growing once models load
+     would shift its top edge. Open at full size and fill in place. */
+  height: min(520px, calc(100vh - 190px));
+}
+
 .composer-image-tray {
   display: flex;
   grid-column: 1 / -1;

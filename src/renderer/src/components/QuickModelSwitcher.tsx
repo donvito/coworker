@@ -17,11 +17,17 @@ export function QuickModelSwitcher({
   disabled = false,
   modelEndpoints = [],
   onChanged,
+  placement = "down",
+  chip = false,
 }: {
   coworker: Coworker;
   disabled?: boolean;
   modelEndpoints?: ModelEndpoint[];
   onChanged: () => Promise<void>;
+  /** Where the picker popover opens relative to the trigger. */
+  placement?: "down" | "up";
+  /** Minimal pill trigger (model name + chevron) for tight spots like the composer. */
+  chip?: boolean;
 }) {
   const initialProvider =
     coworker.modelProvider === "demo" ? "" : coworker.modelProvider;
@@ -189,14 +195,22 @@ export function QuickModelSwitcher({
       ? [selectedOption, ...matchingModels.filter((model) => model.id !== selectedOption.id)]
       : matchingModels;
 
+  const rootClassName = [
+    "conversation-model-switcher",
+    chip ? "chip-mode" : "",
+    placement === "up" ? "up" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
   return (
-    <span className="conversation-model-switcher" ref={rootRef}>
+    <span className={rootClassName} ref={rootRef}>
       <button
         aria-controls={listboxId}
         aria-expanded={open}
         aria-haspopup="listbox"
         aria-label={`Model used by ${coworker.name}`}
-        className="quick-model-trigger"
+        className={chip ? "quick-model-trigger chip" : "quick-model-trigger"}
         disabled={disabled || providersLoading || saving || configuredProviders.length === 0}
         onClick={() => setOpen((current) => !current)}
         role="combobox"
@@ -204,9 +218,13 @@ export function QuickModelSwitcher({
         type="button"
       >
         <span>
-          {selectedProvider ? (selectedOption?.name ?? selectedModel) : "Choose provider and model"}
+          {saving && chip
+            ? "Saving…"
+            : selectedProvider
+              ? (selectedOption?.name ?? selectedModel)
+              : "Choose provider and model"}
         </span>
-        {selectedProvider ? (
+        {selectedProvider && !chip ? (
           <small>{modelProviderDisplayName(selectedProvider, modelEndpoints)}</small>
         ) : null}
         <b aria-hidden="true">⌄</b>
@@ -289,19 +307,21 @@ export function QuickModelSwitcher({
           </div>
         </div>
       ) : null}
-      <small className={error ? "error" : ""} role={error ? "alert" : "status"}>
-        {error
-          ? "Not saved"
-          : saving
-            ? "Saving…"
-            : providersLoading || loading
-              ? "Loading…"
-              : disabled
-                ? "Available after this run"
-                : selectedProvider
-                  ? selectedPricing
-                  : "No configured provider"}
-      </small>
+      {chip && !error ? null : (
+        <small className={error ? "error" : ""} role={error ? "alert" : "status"}>
+          {error
+            ? "Not saved"
+            : saving
+              ? "Saving…"
+              : providersLoading || loading
+                ? "Loading…"
+                : disabled
+                  ? "Available after this run"
+                  : selectedProvider
+                    ? selectedPricing
+                    : "No configured provider"}
+        </small>
+      )}
     </span>
   );
 }

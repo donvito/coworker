@@ -2788,21 +2788,31 @@ function CoworkerSurface({
                   <Icon name="send" />
                 </button>
               )}
-              {imageError ? (
-                <small className="composer-error" role="alert">
-                  {imageError}
-                </small>
-              ) : supportsImageInput === false ? (
-                <small className="composer-capability-note">
-                  This model doesn’t accept images.
-                </small>
-              ) : (
-                <small>
-                  {readingImages
-                    ? "Preparing images…"
-                    : `${coworker.name} can make mistakes. Review important actions.`}
-                </small>
-              )}
+              <div className="composer-footer">
+                {imageError ? (
+                  <small className="composer-error" role="alert">
+                    {imageError}
+                  </small>
+                ) : supportsImageInput === false ? (
+                  <small className="composer-capability-note">
+                    This model doesn’t accept images.
+                  </small>
+                ) : (
+                  <small>
+                    {readingImages
+                      ? "Preparing images…"
+                      : `${coworker.name} can make mistakes. Review important actions.`}
+                  </small>
+                )}
+                <QuickModelSwitcher
+                  chip
+                  coworker={coworker}
+                  disabled={agent.isRunning}
+                  modelEndpoints={modelEndpoints}
+                  onChanged={onChanged}
+                  placement="up"
+                />
+              </div>
             </form>
           </div>
         </div>
