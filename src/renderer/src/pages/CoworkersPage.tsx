@@ -119,7 +119,7 @@ export function CoworkersPage({
               ) : null}
             </span>
             <span className="roster-open-cta">
-              <span>Open workspace</span>
+              <span>Work with {coworker.name}</span>
               <Icon name="arrow" />
             </span>
           </button>

@@ -480,6 +480,13 @@ export type DesktopEvent =
     }
   | { type: "notification"; title: string; body: string }
   | {
+      /** A user message arrived from an external channel (e.g. Telegram). */
+      type: "conversation.inbound";
+      coworkerId: string;
+      conversationId: string;
+      source: "telegram";
+    }
+  | {
       type: "navigation.requested";
       page:
         | "home"

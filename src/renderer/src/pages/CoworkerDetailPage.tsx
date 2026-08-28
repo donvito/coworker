@@ -31,6 +31,7 @@ import type {
 import { isDiscussionPass } from "@shared/discussion";
 import { IpcCoworkerAgent } from "../copilot/IpcCoworkerAgent";
 import { LocalCopilotProvider } from "../copilot/LocalCopilotProvider";
+import { useAppData } from "../state/AppDataProvider";
 import {
   ArtifactActions,
   artifactExtension,
@@ -538,6 +539,22 @@ export function CoworkerDetailPage({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reseeded via historyVersion
     [coworker.id, activeConversationId, historyVersion],
   );
+
+  // When a message arrives from Telegram into another conversation of this
+  // coworker, follow it so the exchange stays on screen — unless a reply is
+  // actively streaming in the current view.
+  const { lastEvent } = useAppData();
+  useEffect(() => {
+    if (
+      lastEvent?.type === "conversation.inbound" &&
+      lastEvent.coworkerId === coworker.id &&
+      lastEvent.conversationId !== selectedConversationId &&
+      !agent.isStreaming
+    ) {
+      setSelectedConversationId(lastEvent.conversationId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- react to inbound events only
+  }, [lastEvent]);
 
   // Background runs (Put someone to work, schedules, the Telegram bridge)
   // persist messages without streaming through this surface. When stored

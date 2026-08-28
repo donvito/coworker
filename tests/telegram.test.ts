@@ -489,36 +489,78 @@ describe("telegram bridge", () => {
     expect(await readFile(join(inbox, entries[0]!), "utf8")).toBe("hello document");
   });
 
-  it("funnels Telegram topics into the main conversation and threads replies back", async () => {
+  it("maps Telegram topics to their own conversations and threads replies back", async () => {
     const context = await setup({ threadsEnabled: true });
     await connectAndPair(context);
     const mainConversation = `coworker:${context.ava.id}`;
+    const inboundEvents: Array<{ conversationId: string }> = [];
+    context.service.subscribe((event) => {
+      if (event.type === "conversation.inbound") inboundEvents.push(event);
+    });
 
-    // Telegram opens a fresh topic per "New Chat" message; both land in the
-    // main conversation so the desktop shows one continuous stream.
+    // Two Telegram topics: each becomes its own desktop conversation, the
+    // first titled from its forum_topic_created name.
+    context.fake.push({
+      chatId: 777,
+      threadId: 42,
+      forumTopicCreated: { name: "research businesses" },
+    });
     const firstUpdate = context.fake.push({
       chatId: 777,
       text: "topic question",
       threadId: 42,
     });
     context.fake.push({ chatId: 777, text: "second topic message", threadId: 43 });
-    await waitFor(
-      () => {
-        const contents = context.database
-          .listConversationMessages(mainConversation)
-          .map((message) => message.content);
-        return contents.includes("topic question") && contents.includes("second topic message");
-      },
-      "both topic messages in the main conversation",
-    );
-    // No extra conversations were created for the Telegram-made topics.
-    expect(context.database.listConversations(context.ava.id)).toHaveLength(1);
+    await waitFor(() => {
+      const conversations = context.database.listConversations(context.ava.id);
+      return (
+        conversations.some((conversation) =>
+          context.database
+            .listConversationMessages(conversation.id)
+            .some((message) => message.content === "topic question"),
+        ) &&
+        conversations.some((conversation) =>
+          context.database
+            .listConversationMessages(conversation.id)
+            .some((message) => message.content === "second topic message"),
+        )
+      );
+    }, "both topics to map to conversations");
+    const conversations = context.database.listConversations(context.ava.id);
+    const researchConversation = conversations.find((conversation) =>
+      context.database
+        .listConversationMessages(conversation.id)
+        .some((message) => message.content === "topic question"),
+    )!;
+    const secondConversation = conversations.find((conversation) =>
+      context.database
+        .listConversationMessages(conversation.id)
+        .some((message) => message.content === "second topic message"),
+    )!;
+    expect(researchConversation.id).not.toBe(mainConversation);
+    expect(researchConversation.title).toBe("research businesses");
+    expect(secondConversation.id).not.toBe(researchConversation.id);
+    expect(secondConversation.title).toBe("second topic message");
+    // The desktop is told where each message landed so it can follow.
+    expect(
+      inboundEvents.some((event) => event.conversationId === researchConversation.id),
+    ).toBe(true);
 
-    // The coworker's reply to the first message threads back into topic 42.
+    // A follow-up in the same topic reuses the mapping.
+    context.fake.push({ chatId: 777, text: "follow-up", threadId: 42 });
+    await waitFor(
+      () =>
+        context.database
+          .listConversationMessages(researchConversation.id)
+          .some((message) => message.content === "follow-up"),
+      "the follow-up in the mapped conversation",
+    );
+
+    // The coworker's reply routes back into topic 42.
     const task = context.database.listTasksBySourceMessage(`telegram:${firstUpdate}`)[0]!;
     const base = {
       coworkerId: context.ava.id,
-      conversationId: mainConversation,
+      conversationId: researchConversation.id,
       runId: task.runId,
       taskId: task.id,
     };
@@ -549,26 +591,6 @@ describe("telegram bridge", () => {
             (body) => body.text === "answered in thread" && body.message_thread_id === 42,
           ),
       "the threaded reply",
-    );
-
-    // A desktop-typed message in the main conversation mirrors into the topic
-    // the user last wrote from.
-    await context.service.sendConversationMessage({
-      conversationId: mainConversation,
-      clientMessageId: "desk-3",
-      content: "typed on desktop",
-      mentionedCoworkerIds: [],
-    });
-    await waitFor(
-      () =>
-        context.fake
-          .sent("sendMessage")
-          .some(
-            (body) =>
-              body.text === "You (desktop): typed on desktop" &&
-              body.message_thread_id === 43,
-          ),
-      "the mirrored desktop message in the latest topic",
     );
 
     // Outbound: a new desktop conversation still gets its own Telegram topic
@@ -628,7 +650,6 @@ describe("telegram bridge", () => {
   it("delivers telegram.send files into the thread the user wrote from", async () => {
     const context = await setup({ threadsEnabled: true });
     await connectAndPair(context);
-    const conversationId = `coworker:${context.ava.id}`;
 
     // The request arrives from a Telegram topic; Threaded Mode chats swallow
     // messages sent without a thread id, so delivery must target it.
@@ -636,10 +657,21 @@ describe("telegram bridge", () => {
     await waitFor(
       () =>
         context.database
-          .listConversationMessages(conversationId)
-          .some((message) => message.content === "send me the file"),
+          .listConversations(context.ava.id)
+          .some((conversation) =>
+            context.database
+              .listConversationMessages(conversation.id)
+              .some((message) => message.content === "send me the file"),
+          ),
       "the threaded request to arrive",
     );
+    const conversationId = context.database
+      .listConversations(context.ava.id)
+      .find((conversation) =>
+        context.database
+          .listConversationMessages(conversation.id)
+          .some((message) => message.content === "send me the file"),
+      )!.id;
 
     const coworkerBefore = context.database.getCoworker(context.ava.id);
     context.database.updateCoworker(context.ava.id, {

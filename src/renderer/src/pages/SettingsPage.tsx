@@ -1261,8 +1261,8 @@ export function SettingsPage({
                     {telegramConnected && telegramPaired ? (
                       <p className="telegram-hint">
                         {telegramConfig.threadsEnabled
-                          ? "Replies land in the Telegram topic you wrote from; each desktop conversation gets its own topic."
-                          : "Tip: enable Threaded Mode in @BotFather's Mini App (your bot → Thread Settings) to give each desktop conversation its own Telegram topic."}
+                          ? "Each Telegram topic becomes its own conversation here, and each desktop conversation gets its own Telegram topic."
+                          : "Tip: enable Threaded Mode in @BotFather's Mini App (your bot → Thread Settings) to give each conversation its own Telegram topic."}
                       </p>
                     ) : null}
 

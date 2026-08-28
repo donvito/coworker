@@ -73,6 +73,13 @@ function delay(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
+/** A conversation title derived from the first message, Telegram-style. */
+function titleFromText(text: string): string {
+  const firstLine = text.split("\n")[0]?.trim() ?? "";
+  if (!firstLine) return "";
+  return firstLine.length > 48 ? `${firstLine.slice(0, 45)}…` : firstLine;
+}
+
 function safeInboxFileName(name: string | undefined, fallback: string): string {
   const base = basename((name ?? "").replaceAll("\\", "/"))
     .replace(/[\0<>:"|?*]/g, "")
@@ -118,6 +125,8 @@ export class TelegramBridgeService {
   /** Pending approvals already announced in Telegram, and their notice messages. */
   private readonly notifiedApprovals = new Set<string>();
   private readonly approvalNotices = new Map<string, { messageId: number }>();
+  /** Topic names seen in forum_topic_created, used to title new conversations. */
+  private readonly pendingTopicNames = new Map<number, string>();
 
   constructor(private readonly options: TelegramBridgeOptions) {}
 
@@ -166,6 +175,7 @@ export class TelegramBridgeService {
     this.lastInboundThread.clear();
     this.notifiedApprovals.clear();
     this.approvalNotices.clear();
+    this.pendingTopicNames.clear();
   }
 
   /** Restarts the poll cycle immediately (OS resume, reconfiguration). */
@@ -310,9 +320,13 @@ export class TelegramBridgeService {
         return;
       }
 
-      if (message.forum_topic_created) {
-        // Telegram auto-creates a topic for each "New Chat" message; the
-        // message itself follows in the same batch, so nothing to do here.
+      if (message.forum_topic_created && message.message_thread_id !== undefined) {
+        // The topic's first real message follows in the same batch; remember
+        // the name so its new conversation gets a meaningful title.
+        this.pendingTopicNames.set(
+          message.message_thread_id,
+          message.forum_topic_created.name,
+        );
         return;
       }
 
@@ -365,6 +379,13 @@ export class TelegramBridgeService {
           content: combined,
           mentionedCoworkerIds: [],
           images: images.length > 0 ? images : undefined,
+        });
+        // Lets the desktop follow the message into its conversation.
+        this.options.emit({
+          type: "conversation.inbound",
+          coworkerId: config.coworkerId,
+          conversationId,
+          source: "telegram",
         });
       } catch (error) {
         this.options.onError?.("telegram.inbound", error);
@@ -434,16 +455,41 @@ export class TelegramBridgeService {
   }
 
   /**
-   * Topics the bridge created for desktop conversations keep their strict
-   * mapping. Every other topic — Telegram opens one per "New Chat" message —
-   * flows into the coworker's main conversation so the desktop shows one
-   * continuous stream; replies still thread back via inboundThreadOrigins.
+   * Each Telegram topic maps to its own desktop conversation, mirroring
+   * Telegram's chat-per-topic model. Unknown topics create a conversation on
+   * first contact, titled from the topic name (or the message text). If
+   * creation fails the message still lands in the main conversation, where
+   * inboundThreadOrigins keeps replies threading back correctly.
    */
   private resolveInboundConversation(message: TelegramMessage): string {
     const config = this.config!;
     const threadId = message.message_thread_id;
     if (threadId === undefined) return config.conversationId;
-    return config.topics[String(threadId)] ?? config.conversationId;
+    const mapped = config.topics[String(threadId)];
+    if (mapped) return mapped;
+    const title =
+      this.pendingTopicNames.get(threadId)?.trim() ||
+      titleFromText(message.text ?? message.caption ?? "") ||
+      `Telegram topic ${threadId}`;
+    this.pendingTopicNames.delete(threadId);
+    const release = this.tryBeginMutation();
+    if (!release) return config.conversationId;
+    try {
+      const conversation = this.options.host.createConversation({
+        coworkerId: config.coworkerId,
+        title,
+      });
+      this.cursors.set(conversation.id, "");
+      this.saveConfig({
+        topics: { ...config.topics, [String(threadId)]: conversation.id },
+      });
+      return conversation.id;
+    } catch (error) {
+      this.options.onError?.("telegram.topic", error);
+      return config.conversationId;
+    } finally {
+      release();
+    }
   }
 
   private async collectInboundImages(
