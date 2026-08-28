@@ -440,8 +440,6 @@ export function CoworkerDetailPage({
       initialConversationId) ||
       (latestConversation?.id ?? `coworker:${coworker.id}`),
   );
-  const selectedConversation =
-    conversations.find((conversation) => conversation.id === selectedConversationId) ?? null;
   const activeConversationId = selectedConversationId;
   // Filter by conversation id, not task binding: messages injected from
   // outside this surface (the Telegram bridge, and desktop-typed user
@@ -450,16 +448,24 @@ export function CoworkerDetailPage({
   const boundedConversationMessages = messages.filter(
     (message) => message.conversationId === activeConversationId,
   );
-  const conversationMessages =
-    loadedConversationHistory?.conversationId === activeConversationId
-      ? loadedConversationHistory.messages
-      : boundedConversationMessages;
   const conversationHistoryReady =
     loadedConversationHistory?.conversationId === activeConversationId;
+  // Stale-while-loading: while the next conversation's history is fetched,
+  // keep rendering the one that is already loaded so switching never blanks
+  // the page. The surface swaps in a single frame once the data arrives.
+  const displayConversationId =
+    loadedConversationHistory?.conversationId ?? activeConversationId;
+  const displayConversation =
+    conversations.find((conversation) => conversation.id === displayConversationId) ?? null;
+  const conversationMessages =
+    loadedConversationHistory?.messages ?? boundedConversationMessages;
 
   useEffect(() => {
     const next = latestDirectConversation(conversations, coworker.id);
     setSelectedConversationId(next?.id ?? `coworker:${coworker.id}`);
+    // A different coworker must not show the previous coworker's thread while
+    // its own history loads.
+    setLoadedConversationHistory(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reset only when the coworker changes
   }, [coworker.id]);
 
@@ -477,7 +483,6 @@ export function CoworkerDetailPage({
 
   useEffect(() => {
     let cancelled = false;
-    setLoadedConversationHistory(null);
     void window.coworker.messages
       .listConversation(activeConversationId)
       .then((history) => {
@@ -528,7 +533,7 @@ export function CoworkerDetailPage({
       new IpcCoworkerAgent(coworker.id, {
         agentId: coworker.id,
         description: `${coworker.name} · ${coworker.role}`,
-        threadId: activeConversationId,
+        threadId: displayConversationId,
         initialMessages: conversationMessages
           .filter((message) => message.role === "user" || message.role === "assistant")
           .map((message) => ({
@@ -538,7 +543,7 @@ export function CoworkerDetailPage({
           })),
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reseeded via historyVersion
-    [coworker.id, activeConversationId, historyVersion],
+    [coworker.id, displayConversationId, historyVersion],
   );
 
   // When a message arrives from Telegram into another conversation of this
@@ -587,16 +592,18 @@ export function CoworkerDetailPage({
     };
   }, [snapshotVisibleCount, conversationHistoryReady, activeConversationId, agent]);
 
+  const historyLoadedOnce = loadedConversationHistory !== null;
+
   return (
     <>
-      {conversationHistoryReady && selectedConversation?.kind === "group" ? (
+      {historyLoadedOnce && displayConversation?.kind === "group" ? (
         <GroupConversationSurface
           approvals={approvals}
-          conversation={selectedConversation}
+          conversation={displayConversation}
           conversations={conversations}
           coworkers={coworkers}
           discussions={discussions.filter(
-            (discussion) => discussion.conversationId === selectedConversation.id,
+            (discussion) => discussion.conversationId === displayConversation.id,
           )}
           imageAttachments={imageAttachments}
           messages={conversationMessages}
@@ -604,24 +611,24 @@ export function CoworkerDetailPage({
           onBack={onBack}
           onChanged={onChanged}
           onCreateGroup={() => setCreatingGroup(true)}
-          onEditGroup={() => setEditingGroup(selectedConversation)}
+          onEditGroup={() => setEditingGroup(displayConversation)}
           onOpenApprovals={onOpenApprovals}
           onSelectConversation={setSelectedConversationId}
           onSelectCoworker={openCoworkerConversation}
           tasks={tasks}
         />
-      ) : conversationHistoryReady ? (
+      ) : historyLoadedOnce ? (
         <LocalCopilotProvider
           agentId={coworker.id}
           agent={agent}
-          key={`${coworker.id}:${activeConversationId}`}
+          key={`${coworker.id}:${displayConversationId}`}
         >
           <CoworkerSurface
             coworker={coworker}
             coworkers={coworkers}
             conversations={conversations}
-            conversationId={activeConversationId}
-            selectedConversation={selectedConversation}
+            conversationId={displayConversationId}
+            selectedConversation={displayConversation}
             tasks={tasks}
             approvals={approvals}
             artifacts={artifacts}
@@ -2362,18 +2369,29 @@ function CoworkerSurface({
             </span>
           </div>
           <div className="conversation-head-controls">
+            {selectedConversation && conversationId !== `coworker:${coworker.id}` ? (
+              <button
+                aria-label="Archive this conversation"
+                className="conversation-icon-button"
+                disabled={agent.isRunning || conversationBusy}
+                onClick={() => setPendingArchive(selectedConversation)}
+                title="Archive this conversation"
+                type="button"
+              >
+                <Icon name="archive" />
+              </button>
+            ) : null}
             <div className="conversation-history-control" ref={historyRef}>
               <button
                 aria-expanded={historyOpen}
                 aria-haspopup="dialog"
-                aria-label="Conversation history"
-                className="conversation-icon-button"
+                className="conversation-history-trigger"
                 disabled={agent.isRunning}
                 onClick={() => setHistoryOpen((open) => !open)}
-                title="Conversation history"
                 type="button"
               >
                 <Icon name="clock" />
+                <span>History</span>
               </button>
               {historyOpen ? (
                 <div
@@ -2466,19 +2484,7 @@ function CoworkerSurface({
                   </div>
                 </div>
               ) : null}
-                </div>
-            {selectedConversation && conversationId !== `coworker:${coworker.id}` ? (
-              <button
-                aria-label="Archive this conversation"
-                className="conversation-icon-button"
-                disabled={agent.isRunning || conversationBusy}
-                onClick={() => setPendingArchive(selectedConversation)}
-                title="Archive this conversation"
-                type="button"
-              >
-                <Icon name="archive" />
-              </button>
-            ) : null}
+            </div>
             <button
               className="conversation-new-button"
               disabled={agent.isRunning || conversationBusy}
