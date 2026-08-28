@@ -21,7 +21,8 @@ export type IconName =
   | "file"
   | "shield"
   | "spark"
-  | "panel";
+  | "panel"
+  | "archive";
 
 const paths: Record<IconName, React.ReactNode> = {
   home: <path d="m3 10 9-7 9 7v9a2 2 0 0 1-2 2h-5v-7h-4v7H5a2 2 0 0 1-2-2Z" />,
@@ -59,6 +60,13 @@ const paths: Record<IconName, React.ReactNode> = {
     <>
       <path d="M12 3v12M7 10l5 5 5-5" />
       <path d="M5 21h14" />
+    </>
+  ),
+  archive: (
+    <>
+      <rect x="3" y="4" width="18" height="5" rx="1" />
+      <path d="M5 9v9a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9" />
+      <path d="M10 13h4" />
     </>
   ),
   trash: (

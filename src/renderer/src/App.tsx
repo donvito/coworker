@@ -146,6 +146,7 @@ export default function App() {
           coworkers={snapshot.coworkers}
           settings={snapshot.settings}
           modelEndpoints={snapshot.modelEndpoints}
+          integrations={snapshot.integrations}
           onOpen={(coworker) => setSelectedCoworkerId(coworker.id)}
           onChanged={refresh}
           onOpenModelSettings={openModelSettings}
@@ -188,6 +189,7 @@ export default function App() {
           modelEndpoints={snapshot.modelEndpoints}
           skills={snapshot.skills}
           coworkers={snapshot.coworkers}
+          conversations={snapshot.conversations}
           dataPath={snapshot.dataPath}
           version={snapshot.version}
           initialTab={settingsTab}

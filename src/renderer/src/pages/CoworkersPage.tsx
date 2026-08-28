@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 import type {
   AppSettings,
   Coworker,
+  Integration,
   ModelEndpoint,
   RemoteModelProvider,
 } from "@shared/contracts";
@@ -14,6 +15,8 @@ import {
   CoworkerModelBadge,
   PageHeader,
   StatusLabel,
+  TelegramLinkBadge,
+  telegramLinkedCoworkerId,
 } from "../components/Primitives";
 
 type CoworkerView = "cards" | "list";
@@ -22,6 +25,7 @@ export function CoworkersPage({
   coworkers,
   settings,
   modelEndpoints = [],
+  integrations = [],
   onOpen,
   onChanged,
   onOpenModelSettings,
@@ -29,6 +33,7 @@ export function CoworkersPage({
   coworkers: Coworker[];
   settings: AppSettings;
   modelEndpoints?: ModelEndpoint[];
+  integrations?: Integration[];
   onOpen: (coworker: Coworker) => void;
   onChanged: () => Promise<void>;
   onOpenModelSettings?: () => void;
@@ -107,6 +112,9 @@ export function CoworkersPage({
                 {coworker.enabledTools.length} tools
               </span>
               <CoworkerModelBadge coworker={coworker} modelEndpoints={modelEndpoints} />
+              {telegramLinkedCoworkerId(integrations) === coworker.id ? (
+                <TelegramLinkBadge />
+              ) : null}
             </span>
             <Icon name="arrow" className="roster-arrow" />
           </button>

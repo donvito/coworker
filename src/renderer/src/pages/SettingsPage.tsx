@@ -3,12 +3,15 @@ import type {
   AppSettings,
   AppTheme,
   ConfigureModelResult,
+  Conversation,
   Coworker,
+  EmailIntegrationMode,
   Integration,
   ModelEndpoint,
   ProviderErrorDiagnostic,
   RemoteModelProvider,
   Skill,
+  TelegramIntegrationStatus,
   WebSearchProvider,
 } from "@shared/contracts";
 import { webSearchProviders } from "@shared/contracts";
@@ -24,7 +27,13 @@ import { ModelSelector } from "../components/ModelSelector";
 import { PageHeader } from "../components/Primitives";
 import { readableError } from "../lib/errors";
 
-export type SettingsTab = "general" | "models" | "skills" | "integrations" | "data";
+export type SettingsTab =
+  | "general"
+  | "models"
+  | "skills"
+  | "integrations"
+  | "archived"
+  | "data";
 
 const themeOptions: Array<{ id: AppTheme; label: string; description: string }> = [
   { id: "graphite", label: "Graphite", description: "Neutral monochrome, the default" },
@@ -49,6 +58,7 @@ export function SettingsPage({
   modelEndpoints = [],
   skills,
   coworkers,
+  conversations = [],
   dataPath,
   version = "development",
   initialTab = "general",
@@ -59,6 +69,7 @@ export function SettingsPage({
   modelEndpoints?: ModelEndpoint[];
   skills: Skill[];
   coworkers: Coworker[];
+  conversations?: Conversation[];
   dataPath: string;
   version?: string;
   initialTab?: SettingsTab;
@@ -82,6 +93,8 @@ export function SettingsPage({
   const [globalInstructions, setGlobalInstructions] = useState(
     settings.globalOperatingInstructions,
   );
+  const [telegramStatus, setTelegramStatus] = useState<TelegramIntegrationStatus | null>(null);
+  const [confirmingArchivedDelete, setConfirmingArchivedDelete] = useState<string | null>(null);
 
   const knownProviderCards = remoteModelProviderDefinitions.filter(
     (provider) => provider.id !== "openai-compatible",
@@ -158,6 +171,16 @@ export function SettingsPage({
   useEffect(() => {
     if (tab === "data") void refreshProviderErrors();
   }, [tab]);
+
+  useEffect(() => {
+    if (tab !== "integrations") return;
+    void window.coworker.integrations
+      .telegramStatus()
+      .then(setTelegramStatus)
+      .catch(() => setTelegramStatus(null));
+    // Refetches whenever a snapshot refresh reports integration changes, so
+    // pairing completed from the Telegram side appears without a manual reload.
+  }, [tab, integrations]);
 
   async function refreshProviderErrors() {
     setDiagnosticsLoading(true);
@@ -328,7 +351,7 @@ export function SettingsPage({
   async function configureEmail(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
-    const mode = String(data.get("mode")) as Integration["mode"];
+    const mode = String(data.get("mode")) as EmailIntegrationMode;
     setWorking(true);
     setNotice(null);
     try {
@@ -341,6 +364,71 @@ export function SettingsPage({
       await onChanged();
       setNoticeKind("success");
       setNotice("Email integration updated.");
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function configureTelegram(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    setWorking(true);
+    setNotice(null);
+    try {
+      const status = await window.coworker.integrations.configureTelegram({
+        botToken: String(data.get("botToken") || "") || undefined,
+        coworkerId: String(data.get("coworkerId") || ""),
+      });
+      setTelegramStatus(status);
+      form.reset();
+      await onChanged();
+      setNoticeKind("success");
+      setNotice(
+        status.pairingLink
+          ? "Telegram bot connected. One required step left: pair your chat with the link or code below."
+          : "Telegram bot connected.",
+      );
+    } catch (configureError) {
+      setNoticeKind("error");
+      setNotice(
+        configureError instanceof Error ? configureError.message : String(configureError),
+      );
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function unpairTelegram() {
+    setWorking(true);
+    setNotice(null);
+    try {
+      setTelegramStatus(await window.coworker.integrations.unpairTelegram());
+      await onChanged();
+      setNoticeKind("success");
+      setNotice("Telegram chat unpaired. Open the new pairing link to pair again.");
+    } catch (unpairError) {
+      setNoticeKind("error");
+      setNotice(unpairError instanceof Error ? unpairError.message : String(unpairError));
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function disconnectTelegram() {
+    setWorking(true);
+    setNotice(null);
+    try {
+      await window.coworker.integrations.disconnectTelegram();
+      setTelegramStatus(await window.coworker.integrations.telegramStatus());
+      await onChanged();
+      setNoticeKind("success");
+      setNotice("Telegram bot disconnected and its token removed.");
+    } catch (disconnectError) {
+      setNoticeKind("error");
+      setNotice(
+        disconnectError instanceof Error ? disconnectError.message : String(disconnectError),
+      );
     } finally {
       setWorking(false);
     }
@@ -478,6 +566,43 @@ export function SettingsPage({
     }
   }
 
+  async function restoreArchivedConversation(conversation: Conversation) {
+    setWorking(true);
+    setNotice(null);
+    try {
+      await window.coworker.conversations.restore(conversation.id);
+      await onChanged();
+      setNoticeKind("success");
+      setNotice(`“${conversation.title}” was restored.`);
+    } catch (restoreError) {
+      setNoticeKind("error");
+      setNotice(restoreError instanceof Error ? restoreError.message : String(restoreError));
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function deleteArchivedConversation(conversation: Conversation) {
+    if (confirmingArchivedDelete !== conversation.id) {
+      setConfirmingArchivedDelete(conversation.id);
+      return;
+    }
+    setWorking(true);
+    setNotice(null);
+    try {
+      await window.coworker.conversations.remove(conversation.id);
+      await onChanged();
+      setNoticeKind("success");
+      setNotice(`“${conversation.title}” was permanently deleted.`);
+    } catch (removeError) {
+      setNoticeKind("error");
+      setNotice(removeError instanceof Error ? removeError.message : String(removeError));
+    } finally {
+      setConfirmingArchivedDelete(null);
+      setWorking(false);
+    }
+  }
+
   return (
     <div className="page settings-page">
       <PageHeader
@@ -488,7 +613,7 @@ export function SettingsPage({
 
       <div className="settings-layout">
         <nav className="settings-nav" aria-label="Settings sections">
-          {(["general", "models", "skills", "integrations", "data"] as SettingsTab[]).map((item) => (
+          {(["general", "models", "skills", "integrations", "archived", "data"] as SettingsTab[]).map((item) => (
             <button className={tab === item ? "active" : ""} key={item} onClick={() => setTab(item)}>
               {item[0]?.toUpperCase()}
               {item.slice(1)}
@@ -1040,6 +1165,221 @@ export function SettingsPage({
                   </button>
                 </div>
               </form>
+
+              <h2 className="integration-divider">Telegram bot</h2>
+              {(() => {
+                const telegramIntegration =
+                  telegramStatus?.integration ??
+                  integrations.find((item) => item.type === "telegram") ??
+                  null;
+                const telegramConfig = (telegramIntegration?.config ?? {}) as {
+                  botUsername?: string;
+                  coworkerId?: string;
+                  chatId?: number | null;
+                  threadsEnabled?: boolean;
+                };
+                const telegramConnected = telegramIntegration?.status === "connected";
+                const telegramPaired =
+                  typeof telegramConfig.chatId === "number" && telegramConfig.chatId !== null;
+                const linkedCoworker = coworkers.find(
+                  (candidate) => candidate.id === telegramConfig.coworkerId,
+                );
+                const pairingCode = telegramStatus?.pairingLink?.split("start=")[1];
+                return (
+                  <>
+                    <p>
+                      Chat with one coworker from Telegram — messages mirror both ways.
+                    </p>
+
+                    {telegramConnected ? (
+                      <div className="telegram-connection">
+                        <span
+                          aria-hidden="true"
+                          className={
+                            telegramPaired ? "connection-dot connected" : "connection-dot"
+                          }
+                        />
+                        <div className="telegram-connection-identity">
+                          <strong>
+                            {telegramIntegration?.name} ⇄{" "}
+                            {linkedCoworker
+                              ? `${linkedCoworker.name} (${linkedCoworker.role})`
+                              : "no coworker"}
+                          </strong>
+                          <small>
+                            {telegramPaired
+                              ? telegramConfig.threadsEnabled
+                                ? "Paired · Threaded Mode on"
+                                : "Paired"
+                              : "Not paired — messages don't sync yet"}
+                          </small>
+                        </div>
+                        <div className="telegram-connection-actions">
+                          {telegramPaired ? (
+                            <button
+                              type="button"
+                              className="secondary-button"
+                              disabled={working}
+                              onClick={() => void unpairTelegram()}
+                            >
+                              Unpair chat
+                            </button>
+                          ) : null}
+                          <button
+                            type="button"
+                            className="secondary-button"
+                            disabled={working}
+                            onClick={() => void disconnectTelegram()}
+                          >
+                            Disconnect
+                          </button>
+                        </div>
+                      </div>
+                    ) : null}
+
+                    {telegramConnected && telegramStatus?.pairingLink ? (
+                      <div className="telegram-pairing">
+                        <strong>One step left: pair your Telegram chat</strong>
+                        <p>
+                          Open the link and press Start. If nothing happens, send the code
+                          below to the bot as a normal message.
+                        </p>
+                        <div className="telegram-pairing-actions">
+                          <a
+                            className="primary-button"
+                            href={telegramStatus.pairingLink}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            Open in Telegram
+                          </a>
+                          <code>{pairingCode}</code>
+                        </div>
+                      </div>
+                    ) : null}
+
+                    {telegramConnected && telegramPaired ? (
+                      <p className="telegram-hint">
+                        {telegramConfig.threadsEnabled
+                          ? "Replies land in the Telegram topic you wrote from; each desktop conversation gets its own topic."
+                          : "Tip: enable Threaded Mode in @BotFather's Mini App (your bot → Thread Settings) to give each desktop conversation its own Telegram topic."}
+                      </p>
+                    ) : null}
+
+                    {!telegramConnected ? (
+                      <ol className="telegram-steps">
+                        <li>
+                          Message{" "}
+                          <a href="https://t.me/botfather" target="_blank" rel="noreferrer">
+                            @BotFather
+                          </a>
+                          , send <code>/newbot</code>, and copy the token it gives you.
+                        </li>
+                        <li>Paste the token below, choose a coworker, and connect.</li>
+                        <li>Pair your Telegram chat with the link that appears.</li>
+                      </ol>
+                    ) : null}
+
+                    <form className="form-stack integration-form" onSubmit={configureTelegram}>
+                      <label>
+                        <span>{telegramConnected ? "Replace bot token (optional)" : "Bot token"}</span>
+                        <input
+                          name="botToken"
+                          type="password"
+                          placeholder={
+                            telegramIntegration
+                              ? "Stored — enter a value to replace"
+                              : "123456789:ABC-DEF…"
+                          }
+                        />
+                      </label>
+                      <label>
+                        <span>Linked coworker</span>
+                        <select
+                          name="coworkerId"
+                          defaultValue={telegramConfig.coworkerId ?? coworkers[0]?.id}
+                        >
+                          {coworkers.map((candidate) => (
+                            <option key={candidate.id} value={candidate.id}>
+                              {candidate.name} — {candidate.role}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <div>
+                        <button className="primary-button" disabled={working}>
+                          {telegramConnected ? "Save changes" : "Connect Telegram bot"}
+                        </button>
+                      </div>
+                    </form>
+                  </>
+                );
+              })()}
+            </section>
+          ) : null}
+
+          {tab === "archived" ? (
+            <section className="settings-section">
+              <span className="eyebrow">Archived conversations</span>
+              <h2>Restore or permanently delete</h2>
+              <p>
+                Archived conversations are hidden everywhere else. Restoring brings one back to
+                its coworker; deleting removes it and its full history forever. A conversation
+                also restores itself if a new message arrives in it.
+              </p>
+              {conversations.filter((conversation) => conversation.archivedAt).length === 0 ? (
+                <p className="telegram-hint">
+                  Nothing is archived. Hover a conversation in a coworker's History menu to
+                  archive it.
+                </p>
+              ) : (
+                conversations
+                  .filter((conversation) => conversation.archivedAt)
+                  .sort((left, right) =>
+                    (right.archivedAt ?? "").localeCompare(left.archivedAt ?? ""),
+                  )
+                  .map((conversation) => {
+                    const members = conversation.memberIds
+                      .map(
+                        (memberId) =>
+                          coworkers.find((candidate) => candidate.id === memberId)?.name,
+                      )
+                      .filter(Boolean)
+                      .join(", ");
+                    return (
+                      <div className="telegram-connection" key={conversation.id}>
+                        <div className="telegram-connection-identity">
+                          <strong>{conversation.title}</strong>
+                          <small>
+                            {conversation.kind === "group" ? "Channel" : "Conversation"}
+                            {members ? ` with ${members}` : ""} · archived{" "}
+                            {new Date(conversation.archivedAt!).toLocaleString()}
+                          </small>
+                        </div>
+                        <div className="telegram-connection-actions">
+                          <button
+                            className="secondary-button"
+                            disabled={working}
+                            onClick={() => void restoreArchivedConversation(conversation)}
+                            type="button"
+                          >
+                            Restore
+                          </button>
+                          <button
+                            className="secondary-button danger"
+                            disabled={working}
+                            onClick={() => void deleteArchivedConversation(conversation)}
+                            type="button"
+                          >
+                            {confirmingArchivedDelete === conversation.id
+                              ? "Confirm delete"
+                              : "Delete forever"}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })
+              )}
             </section>
           ) : null}
 

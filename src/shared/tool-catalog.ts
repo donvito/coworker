@@ -100,6 +100,14 @@ export const toolCatalog = [
     risk: "high",
     defaultPolicy: "approval",
   },
+  {
+    name: "telegram.send",
+    label: "Send Telegram message",
+    description:
+      "Send a message, and optionally workspace files, to the user's paired Telegram chat through the connected Telegram bot.",
+    risk: "high",
+    defaultPolicy: "approval",
+  },
 ] as const satisfies readonly ToolCatalogEntry[];
 
 export type ToolName = (typeof toolCatalog)[number]["name"];

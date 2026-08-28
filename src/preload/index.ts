@@ -30,6 +30,9 @@ const api: DesktopApi = {
     create: (input) => ipcRenderer.invoke(ipcChannels.conversationsCreate, input),
     update: (id, input) =>
       ipcRenderer.invoke(ipcChannels.conversationsUpdate, id, input),
+    remove: (id) => ipcRenderer.invoke(ipcChannels.conversationsRemove, id),
+    archive: (id) => ipcRenderer.invoke(ipcChannels.conversationsArchive, id),
+    restore: (id) => ipcRenderer.invoke(ipcChannels.conversationsRestore, id),
     send: (input) => ipcRenderer.invoke(ipcChannels.conversationsSend, input),
     continueDiscussion: (id) =>
       ipcRenderer.invoke(ipcChannels.conversationsContinueDiscussion, id),
@@ -95,6 +98,12 @@ const api: DesktopApi = {
       ipcRenderer.invoke(ipcChannels.integrationsRemoveCredential, key),
     configureWebSearch: (input) =>
       ipcRenderer.invoke(ipcChannels.integrationsConfigureWebSearch, input),
+    configureTelegram: (input) =>
+      ipcRenderer.invoke(ipcChannels.integrationsConfigureTelegram, input),
+    telegramStatus: () => ipcRenderer.invoke(ipcChannels.integrationsTelegramStatus),
+    unpairTelegram: () => ipcRenderer.invoke(ipcChannels.integrationsUnpairTelegram),
+    disconnectTelegram: () =>
+      ipcRenderer.invoke(ipcChannels.integrationsDisconnectTelegram),
   },
   skills: {
     list: () => ipcRenderer.invoke(ipcChannels.skillsList),

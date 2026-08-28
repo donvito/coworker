@@ -31,6 +31,7 @@ import type {
   CreateScheduleInput,
   CreateTaskInput,
   DiscussionSession,
+  EmailIntegrationMode,
   Integration,
   Message,
   ModelEndpoint,
@@ -198,6 +199,7 @@ function conversationFromRow(row: typeof conversations.$inferSelect): Conversati
     kind: row.kind,
     memberIds: [],
     title: row.title,
+    archivedAt: row.archivedAt,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -736,6 +738,39 @@ export class CoworkerDatabase {
         .run();
     });
     return this.getConversation(id);
+  }
+
+  setConversationArchived(id: string, archived: boolean): Conversation {
+    const conversation = this.getConversation(id);
+    this.database
+      .update(conversations)
+      .set({ archivedAt: archived ? now() : null })
+      .where(eq(conversations.id, id))
+      .run();
+    this.addActivity({
+      type: archived ? "conversation.archived" : "conversation.restored",
+      summary: archived
+        ? `Conversation “${conversation.title}” was archived`
+        : `Conversation “${conversation.title}” was restored`,
+    });
+    return this.getConversation(id);
+  }
+
+  /** Deletes a conversation; members, messages, tasks, and discussions cascade. */
+  deleteConversation(id: string): void {
+    const conversation = this.getConversation(id);
+    this.transaction(() => {
+      // Delete the thread's tasks before the conversation row: the cascade
+      // from discussion_sessions would otherwise SET NULL tasks.discussion_id
+      // first, pushing multi-turn tasks into the partial unique index on
+      // (source_message_id, coworker_id) and aborting the whole delete.
+      this.database.delete(tasks).where(eq(tasks.threadId, id)).run();
+      this.database.delete(conversations).where(eq(conversations.id, id)).run();
+    });
+    this.addActivity({
+      type: "conversation.removed",
+      summary: `Channel “${conversation.title}” was deleted`,
+    });
   }
 
   updateConversation(id: string, input: UpdateConversationInput): Conversation {
@@ -1932,7 +1967,7 @@ export class CoworkerDatabase {
 
   upsertEmailIntegration(input: {
     name: string;
-    mode: Integration["mode"];
+    mode: EmailIntegrationMode;
     credentialKey: string | null;
     fromAddress?: string;
   }): Integration {
@@ -1991,6 +2026,81 @@ export class CoworkerDatabase {
       .limit(1)
       .get();
     return row ? integrationFromRow(row) : null;
+  }
+
+  getTelegramIntegration(): Integration | null {
+    const row = this.database
+      .select()
+      .from(integrations)
+      .where(eq(integrations.type, "telegram"))
+      .limit(1)
+      .get();
+    return row ? integrationFromRow(row) : null;
+  }
+
+  upsertTelegramIntegration(input: {
+    name: string;
+    credentialKey: string | null;
+    status: Integration["status"];
+    config: Record<string, unknown>;
+  }): Integration {
+    const existing = this.database
+      .select()
+      .from(integrations)
+      .where(eq(integrations.type, "telegram"))
+      .limit(1)
+      .get();
+    const timestamp = now();
+    if (existing) {
+      this.database
+        .update(integrations)
+        .set({
+          name: input.name,
+          mode: "bot",
+          status: input.status,
+          credentialKey: input.credentialKey,
+          configJson: json(input.config),
+          updatedAt: timestamp,
+        })
+        .where(eq(integrations.id, existing.id))
+        .run();
+      return this.getIntegration(existing.id);
+    }
+    const id = randomUUID();
+    this.database
+      .insert(integrations)
+      .values({
+        id,
+        type: "telegram",
+        name: input.name,
+        mode: "bot",
+        status: input.status,
+        credentialKey: input.credentialKey,
+        configJson: json(input.config),
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      })
+      .run();
+    return this.getIntegration(id);
+  }
+
+  /** Shallow-merges a patch into the Telegram integration's config JSON. */
+  updateTelegramIntegration(patch: {
+    status?: Integration["status"];
+    config?: Record<string, unknown>;
+  }): Integration {
+    const existing = this.getTelegramIntegration();
+    if (!existing) throw new Error("The Telegram integration is not configured");
+    this.database
+      .update(integrations)
+      .set({
+        status: patch.status ?? existing.status,
+        configJson: json({ ...existing.config, ...(patch.config ?? {}) }),
+        updatedAt: now(),
+      })
+      .where(eq(integrations.id, existing.id))
+      .run();
+    return this.getIntegration(existing.id);
   }
 
   getSideEffect(key: string): { status: string; result: unknown } | null {

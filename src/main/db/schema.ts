@@ -114,6 +114,7 @@ export const conversations = sqliteTable(
       .references(() => coworkers.id, { onDelete: "cascade" }),
     kind: text("kind", { enum: ["direct", "group"] }).notNull().default("direct"),
     title: text("title").notNull(),
+    archivedAt: text("archived_at"),
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull(),
   },
@@ -404,9 +405,9 @@ export const integrations = sqliteTable(
   "integrations",
   {
     id: text("id").primaryKey(),
-    type: text("type", { enum: ["email"] }).notNull(),
+    type: text("type", { enum: ["email", "telegram"] }).notNull(),
     name: text("name").notNull(),
-    mode: text("mode", { enum: ["local-outbox", "resend"] }).notNull(),
+    mode: text("mode", { enum: ["local-outbox", "resend", "bot"] }).notNull(),
     status: text("status", { enum: ["connected", "disconnected", "error"] }).notNull(),
     credentialKey: text("credential_key"),
     configJson: text("config_json").notNull().default("{}"),
@@ -414,8 +415,11 @@ export const integrations = sqliteTable(
     updatedAt: text("updated_at").notNull(),
   },
   (table) => [
-    check("integrations_type_check", sql`${table.type} = 'email'`),
-    check("integrations_mode_check", sql`${table.mode} in ('local-outbox', 'resend')`),
+    check("integrations_type_check", sql`${table.type} in ('email', 'telegram')`),
+    check(
+      "integrations_mode_check",
+      sql`${table.mode} in ('local-outbox', 'resend', 'bot')`,
+    ),
     check(
       "integrations_status_check",
       sql`${table.status} in ('connected', 'disconnected', 'error')`,

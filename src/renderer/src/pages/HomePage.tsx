@@ -7,6 +7,8 @@ import {
   EmptyState,
   PageHeader,
   StatusLabel,
+  TelegramLinkBadge,
+  telegramLinkedCoworkerId,
 } from "../components/Primitives";
 
 const countWords = [
@@ -234,6 +236,9 @@ export function HomePage({
                       coworker={coworker}
                       modelEndpoints={snapshot.modelEndpoints}
                     />
+                    {telegramLinkedCoworkerId(snapshot.integrations) === coworker.id ? (
+                      <TelegramLinkBadge compact />
+                    ) : null}
                     <span className="floor-card-action">
                       <Icon name="arrow" />
                     </span>

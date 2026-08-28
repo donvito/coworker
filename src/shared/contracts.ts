@@ -196,6 +196,8 @@ export interface Conversation {
   kind: "direct" | "group";
   memberIds: string[];
   title: string;
+  /** Set while the conversation is archived; null when active. */
+  archivedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -396,14 +398,22 @@ export interface ActivityItem {
 
 export interface Integration {
   id: string;
-  type: "email";
+  type: "email" | "telegram";
   name: string;
-  mode: "local-outbox" | "resend";
+  mode: "local-outbox" | "resend" | "bot";
   status: "connected" | "disconnected" | "error";
   credentialKey: string | null;
   config: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
+}
+
+export type EmailIntegrationMode = "local-outbox" | "resend";
+
+export interface TelegramIntegrationStatus {
+  integration: Integration | null;
+  /** Deep link that pairs the user's Telegram chat: https://t.me/<bot>?start=<code>. */
+  pairingLink: string | null;
 }
 
 export const appThemes = ["forest", "ocean", "plum", "clay", "graphite"] as const;
@@ -528,6 +538,9 @@ export interface DesktopApi {
     search(coworkerId: string, query: string): Promise<Conversation[]>;
     create(input: CreateConversationInput): Promise<Conversation>;
     update(id: string, input: UpdateConversationInput): Promise<Conversation>;
+    remove(id: string): Promise<void>;
+    archive(id: string): Promise<Conversation>;
+    restore(id: string): Promise<Conversation>;
     send(input: SendConversationMessageInput): Promise<ConversationDispatchReceipt>;
     continueDiscussion(id: string): Promise<DiscussionAdvanceReceipt>;
     stopDiscussion(id: string): Promise<DiscussionSession>;
@@ -572,10 +585,17 @@ export interface DesktopApi {
     list(): Promise<Integration[]>;
     configureEmail(input: {
       name: string;
-      mode: Integration["mode"];
+      mode: EmailIntegrationMode;
       apiKey?: string;
       fromAddress?: string;
     }): Promise<Integration>;
+    configureTelegram(input: {
+      botToken?: string;
+      coworkerId: string;
+    }): Promise<TelegramIntegrationStatus>;
+    telegramStatus(): Promise<TelegramIntegrationStatus>;
+    unpairTelegram(): Promise<TelegramIntegrationStatus>;
+    disconnectTelegram(): Promise<void>;
     configureModel(input: {
       provider: RemoteModelProvider;
       apiKey?: string;

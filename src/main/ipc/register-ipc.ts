@@ -24,6 +24,7 @@ import {
   createCoworkerSchema,
   createScheduleSchema,
   createTaskSchema,
+  configureTelegramSchema,
   createConversationSchema,
   idSchema,
   installSkillUrlSchema,
@@ -52,6 +53,9 @@ const mutationChannels = new Set<string>([
   ipcChannels.coworkersRemove,
   ipcChannels.conversationsCreate,
   ipcChannels.conversationsUpdate,
+  ipcChannels.conversationsRemove,
+  ipcChannels.conversationsArchive,
+  ipcChannels.conversationsRestore,
   ipcChannels.conversationsSend,
   ipcChannels.conversationsContinueDiscussion,
   ipcChannels.conversationsStopDiscussion,
@@ -69,6 +73,9 @@ const mutationChannels = new Set<string>([
   ipcChannels.integrationsRemoveModelEndpoint,
   ipcChannels.integrationsRemoveCredential,
   ipcChannels.integrationsConfigureWebSearch,
+  ipcChannels.integrationsConfigureTelegram,
+  ipcChannels.integrationsUnpairTelegram,
+  ipcChannels.integrationsDisconnectTelegram,
   ipcChannels.skillsInstallFromUrl,
   ipcChannels.skillsInstallFromContent,
   ipcChannels.skillsInstallFromPackage,
@@ -196,6 +203,15 @@ export function registerIpc(input: {
       idSchema.parse(id),
       updateConversationSchema.parse(value),
     ),
+  );
+  handle(ipcChannels.conversationsRemove, (_event, id) =>
+    input.service.removeConversation(idSchema.parse(id)),
+  );
+  handle(ipcChannels.conversationsArchive, (_event, id) =>
+    input.service.archiveConversation(idSchema.parse(id)),
+  );
+  handle(ipcChannels.conversationsRestore, (_event, id) =>
+    input.service.restoreConversation(idSchema.parse(id)),
   );
   handle(ipcChannels.conversationsSend, (_event, value) =>
     input.service.sendConversationMessage(sendConversationMessageSchema.parse(value)),
@@ -380,6 +396,14 @@ export function registerIpc(input: {
   });
   handle(ipcChannels.integrationsConfigureWebSearch, (_event, value) =>
     input.service.configureWebSearch(configureWebSearchSchema.parse(value)),
+  );
+  handle(ipcChannels.integrationsConfigureTelegram, (_event, value) =>
+    input.service.configureTelegram(configureTelegramSchema.parse(value)),
+  );
+  handle(ipcChannels.integrationsTelegramStatus, () => input.service.telegramStatus());
+  handle(ipcChannels.integrationsUnpairTelegram, () => input.service.unpairTelegram());
+  handle(ipcChannels.integrationsDisconnectTelegram, () =>
+    input.service.disconnectTelegram(),
   );
 
   handle(ipcChannels.skillsList, () => input.service.database.listSkills());

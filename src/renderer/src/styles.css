@@ -3100,11 +3100,19 @@ select:focus {
   );
 }
 
+/* The header bars double as the window titlebar: the whole bar drags the
+   window while every interactive control inside opts back out. */
 .conversation-roster-head,
 .conversation-main-head,
 .conversation-approval-head {
   position: relative;
   z-index: 13;
+  -webkit-app-region: drag;
+}
+
+.conversation-roster-head :is(button, input, select, a, label, [role="button"]),
+.conversation-main-head :is(button, input, select, a, label, [role="button"]),
+.conversation-approval-head :is(button, input, select, a, label, [role="button"]) {
   -webkit-app-region: no-drag;
 }
 
@@ -3478,11 +3486,30 @@ select:focus {
   height: 14px;
 }
 
+.conversation-identity-tools {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 3px;
+}
+
+.conversation-identity-tools .conversation-history-trigger {
+  min-height: 28px;
+  padding: 0 9px;
+}
+
+.conversation-identity-tools .conversation-icon-button {
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  min-height: 28px;
+}
+
 .conversation-history-menu {
   position: absolute;
   z-index: 40;
   top: calc(100% + 8px);
-  right: 0;
+  left: 0;
   width: min(350px, calc(100vw - 48px));
   overflow: hidden;
   background: rgba(255, 255, 255, 0.99);
@@ -3580,13 +3607,20 @@ select:focus {
   text-align: center;
 }
 
-.conversation-history-list > button {
+.conversation-history-row {
   display: flex;
-  width: 100%;
+  align-items: stretch;
+  gap: 2px;
+}
+
+.conversation-history-row > .conversation-history-select {
+  display: flex;
+  min-width: 0;
   padding: 10px;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  flex: 1;
   color: var(--ink);
   text-align: left;
   background: transparent;
@@ -3594,13 +3628,41 @@ select:focus {
   border-radius: 8px;
 }
 
-.conversation-history-list > button:hover,
-.conversation-history-list > button.selected {
+.conversation-history-row:hover > .conversation-history-select,
+.conversation-history-row.selected > .conversation-history-select {
   background: var(--forest-soft);
   border-color: #c2d7cb;
 }
 
-.conversation-history-list > button > span {
+.conversation-history-archive {
+  display: flex;
+  width: 30px;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  color: var(--ink-soft);
+  visibility: hidden;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+}
+
+.conversation-history-row:hover .conversation-history-archive {
+  visibility: visible;
+}
+
+.conversation-history-archive:hover {
+  color: var(--ink);
+  background: var(--forest-soft);
+  border-color: #c2d7cb;
+}
+
+.conversation-history-archive svg {
+  width: 13px;
+  height: 13px;
+}
+
+.conversation-history-select > span {
   display: flex;
   min-width: 0;
   flex-direction: column;
@@ -3620,7 +3682,7 @@ select:focus {
   font-size: 9px;
 }
 
-.conversation-history-list > button > svg {
+.conversation-history-select > svg {
   width: 14px;
   height: 14px;
   color: var(--forest);
@@ -6178,6 +6240,103 @@ select:focus {
 
 .integration-form {
   max-width: 560px;
+}
+
+.telegram-connection {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+}
+
+.telegram-connection-identity {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.modal-delete-action {
+  margin-right: auto;
+}
+
+.telegram-link-badge {
+  color: #2a6f97 !important;
+  background: #e3f0f7 !important;
+  border-color: #c4dcea !important;
+}
+
+.settings-section h2.integration-divider {
+  margin-top: 34px;
+  padding-top: 26px;
+  border-top: 1px solid var(--line);
+}
+
+.telegram-connection-identity strong {
+  overflow: hidden;
+  font-size: 13.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.telegram-connection-identity small {
+  color: var(--ink-soft);
+  font-size: 11px;
+}
+
+.telegram-connection-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 8px;
+}
+
+.telegram-pairing {
+  max-width: 560px;
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  background: #fdf4e3;
+  border: 1px solid #ecd9ae;
+  border-radius: 11px;
+}
+
+.telegram-pairing strong {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 13px;
+}
+
+.telegram-pairing p {
+  margin: 0 0 10px;
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
+.telegram-pairing-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.telegram-hint {
+  max-width: 560px;
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
+.telegram-steps {
+  display: grid;
+  max-width: 560px;
+  margin: 0 0 14px;
+  padding-left: 20px;
+  gap: 4px;
+  color: var(--ink-soft);
+  font-size: 12.5px;
 }
 
 .settings-notice {

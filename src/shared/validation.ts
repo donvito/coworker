@@ -333,6 +333,15 @@ export const configureWebSearchSchema = z.object({
   apiKey: z.string().trim().min(1).max(2_000),
 });
 
+export const configureTelegramSchema = z.object({
+  botToken: z
+    .string()
+    .trim()
+    .regex(/^\d+:[\w-]{20,}$/, "That does not look like a BotFather token")
+    .optional(),
+  coworkerId: identifier,
+});
+
 export const installSkillUrlSchema = z.object({
   url: z.string().trim().url().max(2_048),
   coworkerId: identifier.optional(),

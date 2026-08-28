@@ -1,5 +1,11 @@
 import type { ReactNode } from "react";
-import type { Coworker, ModelEndpoint, RuntimeStatus, TaskStatus } from "@shared/contracts";
+import type {
+  Coworker,
+  Integration,
+  ModelEndpoint,
+  RuntimeStatus,
+  TaskStatus,
+} from "@shared/contracts";
 import { modelProviderDisplayName } from "@shared/model-providers";
 import avatar1 from "../assets/coworker-avatars/avatar-1.png";
 import avatar2 from "../assets/coworker-avatars/avatar-2.png";
@@ -131,6 +137,31 @@ export function CoworkerModelBadge({
     >
       <code>{displayName}</code>
       <span>{provider}</span>
+    </span>
+  );
+}
+
+/** The coworker linked to the connected Telegram bot, if any. */
+export function telegramLinkedCoworkerId(integrations: Integration[]): string | null {
+  const integration = integrations.find(
+    (candidate) => candidate.type === "telegram" && candidate.status === "connected",
+  );
+  const coworkerId = (integration?.config as { coworkerId?: string } | undefined)?.coworkerId;
+  return typeof coworkerId === "string" && coworkerId ? coworkerId : null;
+}
+
+export function TelegramLinkBadge({ compact = false }: { compact?: boolean }) {
+  return (
+    <span
+      aria-label="Connected to the Telegram bot"
+      className={
+        compact
+          ? "coworker-model-badge compact telegram-link-badge"
+          : "coworker-model-badge telegram-link-badge"
+      }
+      title="Connected to the Telegram bot"
+    >
+      <span>Telegram</span>
     </span>
   );
 }

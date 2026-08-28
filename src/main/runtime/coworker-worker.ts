@@ -271,6 +271,17 @@ const parameterSchemas: Record<string, ReturnType<typeof Type.Object>> = {
     body: Type.String(),
     attachments: Type.Optional(Type.Array(Type.String())),
   }),
+  "telegram.send": Type.Object({
+    message: Type.String({
+      description: "Markdown message to deliver to the user's paired Telegram chat",
+    }),
+    attachments: Type.Optional(
+      Type.Array(Type.String(), {
+        description:
+          "Workspace-relative paths of files to attach. Create the files first; photos up to 10 MB, other files up to 50 MB.",
+      }),
+    ),
+  }),
 };
 
 function createProxyTool(controlledName: string, providerName: string): AgentTool<any> {

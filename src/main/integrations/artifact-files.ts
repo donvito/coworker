@@ -1,5 +1,5 @@
-import { stat, unlink } from "node:fs/promises";
-import { relative, sep } from "node:path";
+import { realpath, stat, unlink } from "node:fs/promises";
+import { basename, dirname, join, relative, sep } from "node:path";
 import type { Artifact } from "@shared/contracts";
 import type { CoworkerDatabase } from "@main/db/database";
 import { resolveWorkspacePath } from "@main/tools/workspace-path";
@@ -34,13 +34,36 @@ export function workspaceRelativePath(workspaceRoot: string, filePath: string): 
   return segments.slice(segments.length - insensitive.split(sep).length).join(sep);
 }
 
+/**
+ * Resolves symlinks so both sides compare in canonical form: recorded artifact
+ * paths are realpath-ed at creation, while the stored workspace root may be a
+ * symlinked spelling (macOS /tmp → /private/tmp, network volumes). A missing
+ * file falls back to its canonical parent so deletions still surface as
+ * missing files rather than as bogus traversal errors.
+ */
+async function canonicalPath(path: string): Promise<string> {
+  try {
+    return await realpath(path);
+  } catch {
+    try {
+      return join(await realpath(dirname(path)), basename(path));
+    } catch {
+      return path;
+    }
+  }
+}
+
 export async function resolveArtifactFile(
   database: CoworkerDatabase,
   artifactId: string,
 ): Promise<ResolvedArtifactFile> {
   const artifact = database.getArtifact(artifactId);
   const coworker = database.getCoworker(artifact.coworkerId);
-  const workspacePath = workspaceRelativePath(coworker.workspacePath, artifact.filePath) || ".";
+  const [canonicalRoot, canonicalFile] = await Promise.all([
+    canonicalPath(coworker.workspacePath),
+    canonicalPath(artifact.filePath),
+  ]);
+  const workspacePath = workspaceRelativePath(canonicalRoot, canonicalFile) || ".";
   const path = await resolveWorkspacePath(coworker.workspacePath, workspacePath);
   const details = await stat(path);
   if (!details.isFile()) {

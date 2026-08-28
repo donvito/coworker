@@ -263,6 +263,7 @@ async function start(): Promise<void> {
   rebuildTrayMenu();
   powerMonitor.on("resume", () => {
     void service?.scheduler.wake();
+    void service?.telegram.wake();
   });
 }
 
