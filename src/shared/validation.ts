@@ -39,6 +39,7 @@ export const createCoworkerSchema = z.object({
   name: z.string().trim().min(1).max(80),
   role: z.string().trim().min(1).max(120),
   description: optionalText,
+  avatarIndex: z.number().int().min(0).max(8).optional(),
   systemPrompt: z.string().trim().min(1).max(50_000),
   modelProvider: modelProviderSchema,
   modelName: z.string().trim().min(1).max(160),

@@ -123,6 +123,7 @@ function coworkerFromRow(row: typeof coworkers.$inferSelect): Coworker {
     name: row.name,
     role: row.role,
     description: row.description,
+    avatarIndex: row.avatarIndex,
     systemPrompt: row.systemPrompt,
     modelProvider: row.modelProvider as Coworker["modelProvider"],
     modelName: row.modelName,
@@ -617,6 +618,7 @@ export class CoworkerDatabase {
         name: input.name,
         role: input.role,
         description: input.description ?? null,
+        avatarIndex: input.avatarIndex ?? null,
         systemPrompt: input.systemPrompt,
         modelProvider: input.modelProvider,
         modelName: input.modelName,
@@ -933,6 +935,7 @@ export class CoworkerDatabase {
     if (input.name !== undefined) patch.name = input.name;
     if (input.role !== undefined) patch.role = input.role;
     if (input.description !== undefined) patch.description = input.description;
+    if (input.avatarIndex !== undefined) patch.avatarIndex = input.avatarIndex;
     if (input.systemPrompt !== undefined) patch.systemPrompt = input.systemPrompt;
     if (input.modelProvider !== undefined) patch.modelProvider = input.modelProvider;
     if (input.modelName !== undefined) patch.modelName = input.modelName;

@@ -392,6 +392,7 @@ export function CoworkerDetailPage({
   skills,
   settings,
   modelEndpoints = [],
+  initialConversationId = null,
   onBack,
   onChanged,
   onOpenApprovals,
@@ -411,6 +412,7 @@ export function CoworkerDetailPage({
   skills: Skill[];
   settings: AppSettings;
   modelEndpoints?: ModelEndpoint[];
+  initialConversationId?: string | null;
   onBack: () => void;
   onChanged: () => Promise<void>;
   onOpenApprovals: () => void;
@@ -431,7 +433,10 @@ export function CoworkerDetailPage({
     coworkers.find((candidate) => candidate.id === managingCoworkerId) ?? null;
   const latestConversation = latestDirectConversation(conversations, coworker.id);
   const [selectedConversationId, setSelectedConversationId] = useState(
-    latestConversation?.id ?? `coworker:${coworker.id}`,
+    (initialConversationId &&
+      conversations.some((conversation) => conversation.id === initialConversationId) &&
+      initialConversationId) ||
+      (latestConversation?.id ?? `coworker:${coworker.id}`),
   );
   const selectedConversation =
     conversations.find((conversation) => conversation.id === selectedConversationId) ?? null;
@@ -453,7 +458,20 @@ export function CoworkerDetailPage({
   useEffect(() => {
     const next = latestDirectConversation(conversations, coworker.id);
     setSelectedConversationId(next?.id ?? `coworker:${coworker.id}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reset only when the coworker changes
   }, [coworker.id]);
+
+  // Navigation from elsewhere (for example an activity entry) can point at a
+  // specific conversation of this coworker.
+  useEffect(() => {
+    if (
+      initialConversationId &&
+      conversations.some((conversation) => conversation.id === initialConversationId)
+    ) {
+      setSelectedConversationId(initialConversationId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- follow only explicit focus requests
+  }, [initialConversationId]);
 
   useEffect(() => {
     let cancelled = false;

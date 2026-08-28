@@ -45,22 +45,32 @@ function avatarIndex(id: string): number {
   return hash;
 }
 
+export const coworkerAvatarCount = coworkerAvatars.length;
+
+export function coworkerAvatarVisual(index: number): { image: string; color: string } {
+  const safe = Math.abs(Math.trunc(index));
+  return {
+    image: coworkerAvatars[safe % coworkerAvatars.length]!,
+    color: coworkerAvatarColors[safe % coworkerAvatarColors.length]!,
+  };
+}
+
 export function CoworkerAvatar({
   coworker,
   className = "",
 }: {
-  coworker: Pick<Coworker, "id" | "name">;
+  coworker: Pick<Coworker, "id" | "name"> & { avatarIndex?: number | null };
   className?: string;
 }) {
-  const index = avatarIndex(coworker.id);
+  const visual = coworkerAvatarVisual(coworker.avatarIndex ?? avatarIndex(coworker.id));
   return (
     <span
       aria-label={`${coworker.name} avatar`}
       className={`coworker-avatar ${className}`.trim()}
       role="img"
-      style={{ backgroundColor: coworkerAvatarColors[index % coworkerAvatarColors.length] }}
+      style={{ backgroundColor: visual.color }}
     >
-      <img alt="" src={coworkerAvatars[index % coworkerAvatars.length]} />
+      <img alt="" src={visual.image} />
     </span>
   );
 }

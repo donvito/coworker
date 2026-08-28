@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import type { ActivityItem } from "@shared/contracts";
 import { AppShell } from "./components/AppShell";
 import { Icon } from "./components/Icon";
 import type { PageId } from "./navigation";
@@ -16,6 +17,7 @@ export default function App() {
   const { snapshot, loading, error, refresh, lastEvent } = useAppData();
   const [page, setPage] = useState<PageId>("home");
   const [selectedCoworkerId, setSelectedCoworkerId] = useState<string | null>(null);
+  const [focusConversationId, setFocusConversationId] = useState<string | null>(null);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("general");
   const theme = snapshot?.settings.theme ?? "graphite";
 
@@ -66,6 +68,7 @@ export default function App() {
   function navigate(nextPage: PageId) {
     setPage(nextPage);
     setSelectedCoworkerId(null);
+    setFocusConversationId(null);
     setSettingsTab("general");
   }
 
@@ -73,6 +76,23 @@ export default function App() {
     setSettingsTab("models");
     setPage("settings");
     setSelectedCoworkerId(null);
+  }
+
+  function openCoworker(coworkerId: string, conversationId: string | null = null) {
+    setPage("coworkers");
+    setSelectedCoworkerId(coworkerId);
+    setFocusConversationId(conversationId);
+  }
+
+  /** Jumps from an activity entry to the conversation or coworker behind it. */
+  function openActivityTarget(item: ActivityItem) {
+    if (!snapshot) return;
+    const task = item.taskId
+      ? snapshot.tasks.find((candidate) => candidate.id === item.taskId)
+      : undefined;
+    const coworkerId = task?.coworkerId ?? item.coworkerId;
+    if (!coworkerId) return;
+    openCoworker(coworkerId, task?.threadId ?? null);
   }
 
   return (
@@ -93,13 +113,11 @@ export default function App() {
       {page === "home" ? (
         <HomePage
           snapshot={snapshot}
-          onOpenCoworker={(coworker) => {
-            setPage("coworkers");
-            setSelectedCoworkerId(coworker.id);
-          }}
+          onOpenCoworker={(coworker) => openCoworker(coworker.id)}
           onOpenApprovals={() => navigate("approvals")}
           onManageCoworkers={() => navigate("coworkers")}
           onOpenActivity={() => navigate("activity")}
+          onOpenActivityItem={openActivityTarget}
           onChanged={refresh}
         />
       ) : null}
@@ -132,12 +150,13 @@ export default function App() {
           skills={snapshot.skills}
           settings={snapshot.settings}
           modelEndpoints={snapshot.modelEndpoints}
+          initialConversationId={focusConversationId}
           onBack={() => navigate("home")}
           onChanged={refresh}
           onOpenApprovals={() => navigate("approvals")}
           onOpenModelSettings={openModelSettings}
           onRemoved={() => setSelectedCoworkerId(null)}
-          onSelectCoworker={(coworker) => setSelectedCoworkerId(coworker.id)}
+          onSelectCoworker={(coworker) => openCoworker(coworker.id)}
         />
       ) : null}
 
@@ -147,7 +166,7 @@ export default function App() {
           settings={snapshot.settings}
           modelEndpoints={snapshot.modelEndpoints}
           integrations={snapshot.integrations}
-          onOpen={(coworker) => setSelectedCoworkerId(coworker.id)}
+          onOpen={(coworker) => openCoworker(coworker.id)}
           onChanged={refresh}
           onOpenModelSettings={openModelSettings}
         />
@@ -158,10 +177,7 @@ export default function App() {
           artifacts={snapshot.artifacts}
           coworkers={snapshot.coworkers}
           tasks={snapshot.tasks}
-          onOpenCoworker={(coworker) => {
-            setPage("coworkers");
-            setSelectedCoworkerId(coworker.id);
-          }}
+          onOpenCoworker={(coworker) => openCoworker(coworker.id)}
         />
       ) : null}
 
@@ -180,7 +196,12 @@ export default function App() {
         />
       ) : null}
       {page === "activity" ? (
-        <ActivityPage activity={snapshot.activity} coworkers={snapshot.coworkers} />
+        <ActivityPage
+          activity={snapshot.activity}
+          coworkers={snapshot.coworkers}
+          tasks={snapshot.tasks}
+          onOpenItem={openActivityTarget}
+        />
       ) : null}
       {page === "settings" ? (
         <SettingsPage

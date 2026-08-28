@@ -128,6 +128,8 @@ export interface Coworker {
   name: string;
   role: string;
   description: string | null;
+  /** User-chosen avatar from the bundled set; null falls back to an id hash. */
+  avatarIndex?: number | null;
   systemPrompt: string;
   modelProvider: ModelProvider;
   modelName: string;
@@ -146,6 +148,7 @@ export interface CreateCoworkerInput {
   name: string;
   role: string;
   description?: string;
+  avatarIndex?: number;
   systemPrompt: string;
   modelProvider: ModelProvider;
   modelName: string;
@@ -159,6 +162,7 @@ export interface UpdateCoworkerInput {
   name?: string;
   role?: string;
   description?: string | null;
+  avatarIndex?: number;
   systemPrompt?: string;
   modelProvider?: ModelProvider;
   modelName?: string;

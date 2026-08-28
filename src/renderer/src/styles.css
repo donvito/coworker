@@ -1359,14 +1359,38 @@ svg {
   gap: 2px;
 }
 
-.roster-arrow {
-  width: 15px;
-  height: 15px;
-  color: var(--line-strong);
+.roster-open-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--forest);
+  font-size: 11.5px;
+  font-weight: 650;
 }
 
-.coworker-roster.cards .roster-arrow {
-  margin-top: 5px;
+.roster-open-cta svg {
+  width: 13px;
+  height: 13px;
+  transition: transform 160ms ease;
+}
+
+.roster-card:hover .roster-open-cta svg {
+  transform: translateX(3px);
+}
+
+.coworker-roster.cards .roster-open-cta {
+  grid-column: 1 / -1;
+  justify-self: end;
+  align-self: end;
+}
+
+/* The compact directory keeps just the quiet chevron at the row's end. */
+.coworker-roster.list .roster-open-cta > span {
+  display: none;
+}
+
+.coworker-roster.list .roster-open-cta {
+  color: var(--line-strong);
 }
 
 .coworker-directory-empty {
@@ -6269,6 +6293,68 @@ select:focus {
   color: #2a6f97 !important;
   background: #e3f0f7 !important;
   border-color: #c4dcea !important;
+}
+
+.avatar-picker > span {
+  display: block;
+  margin-bottom: 7px;
+  font-size: 12px;
+  font-weight: 620;
+}
+
+.avatar-picker-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.avatar-option {
+  display: flex;
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  overflow: hidden;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid transparent;
+  border-radius: 50%;
+  opacity: 0.75;
+}
+
+.avatar-option img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.avatar-option:hover {
+  opacity: 1;
+}
+
+.avatar-option.selected {
+  opacity: 1;
+  border-color: var(--forest);
+  box-shadow: 0 0 0 3px var(--forest-soft);
+}
+
+/* Activity rows that resolve to a conversation render as buttons. */
+button.activity-entry,
+button.floor-activity-row {
+  width: 100%;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  background: transparent;
+  border-right: 0;
+  border-bottom: 0;
+  border-left: 0;
+  border-radius: 0;
+}
+
+button.activity-entry:hover,
+button.floor-activity-row:hover {
+  background: var(--forest-soft);
 }
 
 .settings-section h2.integration-divider {

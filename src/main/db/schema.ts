@@ -56,6 +56,7 @@ export const coworkers = sqliteTable(
     name: text("name").notNull(),
     role: text("role").notNull(),
     description: text("description"),
+    avatarIndex: integer("avatar_index"),
     systemPrompt: text("system_prompt").notNull(),
     modelProvider: text("model_provider").notNull(),
     modelName: text("model_name").notNull(),

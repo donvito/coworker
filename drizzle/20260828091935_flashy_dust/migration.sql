@@ -1,0 +1,1 @@
+ALTER TABLE `coworkers` ADD `avatar_index` integer;

@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import type { ActivityItem, Coworker } from "@shared/contracts";
+import type { ActivityItem, Coworker, Task } from "@shared/contracts";
 import { Icon } from "../components/Icon";
 import {
   CoworkerAvatar,
@@ -11,9 +11,13 @@ import {
 export function ActivityPage({
   activity,
   coworkers,
+  tasks = [],
+  onOpenItem,
 }: {
   activity: ActivityItem[];
   coworkers: Coworker[];
+  tasks?: Task[];
+  onOpenItem?: (item: ActivityItem) => void;
 }) {
   const [coworkerId, setCoworkerId] = useState("all");
   const filtered = useMemo(
@@ -67,8 +71,13 @@ export function ActivityPage({
                   const coworker = coworkers.find(
                     (candidate) => candidate.id === item.coworkerId,
                   );
-                  return (
-                    <article className="activity-entry" key={item.id}>
+                  const canOpen = Boolean(
+                    onOpenItem &&
+                      ((item.taskId && tasks.some((task) => task.id === item.taskId)) ||
+                        item.coworkerId),
+                  );
+                  const body = (
+                    <>
                       {coworker ? (
                         <CoworkerAvatar
                           className={`activity-symbol event-${eventFamily(item.type)}`}
@@ -86,6 +95,21 @@ export function ActivityPage({
                         </small>
                       </span>
                       <time dateTime={item.createdAt}>{formatRelativeTime(item.createdAt)}</time>
+                    </>
+                  );
+                  return canOpen ? (
+                    <button
+                      className="activity-entry activity-entry-link"
+                      key={item.id}
+                      onClick={() => onOpenItem?.(item)}
+                      title="Open the related conversation"
+                      type="button"
+                    >
+                      {body}
+                    </button>
+                  ) : (
+                    <article className="activity-entry" key={item.id}>
+                      {body}
                     </article>
                   );
                 })}
