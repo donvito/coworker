@@ -11,6 +11,7 @@ import type {
   DesktopEvent,
   Message,
   SendConversationMessageInput,
+  Task,
 } from "@shared/contracts";
 import type { CoworkerDatabase } from "@main/db/database";
 import type { CredentialStore } from "@main/security/credential-store";
@@ -28,6 +29,7 @@ import {
   parseTelegramConfig,
   telegramCredentialKey,
   telegramDownloadLimit,
+  telegramMessageLimit,
   type TelegramCallbackQuery,
   type TelegramIntegrationConfig,
   type TelegramMessage,
@@ -41,6 +43,7 @@ export interface TelegramBridgeHost {
   ): Promise<ConversationDispatchReceipt>;
   createConversation(input: CreateConversationInput): Conversation;
   decideApproval(input: ApprovalDecisionInput): Approval;
+  cancelTask(id: string): Promise<Task>;
   subscribe(listener: (event: DesktopEvent) => void): () => void;
   beginDataMutation(): () => void;
 }
@@ -58,6 +61,22 @@ export interface TelegramBridgeOptions {
 
 const maxBackoffMs = 60_000;
 const conflictPauseMs = 60_000;
+const draftUpdateIntervalMs = 1_000;
+const stoppedDraftFallbackMs = 5_000;
+
+interface TelegramRunDraft {
+  taskId: string;
+  draftId: number;
+  text: string;
+  lastPreview: string;
+  lastDraftAt: number;
+  target: { chatId: number; threadId: number | undefined };
+  updateTimer: NodeJS.Timeout | null;
+  stopTimer: NodeJS.Timeout | null;
+  stopRequested: boolean;
+  draftEnabled: boolean;
+  finalized: boolean;
+}
 
 function delay(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
@@ -110,8 +129,13 @@ export class TelegramBridgeService {
   /** conversationId → newest createdAt already mirrored (or seen at startup). */
   private readonly cursors = new Map<string, string>();
   private readonly mirroredMessageIds = new Set<string>();
-  /** runId → assistant text buffered from TEXT_MESSAGE_CONTENT deltas. */
-  private readonly runBuffers = new Map<string, { conversationId: string; text: string }>();
+  /** Active assistant message draft for each run. */
+  private readonly runBuffers = new Map<string, TelegramRunDraft>();
+  /** Telegram draft id → run id, used by native Stop updates. */
+  private readonly draftRuns = new Map<number, string>();
+  /** Runs stopped from Telegram; suppress their expected abort errors. */
+  private readonly stoppedRuns = new Set<string>();
+  private nextDraftId = Math.max(1, Math.floor(Date.now() % 0x7fffffff));
   private readonly refusedChats = new Set<number>();
   private readonly topicFailureLogged = new Set<string>();
   /**
@@ -165,7 +189,13 @@ export class TelegramBridgeService {
     await this.outbound.catch(() => undefined);
     this.api = null;
     this.config = null;
+    for (const buffer of this.runBuffers.values()) {
+      if (buffer.updateTimer) clearTimeout(buffer.updateTimer);
+      if (buffer.stopTimer) clearTimeout(buffer.stopTimer);
+    }
     this.runBuffers.clear();
+    this.draftRuns.clear();
+    this.stoppedRuns.clear();
     this.cursors.clear();
     this.mirroredMessageIds.clear();
     this.injectedMessageIds.clear();
@@ -289,6 +319,10 @@ export class TelegramBridgeService {
 
   private async handleUpdate(update: TelegramUpdate): Promise<void> {
     try {
+      if (update.stopped_message_generation) {
+        await this.handleStoppedGeneration(update.stopped_message_generation);
+        return;
+      }
       if (update.callback_query) {
         await this.handleCallback(update.callback_query);
         return;
@@ -406,6 +440,50 @@ export class TelegramBridgeService {
       }
     } catch (error) {
       this.options.onError?.("telegram.update", error);
+    }
+  }
+
+  private async handleStoppedGeneration(
+    stopped: NonNullable<TelegramUpdate["stopped_message_generation"]>,
+  ): Promise<void> {
+    const config = this.config;
+    if (!config || config.chatId === null || stopped.chat.id !== config.chatId) return;
+    const runId = this.draftRuns.get(stopped.draft_id);
+    if (!runId) return;
+    const buffer = this.runBuffers.get(runId);
+    if (!buffer || buffer.finalized || buffer.stopRequested) return;
+    if (buffer.target.threadId !== stopped.message_thread_id) return;
+
+    buffer.stopRequested = true;
+    this.stoppedRuns.add(runId);
+    if (buffer.updateTimer) {
+      clearTimeout(buffer.updateTimer);
+      buffer.updateTimer = null;
+    }
+    try {
+      await this.options.host.cancelTask(buffer.taskId);
+      // The runtime normally closes the partial assistant message immediately.
+      // Keep a fallback so a provider that fails to emit TEXT_MESSAGE_END can
+      // never strand the ephemeral draft.
+      if (this.runBuffers.get(runId) !== buffer || buffer.finalized) return;
+      buffer.stopTimer = setTimeout(() => {
+        buffer.stopTimer = null;
+        this.finalizeRunDraft(runId, true);
+      }, stoppedDraftFallbackMs);
+      buffer.stopTimer.unref?.();
+    } catch (error) {
+      buffer.stopRequested = false;
+      this.stoppedRuns.delete(runId);
+      this.options.onError?.("telegram.stop", error);
+      this.enqueueOutbound(() =>
+        this.sendPlain(
+          buffer.target.chatId,
+          `I couldn't stop ${this.linkedCoworkerName()}: ${
+            error instanceof Error ? error.message : "unknown error"
+          }`,
+          buffer.target.threadId,
+        ),
+      );
     }
   }
 
@@ -750,38 +828,34 @@ export class TelegramBridgeService {
     const taskId = event.taskId;
     const type = event.event.type;
     if (type === EventType.RUN_STARTED || type === EventType.TEXT_MESSAGE_START) {
-      this.enqueueOutbound(async () => {
-        const target = this.outboundTarget(conversationId, taskId);
-        if (!target) return;
-        await this.api?.sendChatAction({
-          chatId: target.chatId,
-          action: "typing",
-          messageThreadId: target.threadId,
-        });
-      });
+      if (!this.runBuffers.has(event.runId)) {
+        this.startRunDraft(event.runId, conversationId, taskId);
+      }
       return;
     }
     if (type === EventType.TEXT_MESSAGE_CONTENT) {
       const delta = (event.event as { delta?: string }).delta ?? "";
-      const buffer = this.runBuffers.get(event.runId) ?? { conversationId, text: "" };
+      let buffer = this.runBuffers.get(event.runId);
+      if (!buffer) {
+        this.startRunDraft(event.runId, conversationId, taskId);
+        buffer = this.runBuffers.get(event.runId);
+      }
+      if (!buffer || buffer.finalized) return;
       buffer.text += delta;
-      this.runBuffers.set(event.runId, buffer);
+      if (!buffer.stopRequested) this.scheduleDraftUpdate(event.runId, buffer);
       return;
     }
     if (type === EventType.TEXT_MESSAGE_END) {
-      const buffer = this.runBuffers.get(event.runId);
-      this.runBuffers.delete(event.runId);
-      if (!buffer?.text.trim()) return;
-      const text = buffer.text;
-      this.enqueueOutbound(async () => {
-        const target = this.outboundTarget(conversationId, taskId);
-        if (!target) return;
-        await this.sendMarkdown(target.chatId, text, target.threadId);
-      });
+      this.finalizeRunDraft(event.runId, this.stoppedRuns.has(event.runId));
       return;
     }
     if (type === EventType.RUN_ERROR) {
-      this.runBuffers.delete(event.runId);
+      const stopped = this.stoppedRuns.delete(event.runId);
+      if (stopped) {
+        this.finalizeRunDraft(event.runId, true);
+        return;
+      }
+      this.discardRunDraft(event.runId);
       const message = (event.event as { message?: string }).message;
       this.enqueueOutbound(async () => {
         const target = this.outboundTarget(conversationId, taskId);
@@ -792,6 +866,125 @@ export class TelegramBridgeService {
           target.threadId,
         );
       });
+      return;
+    }
+    if (type === EventType.RUN_FINISHED) {
+      this.stoppedRuns.delete(event.runId);
+      this.discardRunDraft(event.runId);
+    }
+  }
+
+  private startRunDraft(runId: string, conversationId: string, taskId: string): void {
+    const target = this.outboundTarget(conversationId, taskId);
+    if (!target) return;
+    const draftId = this.allocateDraftId();
+    const buffer: TelegramRunDraft = {
+      taskId,
+      draftId,
+      text: "",
+      lastPreview: "",
+      lastDraftAt: Date.now(),
+      target,
+      updateTimer: null,
+      stopTimer: null,
+      stopRequested: false,
+      draftEnabled: true,
+      finalized: false,
+    };
+    this.runBuffers.set(runId, buffer);
+    this.draftRuns.set(draftId, runId);
+    this.enqueueOutbound(() => this.pushDraft(runId, buffer, ""));
+  }
+
+  private allocateDraftId(): number {
+    let candidate = this.nextDraftId;
+    while (this.draftRuns.has(candidate)) {
+      candidate = candidate >= 0x7ffffffe ? 1 : candidate + 1;
+    }
+    this.nextDraftId = candidate >= 0x7ffffffe ? 1 : candidate + 1;
+    return candidate;
+  }
+
+  private scheduleDraftUpdate(runId: string, buffer: TelegramRunDraft): void {
+    if (!buffer.draftEnabled || buffer.updateTimer || buffer.text === buffer.lastPreview) return;
+    const wait = Math.max(0, draftUpdateIntervalMs - (Date.now() - buffer.lastDraftAt));
+    buffer.updateTimer = setTimeout(() => {
+      buffer.updateTimer = null;
+      const current = this.runBuffers.get(runId);
+      if (current !== buffer || buffer.finalized || buffer.stopRequested) return;
+      const preview = buffer.text.slice(0, telegramMessageLimit);
+      if (preview === buffer.lastPreview) return;
+      this.enqueueOutbound(() => this.pushDraft(runId, buffer, preview));
+    }, wait);
+    buffer.updateTimer.unref?.();
+  }
+
+  private async pushDraft(
+    runId: string,
+    buffer: TelegramRunDraft,
+    preview: string,
+  ): Promise<void> {
+    if (!this.api || buffer.finalized || !buffer.draftEnabled) return;
+    try {
+      await this.api.sendMessageDraft({
+        chatId: buffer.target.chatId,
+        messageThreadId: buffer.target.threadId,
+        draftId: buffer.draftId,
+        text: preview,
+        canStop: true,
+        keepOnStop: true,
+      });
+      buffer.lastPreview = preview;
+      buffer.lastDraftAt = Date.now();
+      if (buffer.text.slice(0, telegramMessageLimit) !== buffer.lastPreview) {
+        this.scheduleDraftUpdate(runId, buffer);
+      }
+    } catch (error) {
+      if (
+        error instanceof TelegramApiError &&
+        error.errorCode === 429 &&
+        error.retryAfterSeconds
+      ) {
+        buffer.lastDraftAt = Date.now() + error.retryAfterSeconds * 1000 - draftUpdateIntervalMs;
+        this.scheduleDraftUpdate(runId, buffer);
+        return;
+      }
+      buffer.draftEnabled = false;
+      this.options.onError?.("telegram.draft", error);
+      try {
+        await this.api.sendChatAction({
+          chatId: buffer.target.chatId,
+          action: "typing",
+          messageThreadId: buffer.target.threadId,
+        });
+      } catch (typingError) {
+        this.options.onError?.("telegram.draft", typingError);
+      }
+    }
+  }
+
+  private finalizeRunDraft(runId: string, stopped: boolean): void {
+    const buffer = this.runBuffers.get(runId);
+    if (!buffer || buffer.finalized) return;
+    buffer.finalized = true;
+    this.discardRunDraft(runId);
+    const text = buffer.text.trim() ? buffer.text : stopped ? "Stopped." : "";
+    if (!text) return;
+    this.enqueueOutbound(() =>
+      stopped && !buffer.text.trim()
+        ? this.sendPlain(buffer.target.chatId, text, buffer.target.threadId)
+        : this.sendMarkdown(buffer.target.chatId, text, buffer.target.threadId),
+    );
+  }
+
+  private discardRunDraft(runId: string): void {
+    const buffer = this.runBuffers.get(runId);
+    if (!buffer) return;
+    if (buffer.updateTimer) clearTimeout(buffer.updateTimer);
+    if (buffer.stopTimer) clearTimeout(buffer.stopTimer);
+    this.runBuffers.delete(runId);
+    if (this.draftRuns.get(buffer.draftId) === runId) {
+      this.draftRuns.delete(buffer.draftId);
     }
   }
 

@@ -48,6 +48,7 @@ interface ActiveRun {
   assistantMessageId: string | null;
   assistantTextStarted: boolean;
   reasoningMessageId: string | null;
+  abortRequested: boolean;
   approval: {
     approvalId: string;
     summary: string;
@@ -935,6 +936,7 @@ async function runTask(message: Extract<MainToWorkerMessage, { type: "run" }>): 
     assistantMessageId: null,
     assistantTextStarted: false,
     reasoningMessageId: null,
+    abortRequested: false,
     approval: null,
   };
   try {
@@ -1018,10 +1020,11 @@ async function runTask(message: Extract<MainToWorkerMessage, { type: "run" }>): 
     });
   } catch (error) {
     const messageText = error instanceof Error ? error.message : String(error);
+    const aborted = activeRun?.abortRequested === true;
     emit({
       type: EventType.RUN_ERROR,
-      message: messageText,
-      code: "PI_RUNTIME_ERROR",
+      message: aborted ? "Stopped" : messageText,
+      code: aborted ? "RUN_ABORTED" : "PI_RUNTIME_ERROR",
       timestamp: Date.now(),
     });
     post({
@@ -1055,7 +1058,10 @@ parentPort.on("message", (message: MainToWorkerMessage) => {
       return;
     }
     if (message.type === "abort") {
-      if (activeRun?.runId === message.runId) agent?.abort();
+      if (activeRun?.runId === message.runId) {
+        activeRun.abortRequested = true;
+        agent?.abort();
+      }
       return;
     }
     if (message.type === "shutdown") {

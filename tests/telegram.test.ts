@@ -119,6 +119,10 @@ function fakeTelegram(options: { threadsEnabled?: boolean } = {}) {
         calls.push({ method, body });
         return respond(true);
       }
+      case "sendMessageDraft": {
+        calls.push({ method, body });
+        return respond(true);
+      }
       case "sendPhoto":
       case "sendDocument": {
         calls.push({ method, body });
@@ -194,6 +198,18 @@ function fakeTelegram(options: { threadsEnabled?: boolean } = {}) {
             date: Math.floor(Date.now() / 1000),
           },
           data: input.data,
+        },
+      });
+      return updateId;
+    },
+    pushStoppedGeneration(input: { chatId: number; draftId: number; threadId?: number }): number {
+      const updateId = (updateSeq += 1);
+      updates.push({
+        update_id: updateId,
+        stopped_message_generation: {
+          chat: { id: input.chatId, type: "private" },
+          message_thread_id: input.threadId,
+          draft_id: input.draftId,
         },
       });
       return updateId;
@@ -433,6 +449,18 @@ describe("telegram bridge", () => {
         delta: "**Done!** See `report.txt`",
       } as never,
     });
+    await waitFor(
+      () =>
+        context.fake
+          .sent("sendMessageDraft")
+          .some(
+            (body) =>
+              body.text === "**Done!** See `report.txt`" &&
+              body.can_stop === true &&
+              body.keep_on_stop === true,
+          ),
+      "the streamed Telegram draft",
+    );
     context.emit({
       type: "agent.event",
       ...base,
@@ -455,7 +483,84 @@ describe("telegram bridge", () => {
         .sent("sendMessage")
         .filter((body) => String(body.text).includes("do not echo")),
     ).toHaveLength(0);
-    expect(context.fake.sent("sendChatAction").length).toBeGreaterThan(0);
+    expect(context.fake.sent("sendMessageDraft")[0]?.text).toBe("");
+  });
+
+  it("cancels a run from Telegram Stop and finalizes its partial response once", async () => {
+    const context = await setup();
+    await connectAndPair(context);
+    const conversationId = `coworker:${context.ava.id}`;
+    const cancel = vi
+      .spyOn(context.service, "cancelTask")
+      .mockResolvedValue({} as Awaited<ReturnType<DesktopAppService["cancelTask"]>>);
+    const base = {
+      coworkerId: context.ava.id,
+      conversationId,
+      runId: "run-stop",
+      taskId: "task-stop",
+    };
+    context.emit({
+      type: "agent.event",
+      ...base,
+      event: { type: EventType.RUN_STARTED } as never,
+    });
+    context.emit({
+      type: "agent.event",
+      ...base,
+      event: {
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        messageId: "stop-message",
+        delta: "Partial **answer**",
+      } as never,
+    });
+    await waitFor(
+      () =>
+        context.fake
+          .sent("sendMessageDraft")
+          .some((body) => body.text === "Partial **answer**"),
+      "the partial draft",
+    );
+    const draft = context.fake
+      .sent("sendMessageDraft")
+      .find((body) => body.text === "Partial **answer**")!;
+    context.fake.pushStoppedGeneration({
+      chatId: 777,
+      draftId: Number(draft.draft_id),
+    });
+    await waitFor(() => cancel.mock.calls.length === 1, "the Telegram stop cancellation");
+    expect(cancel).toHaveBeenCalledWith("task-stop");
+
+    context.emit({
+      type: "agent.event",
+      ...base,
+      event: { type: EventType.TEXT_MESSAGE_END, messageId: "stop-message" } as never,
+    });
+    context.emit({
+      type: "agent.event",
+      ...base,
+      event: {
+        type: EventType.RUN_ERROR,
+        message: "Stopped",
+        code: "RUN_ABORTED",
+      } as never,
+    });
+    await waitFor(
+      () =>
+        context.fake
+          .sent("sendMessage")
+          .some((body) => body.text === "Partial <b>answer</b>"),
+      "the finalized partial response",
+    );
+    expect(
+      context.fake
+        .sent("sendMessage")
+        .filter((body) => String(body.text).includes("Partial")),
+    ).toHaveLength(1);
+    expect(
+      context.fake
+        .sent("sendMessage")
+        .some((body) => String(body.text).includes("hit an error")),
+    ).toBe(false);
   });
 
   it("imports inbound photos as conversation images for vision models", async () => {

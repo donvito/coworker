@@ -1,8 +1,10 @@
+import { EventType } from "@ag-ui/core";
 import { describe, expect, it } from "vitest";
 import {
   filterConversations,
   messageDayKey,
   messageDayLabel,
+  updateLiveResponses,
 } from "@renderer/lib/conversation-utils";
 import type { Conversation, Message, Task } from "@shared/contracts";
 
@@ -122,5 +124,53 @@ describe("conversation search and date grouping", () => {
     expect(messageDayLabel(yesterday, now)).toBe("Yesterday");
     expect(messageDayLabel(earlier, now)).toMatch(/Aug/);
     expect(messageDayLabel(earlier, now)).toMatch(/20/);
+  });
+});
+
+describe("live conversation responses", () => {
+  it("accumulates streamed deltas independently and records failures", () => {
+    let state = updateLiveResponses({}, {
+      runId: "background-run",
+      coworkerId: "ava",
+      taskId: "task-background",
+      event: { type: EventType.RUN_STARTED } as never,
+    });
+    state = updateLiveResponses(state, {
+      runId: "background-run",
+      coworkerId: "ava",
+      taskId: "task-background",
+      event: {
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        messageId: "message-background",
+        delta: "Live ",
+      } as never,
+    });
+    state = updateLiveResponses(state, {
+      runId: "background-run",
+      coworkerId: "ava",
+      taskId: "task-background",
+      event: {
+        type: EventType.TEXT_MESSAGE_CONTENT,
+        messageId: "message-background",
+        delta: "reply",
+      } as never,
+    });
+    expect(state["background-run"]).toMatchObject({
+      content: "Live reply",
+      status: "running",
+      taskId: "task-background",
+    });
+
+    state = updateLiveResponses(state, {
+      runId: "other-run",
+      coworkerId: "ava",
+      taskId: "task-other",
+      event: { type: EventType.RUN_ERROR, message: "Provider unavailable" } as never,
+    });
+    expect(state["background-run"]?.content).toBe("Live reply");
+    expect(state["other-run"]).toMatchObject({
+      status: "failed",
+      error: "Provider unavailable",
+    });
   });
 });

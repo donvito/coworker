@@ -68,6 +68,13 @@ export interface TelegramUpdate {
   update_id: number;
   message?: TelegramMessage;
   callback_query?: TelegramCallbackQuery;
+  stopped_message_generation?: TelegramMessageGenerationStopped;
+}
+
+export interface TelegramMessageGenerationStopped {
+  chat: TelegramChat;
+  message_thread_id?: number;
+  draft_id: number;
 }
 
 export interface TelegramInlineKeyboard {
@@ -260,7 +267,7 @@ export class TelegramBotApi {
       {
         offset: input.offset,
         timeout: timeoutSeconds,
-        allowed_updates: ["message", "callback_query"],
+        allowed_updates: ["message", "callback_query", "stopped_message_generation"],
       },
       // The HTTP timeout must outlast the long-poll window.
       { timeoutMs: (timeoutSeconds + 15) * 1000, signal: input.signal },
@@ -281,6 +288,25 @@ export class TelegramBotApi {
       message_thread_id: input.messageThreadId,
       reply_markup: input.replyMarkup,
       link_preview_options: { is_disabled: true },
+    });
+  }
+
+  /** Streams an ephemeral partial reply in a private chat. */
+  async sendMessageDraft(input: {
+    chatId: number;
+    draftId: number;
+    text?: string;
+    messageThreadId?: number;
+    canStop?: boolean;
+    keepOnStop?: boolean;
+  }): Promise<void> {
+    await this.call<boolean>("sendMessageDraft", {
+      chat_id: input.chatId,
+      message_thread_id: input.messageThreadId,
+      draft_id: input.draftId,
+      text: input.text ?? "",
+      can_stop: input.canStop,
+      keep_on_stop: input.keepOnStop,
     });
   }
 

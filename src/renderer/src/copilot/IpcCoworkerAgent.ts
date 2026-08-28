@@ -43,6 +43,11 @@ export class IpcCoworkerAgent extends AbstractAgent {
     return this.activeRunId !== null;
   }
 
+  /** Whether an AG-UI run is already being rendered by this agent instance. */
+  ownsRun(runId: string): boolean {
+    return this.activeRunId === runId;
+  }
+
   constructor(
     readonly coworkerId: string,
     config: AgentConfig = {},

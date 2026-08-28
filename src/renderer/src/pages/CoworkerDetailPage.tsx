@@ -45,8 +45,10 @@ import { QuickModelSwitcher } from "../components/QuickModelSwitcher";
 import { Icon } from "../components/Icon";
 import {
   filterConversations,
+  type LiveResponse,
   messageDayKey,
   messageDayLabel,
+  updateLiveResponses,
 } from "../lib/conversation-utils";
 import {
   CopyTextButton,
@@ -715,14 +717,6 @@ export function CoworkerDetailPage({
   );
 }
 
-interface LiveChannelResponse {
-  coworkerId: string;
-  taskId: string;
-  content: string;
-  status: "queued" | "running" | "failed";
-  error?: string;
-}
-
 function GroupConversationSurface({
   conversation,
   conversations,
@@ -766,7 +760,7 @@ function GroupConversationSurface({
   const [channelMessages, setChannelMessages] = useState(messages);
   const [highlightedSuggestion, setHighlightedSuggestion] = useState(0);
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
-  const [liveResponses, setLiveResponses] = useState<Record<string, LiveChannelResponse>>({});
+  const [liveResponses, setLiveResponses] = useState<Record<string, LiveResponse>>({});
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -805,44 +799,6 @@ function GroupConversationSurface({
     return window.coworker.events.subscribe((event) => {
       if (event.type !== "agent.event" || event.conversationId !== conversation.id) return;
       setLiveResponses((current) => {
-        const existing = current[event.runId] ?? {
-          coworkerId: event.coworkerId,
-          taskId: event.taskId,
-          content: "",
-          status: "queued" as const,
-        };
-        if (
-          event.event.type === EventType.TEXT_MESSAGE_CONTENT &&
-          "delta" in event.event
-        ) {
-          return {
-            ...current,
-            [event.runId]: {
-              ...existing,
-              content: existing.content + String(event.event.delta),
-              status: "running",
-            },
-          };
-        }
-        if (event.event.type === EventType.RUN_STARTED) {
-          return {
-            ...current,
-            [event.runId]: { ...existing, status: "running" },
-          };
-        }
-        if (event.event.type === EventType.RUN_ERROR) {
-          return {
-            ...current,
-            [event.runId]: {
-              ...existing,
-              status: "failed",
-              error:
-                "message" in event.event
-                  ? String(event.event.message)
-                  : "The coworker could not finish.",
-            },
-          };
-        }
         if (event.event.type === EventType.RUN_FINISHED) {
           void Promise.all([
             onChanged(),
@@ -856,7 +812,7 @@ function GroupConversationSurface({
             });
           });
         }
-        return current;
+        return updateLiveResponses(current, event);
       });
     });
   }, [conversation.id, onChanged]);
@@ -1701,6 +1657,9 @@ function CoworkerSurface({
   const [pendingArchive, setPendingArchive] = useState<Conversation | null>(null);
   const [approvalInFlight, setApprovalInFlight] = useState<string | null>(null);
   const [approvalError, setApprovalError] = useState<string | null>(null);
+  const [externalLiveResponses, setExternalLiveResponses] = useState<
+    Record<string, LiveResponse>
+  >({});
   const [rightRailTab, setRightRailTab] = useState<"files" | "approvals">(
     pending.length > 0 ? "approvals" : "files",
   );
@@ -1709,6 +1668,7 @@ function CoworkerSurface({
   const imageInputRef = useRef<HTMLInputElement>(null);
   const imageDragDepth = useRef(0);
   const liveMessageTimes = useRef(new Map<string, string>());
+  const externalRunIds = useRef(new Set<string>());
   const messageTimes = useMemo(
     () => new Map(storedMessages.map((message) => [message.id, message.createdAt])),
     [storedMessages],
@@ -1770,17 +1730,73 @@ function CoworkerSurface({
     }
   }
 
-
   useEffect(() => {
     liveMessageTimes.current.clear();
+    externalRunIds.current.clear();
+    setExternalLiveResponses({});
   }, [conversationId]);
+
+  useEffect(() => {
+    const ipcAgent = agent instanceof IpcCoworkerAgent ? agent : null;
+    return window.coworker.events.subscribe((event) => {
+      if (
+        event.type !== "agent.event" ||
+        event.coworkerId !== coworker.id ||
+        event.conversationId !== conversationId ||
+        ipcAgent?.ownsRun(event.runId)
+      ) {
+        return;
+      }
+      const type = event.event.type;
+      if (type === EventType.RUN_STARTED || type === EventType.TEXT_MESSAGE_CONTENT) {
+        externalRunIds.current.add(event.runId);
+        setExternalLiveResponses((current) => updateLiveResponses(current, event));
+        return;
+      }
+      if (type !== EventType.RUN_FINISHED && type !== EventType.RUN_ERROR) return;
+      if (!externalRunIds.current.has(event.runId)) return;
+      setExternalLiveResponses((current) => {
+        if (!current[event.runId]) return current;
+        if (
+          type === EventType.RUN_ERROR &&
+          (event.event as { code?: string }).code !== "RUN_ABORTED"
+        ) {
+          return updateLiveResponses(current, event);
+        }
+        return current;
+      });
+      void Promise.all([
+        onChanged(),
+        window.coworker.messages.listConversation(conversationId),
+      ])
+        .then(([, history]) => {
+          agent.setMessages(
+            history
+              .filter((message) => message.role === "user" || message.role === "assistant")
+              .map((message) => ({
+                id: message.id,
+                role: message.role as "user" | "assistant",
+                content: message.content,
+              })),
+          );
+        })
+        .finally(() => {
+          externalRunIds.current.delete(event.runId);
+          setExternalLiveResponses((current) => {
+            const next = { ...current };
+            delete next[event.runId];
+            return next;
+          });
+        });
+    });
+  }, [agent, conversationId, coworker.id, onChanged]);
 
   useEffect(() => {
     transcriptRef.current?.scrollTo({
       top: transcriptRef.current.scrollHeight,
       behavior: "smooth",
     });
-  }, [agent.messages.length, agent.isRunning]);
+  }, [agent.messages.length, agent.isRunning, externalLiveResponses]);
 
   useEffect(() => {
     if (!historyOpen) return;
@@ -2504,7 +2520,7 @@ function CoworkerSurface({
         </header>
 
         <div className="conversation-thread">
-          {agent.messages.length === 0 ? (
+          {agent.messages.length === 0 && Object.keys(externalLiveResponses).length === 0 ? (
             <div className="conversation-welcome">
               <span className="welcome-glyph">
                 <Icon name="spark" />
@@ -2664,6 +2680,32 @@ function CoworkerSurface({
                   </Fragment>
                 );
               })}
+              {Object.entries(externalLiveResponses).map(([runId, response]) => (
+                <div
+                  className="workroom-turn workroom-turn-assistant"
+                  data-message-role="assistant"
+                  key={runId}
+                >
+                  <div className="workroom-bubble">
+                    {response.content ? (
+                      <span className="workroom-message-text">
+                        <ChatMarkdown artifacts={artifacts}>{response.content}</ChatMarkdown>
+                      </span>
+                    ) : response.status === "failed" ? (
+                      <span>{response.error}</span>
+                    ) : (
+                      <span className="workroom-running">
+                        <span />
+                        <span />
+                        <span />
+                      </span>
+                    )}
+                  </div>
+                  <small className="workroom-message-meta">
+                    {coworker.name} · live
+                  </small>
+                </div>
+              ))}
               {latestTask?.status === "FAILED" && latestTask.error ? (
                 <div className="workroom-run-error" role="alert">
                   <Icon name="shield" />
