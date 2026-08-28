@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import type { Worker } from "node:worker_threads";
@@ -11,17 +11,20 @@ import type {
   ApprovalDecisionInput,
   ApprovalStatus,
   ConfigureModelResult,
+  Conversation,
   CreateConversationInput,
   CreateCoworkerInput,
   CreateScheduleInput,
   CreateTaskInput,
   DesktopEvent,
   DiscussionSession,
+  EmailIntegrationMode,
   Integration,
   ModelProvider,
   RemoteModelProvider,
   SendConversationMessageInput,
   Task,
+  TelegramIntegrationStatus,
   UpdateConversationInput,
   WebSearchProvider,
   UpdateCoworkerInput,
@@ -69,6 +72,14 @@ import {
 } from "@main/integrations/skills";
 import { createDataBackup } from "@main/integrations/archives";
 import { webSearchCredentialKey } from "@main/integrations/web-search";
+import {
+  TelegramBotApi,
+  parseTelegramConfig,
+  telegramCredentialKey,
+  telegramPairingLink,
+  type TelegramIntegrationConfig,
+} from "@main/integrations/telegram";
+import { TelegramBridgeService } from "@main/integrations/telegram-bridge";
 import { DISCUSSION_PASS_MARKER, isDiscussionPass } from "@shared/discussion";
 
 export interface DesktopAppServiceOptions {
@@ -79,6 +90,8 @@ export interface DesktopAppServiceOptions {
   credentials: CredentialStore;
   workerFactory?: () => Worker;
   onSettingsChanged?: (settings: AppSettings) => void | Promise<void>;
+  /** Test hooks for the Telegram bridge (fake fetch, short poll windows). */
+  telegram?: { fetchImpl?: typeof fetch; pollTimeoutSeconds?: number };
 }
 
 function safeDirectoryName(name: string): string {
@@ -112,6 +125,7 @@ export class DesktopAppService {
   readonly database: CoworkerDatabase;
   readonly runtime: CoworkerRuntimeManager;
   readonly scheduler: SchedulerService;
+  readonly telegram: TelegramBridgeService;
   readonly tools: ToolGateway;
   readonly providerErrors: ProviderErrorLogger;
   private readonly listeners = new Set<(event: DesktopEvent) => void>();
@@ -132,7 +146,7 @@ export class DesktopAppService {
       {
         createSchedule: (input) => this.createSchedule(input),
       },
-      { dataPath: options.dataPath },
+      { dataPath: options.dataPath, telegramFetch: options.telegram?.fetchImpl },
     );
     this.runtime = new CoworkerRuntimeManager({
       database: this.database,
@@ -151,6 +165,15 @@ export class DesktopAppService {
       this.emit({ type: "entity.changed", entity: "activity" });
       this.runtime.enqueueTask(task.coworkerId);
     }, (error) => options.applicationLogger?.error("scheduler", error));
+    this.telegram = new TelegramBridgeService({
+      database: this.database,
+      credentials: options.credentials,
+      host: this,
+      emit: (event) => this.emit(event),
+      onError: (scope, error) => void options.applicationLogger?.error(scope, error),
+      fetchImpl: options.telegram?.fetchImpl,
+      pollTimeoutSeconds: options.telegram?.pollTimeoutSeconds,
+    });
   }
 
   async initialize(): Promise<void> {
@@ -179,6 +202,7 @@ export class DesktopAppService {
     this.enableScheduleCreation();
     await this.options.onSettingsChanged?.(this.database.getSettings());
     await this.scheduler.start();
+    await this.telegram.start();
     await this.recoverDiscussions();
     for (const coworker of this.database.listCoworkers()) {
       if (this.database.listTasks(coworker.id).some((task) => task.status === "QUEUED")) {
@@ -190,6 +214,7 @@ export class DesktopAppService {
 
   async shutdown(): Promise<void> {
     this.scheduler.stop();
+    await this.telegram.stop();
     await this.runtime.stopAll();
     this.database.close();
     this.initialized = false;
@@ -324,8 +349,65 @@ export class DesktopAppService {
     return conversation;
   }
 
+  /** The default direct conversation is each coworker's permanent anchor. */
+  private isDefaultConversation(conversation: { id: string; coworkerId: string | null }): boolean {
+    return conversation.coworkerId !== null && conversation.id === `coworker:${conversation.coworkerId}`;
+  }
+
+  archiveConversation(id: string): Conversation {
+    const conversation = this.database.getConversation(id);
+    if (this.isDefaultConversation(conversation)) {
+      throw new Error("A coworker's main conversation can't be archived");
+    }
+    const archived = this.database.setConversationArchived(id, true);
+    this.emit({ type: "entity.changed", entity: "conversations", id });
+    this.emit({ type: "entity.changed", entity: "activity" });
+    return archived;
+  }
+
+  restoreConversation(id: string): Conversation {
+    const restored = this.database.setConversationArchived(id, false);
+    this.emit({ type: "entity.changed", entity: "conversations", id });
+    this.emit({ type: "entity.changed", entity: "activity" });
+    return restored;
+  }
+
+  removeConversation(id: string): void {
+    const conversation = this.database.getConversation(id);
+    if (this.isDefaultConversation(conversation)) {
+      throw new Error("A coworker's main conversation can't be deleted");
+    }
+    if (conversation.kind !== "group" && !conversation.archivedAt) {
+      throw new Error("Archive this conversation before deleting it permanently");
+    }
+    const activeTask = this.database
+      .listTasks()
+      .find(
+        (task) =>
+          task.threadId === id &&
+          ["QUEUED", "RUNNING", "WAITING_FOR_APPROVAL"].includes(task.status),
+      );
+    if (activeTask) {
+      const owner = this.database.getCoworker(activeTask.coworkerId);
+      throw new Error(
+        `Wait for or cancel ${owner.name}'s work in this conversation before deleting it`,
+      );
+    }
+    this.database.deleteConversation(id);
+    this.emit({ type: "entity.changed", entity: "conversations", id });
+    this.emit({ type: "entity.changed", entity: "discussions" });
+    this.emit({ type: "entity.changed", entity: "tasks" });
+    this.emit({ type: "entity.changed", entity: "activity" });
+  }
+
   async sendConversationMessage(input: SendConversationMessageInput) {
-    const conversation = this.database.getConversation(input.conversationId);
+    let conversation = this.database.getConversation(input.conversationId);
+    if (conversation.archivedAt) {
+      // New activity brings an archived conversation back, so messages
+      // arriving from Telegram or a schedule can never disappear unseen.
+      conversation = this.database.setConversationArchived(conversation.id, false);
+      this.emit({ type: "entity.changed", entity: "conversations", id: conversation.id });
+    }
     const existingMessage = this.database.findMessage(input.clientMessageId);
     if (existingMessage) {
       if (existingMessage.conversationId !== input.conversationId) {
@@ -953,7 +1035,7 @@ export class DesktopAppService {
 
   async configureEmail(input: {
     name: string;
-    mode: Integration["mode"];
+    mode: EmailIntegrationMode;
     apiKey?: string;
     fromAddress?: string;
   }): Promise<Integration> {
@@ -972,6 +1054,159 @@ export class DesktopAppService {
     });
     this.emit({ type: "entity.changed", entity: "integrations", id: integration.id });
     return integration;
+  }
+
+  async configureTelegram(input: {
+    botToken?: string;
+    coworkerId: string;
+  }): Promise<TelegramIntegrationStatus> {
+    const coworker = this.database.getCoworker(input.coworkerId);
+    const submittedToken = input.botToken?.trim();
+    const storedToken = submittedToken
+      ? null
+      : await readableCredential(this.options.credentials, telegramCredentialKey);
+    const token = submittedToken || storedToken;
+    if (!token) throw new Error("A Telegram bot token from @BotFather is required");
+
+    const api = new TelegramBotApi(token, this.options.telegram?.fetchImpl ?? fetch);
+    let me: Awaited<ReturnType<TelegramBotApi["getMe"]>>;
+    try {
+      me = await api.getMe();
+    } catch (error) {
+      throw new Error(
+        `Telegram did not accept that bot token: ${error instanceof Error ? error.message : "unknown error"}`,
+      );
+    }
+    if (!me.username) throw new Error("Telegram did not return the bot's username");
+
+    await this.options.credentials.set(telegramCredentialKey, token);
+    const existing = this.database.getTelegramIntegration();
+    const previous = existing ? parseTelegramConfig(existing) : null;
+    const sameBot = previous?.botUsername === me.username;
+    const sameCoworker = previous?.coworkerId === coworker.id;
+    const config: TelegramIntegrationConfig = {
+      botUsername: me.username,
+      coworkerId: coworker.id,
+      conversationId: `coworker:${coworker.id}`,
+      chatId: sameBot ? previous?.chatId ?? null : null,
+      pairingCode:
+        (sameBot && previous?.pairingCode) || randomBytes(9).toString("base64url"),
+      topics: sameBot && sameCoworker ? previous?.topics ?? {} : {},
+      lastThreads: sameBot && sameCoworker ? previous?.lastThreads ?? {} : {},
+      lastUpdateId: sameBot ? previous?.lastUpdateId ?? null : null,
+      threadsEnabled: me.has_topics_enabled === true,
+    };
+    const integration = this.database.upsertTelegramIntegration({
+      name: `@${me.username}`,
+      credentialKey: telegramCredentialKey,
+      status: "connected",
+      config: { ...config },
+    });
+    this.enableTelegramTool(coworker.id);
+
+    // Moving the bot between coworkers keeps the paired chat; hand off
+    // loudly so neither side is left guessing where messages go now.
+    const previousCoworkerId = previous?.coworkerId ?? null;
+    if (sameBot && previousCoworkerId && previousCoworkerId !== coworker.id) {
+      this.disableTelegramTool(previousCoworkerId);
+      const previousName = this.coworkerNameOrNull(previousCoworkerId);
+      this.database.addActivity({
+        type: "telegram.relinked",
+        summary: `Telegram bot @${me.username} moved from ${previousName ?? "another coworker"} to ${coworker.name}`,
+      });
+      this.emit({ type: "entity.changed", entity: "activity" });
+      if (config.chatId !== null) {
+        try {
+          await api.sendMessage({
+            chatId: config.chatId,
+            text: `This chat now goes to ${coworker.name}${previousName ? ` (previously ${previousName})` : ""}. No re-pairing needed — just send a message.`,
+          });
+        } catch (error) {
+          void this.options.applicationLogger?.error("telegram.relink-notice", error);
+        }
+      }
+    }
+
+    this.emit({ type: "entity.changed", entity: "integrations", id: integration.id });
+    await this.telegram.restart();
+    return this.telegramStatus();
+  }
+
+  telegramStatus(): TelegramIntegrationStatus {
+    const integration = this.database.getTelegramIntegration();
+    if (!integration || integration.status !== "connected") {
+      return { integration, pairingLink: null };
+    }
+    const config = parseTelegramConfig(integration);
+    return {
+      integration,
+      pairingLink:
+        config.chatId === null
+          ? telegramPairingLink(config.botUsername, config.pairingCode)
+          : null,
+    };
+  }
+
+  async unpairTelegram(): Promise<TelegramIntegrationStatus> {
+    const integration = this.database.getTelegramIntegration();
+    if (!integration) throw new Error("The Telegram integration is not configured");
+    this.database.updateTelegramIntegration({
+      config: { chatId: null, pairingCode: randomBytes(9).toString("base64url") },
+    });
+    this.emit({ type: "entity.changed", entity: "integrations", id: integration.id });
+    await this.telegram.restart();
+    return this.telegramStatus();
+  }
+
+  async disconnectTelegram(): Promise<void> {
+    await this.telegram.stop();
+    const integration = this.database.getTelegramIntegration();
+    if (integration) {
+      this.database.updateTelegramIntegration({
+        status: "disconnected",
+        config: { chatId: null },
+      });
+      this.emit({ type: "entity.changed", entity: "integrations", id: integration.id });
+    }
+    try {
+      await this.options.credentials.delete(telegramCredentialKey);
+    } catch {
+      // The credential may already be gone; disconnecting stays idempotent.
+    }
+  }
+
+  /** Turns on the policy-gated telegram.send tool for the linked coworker. */
+  private enableTelegramTool(coworkerId: string): void {
+    const coworker = this.database.getCoworker(coworkerId);
+    if (coworker.enabledTools.includes("telegram.send")) return;
+    this.database.updateCoworker(coworkerId, {
+      enabledTools: [...coworker.enabledTools, "telegram.send"],
+      policies: {
+        ...coworker.policies,
+        "telegram.send": coworker.policies["telegram.send"] ?? "approval",
+      },
+    });
+    this.emit({ type: "entity.changed", entity: "coworkers", id: coworkerId });
+  }
+
+  /** Removes telegram.send from a coworker that lost its Telegram link. */
+  private disableTelegramTool(coworkerId: string): void {
+    const name = this.coworkerNameOrNull(coworkerId);
+    if (name === null) return;
+    const coworker = this.database.getCoworker(coworkerId);
+    if (!coworker.enabledTools.includes("telegram.send")) return;
+    this.database.updateCoworker(coworkerId, {
+      enabledTools: coworker.enabledTools.filter((tool) => tool !== "telegram.send"),
+    });
+    this.emit({ type: "entity.changed", entity: "coworkers", id: coworkerId });
+  }
+
+  private coworkerNameOrNull(coworkerId: string): string | null {
+    try {
+      return this.database.getCoworker(coworkerId).name;
+    } catch {
+      return null;
+    }
   }
 
   async configureModel(input: {
@@ -1359,7 +1594,7 @@ export class DesktopAppService {
   }
 
   private enableBundledSkills(): void {
-    const migrationKey = "bundled-skills-enabled-v3";
+    const migrationKey = "bundled-skills-enabled-v4";
     if (this.database.getMetadata(migrationKey) === "true") return;
     const bundledIds = this.database
       .listSkills()

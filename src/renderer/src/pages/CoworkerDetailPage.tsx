@@ -31,6 +31,7 @@ import type {
 import { isDiscussionPass } from "@shared/discussion";
 import { IpcCoworkerAgent } from "../copilot/IpcCoworkerAgent";
 import { LocalCopilotProvider } from "../copilot/LocalCopilotProvider";
+import { useAppData } from "../state/AppDataProvider";
 import {
   ArtifactActions,
   artifactExtension,
@@ -48,6 +49,7 @@ import {
   messageDayLabel,
 } from "../lib/conversation-utils";
 import {
+  CopyTextButton,
   CoworkerAvatar,
   CoworkerModelBadge,
   StatusLabel,
@@ -289,6 +291,7 @@ export function latestDirectConversation(
     .filter(
       (conversation) =>
         conversation.kind === "direct" &&
+        !conversation.archivedAt &&
         conversation.memberIds.includes(coworkerId),
     )
     .reduce<Conversation | null>(
@@ -391,6 +394,7 @@ export function CoworkerDetailPage({
   skills,
   settings,
   modelEndpoints = [],
+  initialConversationId = null,
   onBack,
   onChanged,
   onOpenApprovals,
@@ -410,6 +414,7 @@ export function CoworkerDetailPage({
   skills: Skill[];
   settings: AppSettings;
   modelEndpoints?: ModelEndpoint[];
+  initialConversationId?: string | null;
   onBack: () => void;
   onChanged: () => Promise<void>;
   onOpenApprovals: () => void;
@@ -430,34 +435,54 @@ export function CoworkerDetailPage({
     coworkers.find((candidate) => candidate.id === managingCoworkerId) ?? null;
   const latestConversation = latestDirectConversation(conversations, coworker.id);
   const [selectedConversationId, setSelectedConversationId] = useState(
-    latestConversation?.id ?? `coworker:${coworker.id}`,
+    (initialConversationId &&
+      conversations.some((conversation) => conversation.id === initialConversationId) &&
+      initialConversationId) ||
+      (latestConversation?.id ?? `coworker:${coworker.id}`),
   );
-  const selectedConversation =
-    conversations.find((conversation) => conversation.id === selectedConversationId) ?? null;
   const activeConversationId = selectedConversationId;
-  const conversationTaskIds = new Set(
-    tasks
-      .filter((task) => task.coworkerId === coworker.id && task.threadId === activeConversationId)
-      .map((task) => task.id),
-  );
+  // Filter by conversation id, not task binding: messages injected from
+  // outside this surface (the Telegram bridge, and desktop-typed user
+  // messages) are stored with taskId null and must still count below so the
+  // open conversation reseeds when they arrive.
   const boundedConversationMessages = messages.filter(
-    (message) => message.taskId && conversationTaskIds.has(message.taskId),
+    (message) => message.conversationId === activeConversationId,
   );
-  const conversationMessages =
-    loadedConversationHistory?.conversationId === activeConversationId
-      ? loadedConversationHistory.messages
-      : boundedConversationMessages;
   const conversationHistoryReady =
     loadedConversationHistory?.conversationId === activeConversationId;
+  // Stale-while-loading: while the next conversation's history is fetched,
+  // keep rendering the one that is already loaded so switching never blanks
+  // the page. The surface swaps in a single frame once the data arrives.
+  const displayConversationId =
+    loadedConversationHistory?.conversationId ?? activeConversationId;
+  const displayConversation =
+    conversations.find((conversation) => conversation.id === displayConversationId) ?? null;
+  const conversationMessages =
+    loadedConversationHistory?.messages ?? boundedConversationMessages;
 
   useEffect(() => {
     const next = latestDirectConversation(conversations, coworker.id);
     setSelectedConversationId(next?.id ?? `coworker:${coworker.id}`);
+    // A different coworker must not show the previous coworker's thread while
+    // its own history loads.
+    setLoadedConversationHistory(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reset only when the coworker changes
   }, [coworker.id]);
+
+  // Navigation from elsewhere (for example an activity entry) can point at a
+  // specific conversation of this coworker.
+  useEffect(() => {
+    if (
+      initialConversationId &&
+      conversations.some((conversation) => conversation.id === initialConversationId)
+    ) {
+      setSelectedConversationId(initialConversationId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- follow only explicit focus requests
+  }, [initialConversationId]);
 
   useEffect(() => {
     let cancelled = false;
-    setLoadedConversationHistory(null);
     void window.coworker.messages
       .listConversation(activeConversationId)
       .then((history) => {
@@ -508,7 +533,7 @@ export function CoworkerDetailPage({
       new IpcCoworkerAgent(coworker.id, {
         agentId: coworker.id,
         description: `${coworker.name} · ${coworker.role}`,
-        threadId: activeConversationId,
+        threadId: displayConversationId,
         initialMessages: conversationMessages
           .filter((message) => message.role === "user" || message.role === "assistant")
           .map((message) => ({
@@ -518,12 +543,29 @@ export function CoworkerDetailPage({
           })),
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reseeded via historyVersion
-    [coworker.id, activeConversationId, historyVersion],
+    [coworker.id, displayConversationId, historyVersion],
   );
 
-  // Background runs (Put someone to work, schedules) persist their replies
-  // without streaming through this surface. When stored messages outgrow what
-  // the agent is showing and nothing is streaming, reload and reseed.
+  // When a message arrives from Telegram into another conversation of this
+  // coworker, follow it so the exchange stays on screen — unless a reply is
+  // actively streaming in the current view.
+  const { lastEvent } = useAppData();
+  useEffect(() => {
+    if (
+      lastEvent?.type === "conversation.inbound" &&
+      lastEvent.coworkerId === coworker.id &&
+      lastEvent.conversationId !== selectedConversationId &&
+      !agent.isStreaming
+    ) {
+      setSelectedConversationId(lastEvent.conversationId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- react to inbound events only
+  }, [lastEvent]);
+
+  // Background runs (Put someone to work, schedules, the Telegram bridge)
+  // persist messages without streaming through this surface. When stored
+  // messages outgrow what the agent is showing and nothing is streaming,
+  // reload and reseed.
   const snapshotVisibleCount = boundedConversationMessages.filter(
     (message) => message.role === "user" || message.role === "assistant",
   ).length;
@@ -550,16 +592,18 @@ export function CoworkerDetailPage({
     };
   }, [snapshotVisibleCount, conversationHistoryReady, activeConversationId, agent]);
 
+  const historyLoadedOnce = loadedConversationHistory !== null;
+
   return (
     <>
-      {conversationHistoryReady && selectedConversation?.kind === "group" ? (
+      {historyLoadedOnce && displayConversation?.kind === "group" ? (
         <GroupConversationSurface
           approvals={approvals}
-          conversation={selectedConversation}
+          conversation={displayConversation}
           conversations={conversations}
           coworkers={coworkers}
           discussions={discussions.filter(
-            (discussion) => discussion.conversationId === selectedConversation.id,
+            (discussion) => discussion.conversationId === displayConversation.id,
           )}
           imageAttachments={imageAttachments}
           messages={conversationMessages}
@@ -567,24 +611,24 @@ export function CoworkerDetailPage({
           onBack={onBack}
           onChanged={onChanged}
           onCreateGroup={() => setCreatingGroup(true)}
-          onEditGroup={() => setEditingGroup(selectedConversation)}
+          onEditGroup={() => setEditingGroup(displayConversation)}
           onOpenApprovals={onOpenApprovals}
           onSelectConversation={setSelectedConversationId}
           onSelectCoworker={openCoworkerConversation}
           tasks={tasks}
         />
-      ) : conversationHistoryReady ? (
+      ) : historyLoadedOnce ? (
         <LocalCopilotProvider
           agentId={coworker.id}
           agent={agent}
-          key={`${coworker.id}:${activeConversationId}`}
+          key={`${coworker.id}:${displayConversationId}`}
         >
           <CoworkerSurface
             coworker={coworker}
             coworkers={coworkers}
             conversations={conversations}
-            conversationId={activeConversationId}
-            selectedConversation={selectedConversation}
+            conversationId={displayConversationId}
+            selectedConversation={displayConversation}
             tasks={tasks}
             approvals={approvals}
             artifacts={artifacts}
@@ -658,6 +702,11 @@ export function CoworkerDetailPage({
           onClose={() => setEditingGroup(null)}
           onCreated={async () => {
             setEditingGroup(null);
+            await onChanged();
+          }}
+          onDeleted={async () => {
+            setEditingGroup(null);
+            setSelectedConversationId(`coworker:${coworker.id}`);
             await onChanged();
           }}
         />
@@ -979,18 +1028,11 @@ function GroupConversationSurface({
         <ConversationRosterResizeHandle onReset={resetRoster} onResize={resizeRoster} />
         <header className="conversation-roster-head">
           <h1>Channels</h1>
-          <button
-            aria-label="Create group channel"
-            className="conversation-icon-button"
-            onClick={onCreateGroup}
-            type="button"
-          >
-            <Icon name="plus" />
-          </button>
+          {/* Channel creation is hidden until group channels are ready. */}
         </header>
         <nav className="conversation-roster" aria-label="Channels and coworkers">
           {conversations
-            .filter((item) => item.kind === "group")
+            .filter((item) => item.kind === "group" && !item.archivedAt)
             .map((item) => (
               <button
                 aria-current={item.id === conversation.id ? "page" : undefined}
@@ -1122,7 +1164,10 @@ function GroupConversationSurface({
                       <CoworkerAvatar className="conversation-message-avatar" coworker={author} />
                     ) : null}
                     <div className="channel-message-stack">
-                      <small className="channel-message-author">{message.authorName}</small>
+                      <small className="channel-message-author">
+                        {message.authorName}
+                        <CopyTextButton text={message.content} />
+                      </small>
                       <div className="workroom-bubble">
                         {uniqueAttachments.length > 0 ? (
                           <PersistedMessageImages attachments={uniqueAttachments} />
@@ -1324,6 +1369,7 @@ function GroupConversationSurface({
                   <button
                     aria-label="Attach images"
                     className="conversation-icon-button"
+                    title="Attach images"
                     onClick={() => fileInput.current?.click()}
                     type="button"
                   >
@@ -1375,19 +1421,40 @@ export function CreateGroupChannelModal({
   initialCoworkerId,
   onClose,
   onCreated,
+  onDeleted,
 }: {
   conversation?: Conversation;
   coworkers: Coworker[];
   initialCoworkerId: string;
   onClose: () => void;
   onCreated: (conversation: Conversation) => Promise<void>;
+  onDeleted?: () => Promise<void>;
 }) {
   const [title, setTitle] = useState(conversation?.title ?? "");
   const [memberIds, setMemberIds] = useState<string[]>(
     conversation?.memberIds ?? [initialCoworkerId],
   );
   const [saving, setSaving] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  async function removeChannel() {
+    if (!conversation || saving) return;
+    if (!confirmingDelete) {
+      setConfirmingDelete(true);
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await window.coworker.conversations.remove(conversation.id);
+      await onDeleted?.();
+    } catch (removeError) {
+      setError(removeError instanceof Error ? removeError.message : String(removeError));
+      setSaving(false);
+      setConfirmingDelete(false);
+    }
+  }
 
   async function create() {
     if (memberIds.length < 2 || saving) {
@@ -1465,6 +1532,16 @@ export function CreateGroupChannelModal({
         </fieldset>
         {error ? <small className="form-error">{error}</small> : null}
         <div className="modal-actions">
+          {conversation && onDeleted ? (
+            <button
+              className="secondary-button danger modal-delete-action"
+              disabled={saving}
+              onClick={() => void removeChannel()}
+              type="button"
+            >
+              {confirmingDelete ? "Confirm delete" : "Delete channel"}
+            </button>
+          ) : null}
           <button className="secondary-button" onClick={onClose} type="button">
             Cancel
           </button>
@@ -1621,6 +1698,7 @@ function CoworkerSurface({
   } | null>(null);
   const [conversationBusy, setConversationBusy] = useState(false);
   const [conversationError, setConversationError] = useState<string | null>(null);
+  const [pendingArchive, setPendingArchive] = useState<Conversation | null>(null);
   const [approvalInFlight, setApprovalInFlight] = useState<string | null>(null);
   const [approvalError, setApprovalError] = useState<string | null>(null);
   const [rightRailTab, setRightRailTab] = useState<"files" | "approvals">(
@@ -1672,9 +1750,26 @@ function CoworkerSurface({
     allMessages,
     conversationSearch,
   );
-  const sortedConversations = conversationSearch.trim()
-    ? (conversationSearchResults ?? locallyFilteredConversations)
-    : locallyFilteredConversations;
+  const sortedConversations = (
+    conversationSearch.trim()
+      ? (conversationSearchResults ?? locallyFilteredConversations)
+      : locallyFilteredConversations
+  ).filter((item) => !item.archivedAt);
+
+  async function archiveConversation(target: Conversation) {
+    try {
+      await window.coworker.conversations.archive(target.id);
+      if (target.id === conversationId) {
+        onSelectConversation(`coworker:${coworker.id}`);
+      }
+      await onChanged();
+    } catch (archiveError) {
+      setConversationError(
+        archiveError instanceof Error ? archiveError.message : String(archiveError),
+      );
+    }
+  }
+
 
   useEffect(() => {
     liveMessageTimes.current.clear();
@@ -1692,9 +1787,25 @@ function CoworkerSurface({
     const close = (event: PointerEvent) => {
       if (!historyRef.current?.contains(event.target as Node)) setHistoryOpen(false);
     };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setHistoryOpen(false);
+    };
     document.addEventListener("pointerdown", close);
-    return () => document.removeEventListener("pointerdown", close);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", close);
+      document.removeEventListener("keydown", onKey);
+    };
   }, [historyOpen]);
+
+  useEffect(() => {
+    if (!pendingArchive) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setPendingArchive(null);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [pendingArchive]);
 
   useEffect(() => {
     const query = conversationSearch.trim();
@@ -2058,6 +2169,33 @@ function CoworkerSurface({
 
   let previousMessageDay: string | null = null;
 
+  const railToggle = (
+    <button
+      aria-label={railHidden ? "Show the side panel" : "Hide the side panel"}
+      aria-pressed={!railHidden}
+      className={
+        railHidden
+          ? "conversation-icon-button conversation-rail-toggle"
+          : "conversation-icon-button conversation-rail-toggle active"
+      }
+      onClick={() =>
+        setRailHidden((current) => {
+          const next = !current;
+          window.localStorage.setItem("conversation-rail-hidden", String(next));
+          return next;
+        })
+      }
+      title={
+        railHidden
+          ? "Show the files and approvals panel"
+          : "Hide the files and approvals panel"
+      }
+      type="button"
+    >
+      <Icon name="panel" />
+    </button>
+  );
+
   return (
     <div
       className={
@@ -2074,18 +2212,12 @@ function CoworkerSurface({
         <header className="conversation-roster-head">
           <h1>Coworkers</h1>
           <span className="conversation-roster-actions">
-            <button
-              className="conversation-icon-button"
-              onClick={onCreateGroup}
-              aria-label="Create group channel"
-              title="Create group channel"
-            >
-              <Icon name="spark" />
-            </button>
+            {/* Channel creation is hidden until group channels are ready. */}
             <button
               className="conversation-icon-button"
               onClick={onCreate}
               aria-label="Create coworker"
+              title="Create coworker"
             >
               <Icon name="plus" />
             </button>
@@ -2102,7 +2234,7 @@ function CoworkerSurface({
         </label>
         <nav className="conversation-roster" aria-label="Coworker conversations">
           {conversations
-            .filter((conversation) => conversation.kind === "group")
+            .filter((conversation) => conversation.kind === "group" && !conversation.archivedAt)
             .map((conversation) => (
               <button
                 className="conversation-roster-item channel-roster-item"
@@ -2216,15 +2348,39 @@ function CoworkerSurface({
               <small className="conversation-current-title">
                 {coworker.role} · {selectedConversation?.title ?? "New conversation"}
               </small>
-              <QuickModelSwitcher
-                coworker={coworker}
-                disabled={agent.isRunning}
-                modelEndpoints={modelEndpoints}
-                onChanged={onChanged}
-              />
+              <span className="conversation-identity-tools">
+                <QuickModelSwitcher
+                  coworker={coworker}
+                  disabled={agent.isRunning}
+                  modelEndpoints={modelEndpoints}
+                  onChanged={onChanged}
+                />
+              </span>
+            </span>
+            <span className="conversation-profile-tools">
+              <button
+                className="conversation-icon-button"
+                onClick={() => onManageCoworker(coworker)}
+                aria-label={`Configure ${coworker.name}`}
+                title={`Configure ${coworker.name}`}
+              >
+                <Icon name="settings" />
+              </button>
             </span>
           </div>
           <div className="conversation-head-controls">
+            {selectedConversation && conversationId !== `coworker:${coworker.id}` ? (
+              <button
+                aria-label="Archive this conversation"
+                className="conversation-icon-button"
+                disabled={agent.isRunning || conversationBusy}
+                onClick={() => setPendingArchive(selectedConversation)}
+                title="Archive this conversation"
+                type="button"
+              >
+                <Icon name="archive" />
+              </button>
+            ) : null}
             <div className="conversation-history-control" ref={historyRef}>
               <button
                 aria-expanded={historyOpen}
@@ -2239,6 +2395,13 @@ function CoworkerSurface({
               </button>
               {historyOpen ? (
                 <div
+                  className="menu-backdrop"
+                  onPointerDown={() => setHistoryOpen(false)}
+                  role="presentation"
+                />
+              ) : null}
+              {historyOpen ? (
+                <div
                   aria-label="Conversation history"
                   className="conversation-history-menu"
                   role="dialog"
@@ -2251,6 +2414,7 @@ function CoworkerSurface({
                     <button
                       aria-label="Start a new conversation"
                       onClick={() => void startNewConversation()}
+                      title="Start a new conversation"
                       type="button"
                     >
                       <Icon name="plus" />
@@ -2267,26 +2431,48 @@ function CoworkerSurface({
                   </label>
                   <div className="conversation-history-list">
                     {sortedConversations.map((conversation) => (
-                      <button
-                        aria-current={conversation.id === conversationId ? "true" : undefined}
-                        className={conversation.id === conversationId ? "selected" : ""}
+                      <div
+                        className={
+                          conversation.id === conversationId
+                            ? "conversation-history-row selected"
+                            : "conversation-history-row"
+                        }
                         key={conversation.id}
-                        onClick={() => {
-                          onSelectConversation(conversation.id);
-                          setHistoryOpen(false);
-                          setConversationError(null);
-                        }}
-                        type="button"
                       >
-                        <span>
-                          <strong>{conversation.title}</strong>
-                          <small>
-                            {conversationTaskCounts.get(conversation.id) ?? 0} turns ·{" "}
-                            {formatRelativeTime(conversation.updatedAt)}
-                          </small>
-                        </span>
-                        {conversation.id === conversationId ? <Icon name="check" /> : null}
-                      </button>
+                        <button
+                          aria-current={conversation.id === conversationId ? "true" : undefined}
+                          className="conversation-history-select"
+                          onClick={() => {
+                            onSelectConversation(conversation.id);
+                            setHistoryOpen(false);
+                            setConversationError(null);
+                          }}
+                          type="button"
+                        >
+                          <span>
+                            <strong>{conversation.title}</strong>
+                            <small>
+                              {conversationTaskCounts.get(conversation.id) ?? 0} turns ·{" "}
+                              {formatRelativeTime(conversation.updatedAt)}
+                            </small>
+                          </span>
+                          {conversation.id === conversationId ? <Icon name="check" /> : null}
+                        </button>
+                        {conversation.id !== `coworker:${coworker.id}` ? (
+                          <button
+                            aria-label={`Archive “${conversation.title}”`}
+                            className="conversation-history-archive"
+                            onClick={() => {
+                              setHistoryOpen(false);
+                              setPendingArchive(conversation);
+                            }}
+                            title="Archive conversation"
+                            type="button"
+                          >
+                            <Icon name="archive" />
+                          </button>
+                        ) : null}
+                      </div>
                     ))}
                     {conversationSearchLoading ? (
                       <p className="conversation-history-empty">Searching all messages…</p>
@@ -2308,38 +2494,7 @@ function CoworkerSurface({
               <Icon name="plus" />
               <span>{conversationBusy ? "Starting…" : "New"}</span>
             </button>
-            <button
-              className="conversation-icon-button"
-              onClick={() => onManageCoworker(coworker)}
-              aria-label={`Configure ${coworker.name}`}
-              title={`Configure ${coworker.name}`}
-            >
-              <Icon name="settings" />
-            </button>
-            <button
-              aria-label={railHidden ? "Show the side panel" : "Hide the side panel"}
-              aria-pressed={!railHidden}
-              className={
-                railHidden
-                  ? "conversation-icon-button"
-                  : "conversation-icon-button active"
-              }
-              onClick={() =>
-                setRailHidden((current) => {
-                  const next = !current;
-                  window.localStorage.setItem("conversation-rail-hidden", String(next));
-                  return next;
-                })
-              }
-              title={
-                railHidden
-                  ? "Show the files and approvals panel"
-                  : "Hide the files and approvals panel"
-              }
-              type="button"
-            >
-              <Icon name="panel" />
-            </button>
+            {railHidden ? railToggle : null}
           </div>
           {conversationError ? (
             <small className="conversation-head-error" role="alert">
@@ -2502,6 +2657,7 @@ function CoworkerSurface({
                         <small className="workroom-message-meta">
                           {message.role === "assistant" ? coworker.name : "You"} ·{" "}
                           {formatMessageTime(timestamp)}
+                          {content ? <CopyTextButton text={content} /> : null}
                         </small>
                       ) : null}
                     </div>
@@ -2614,6 +2770,7 @@ function CoworkerSurface({
                   aria-label="Stop current task"
                   className="composer-send composer-stop"
                   onClick={() => agent.abortRun()}
+                  title="Stop current task"
                   type="button"
                 >
                   <Icon name="stop" />
@@ -2622,6 +2779,7 @@ function CoworkerSurface({
                 <button
                   aria-label="Send message"
                   className="composer-send"
+                  title="Send message"
                   disabled={
                     (!draft.trim() && pendingImages.length === 0) || !isReady || readingImages
                   }
@@ -2630,27 +2788,36 @@ function CoworkerSurface({
                   <Icon name="send" />
                 </button>
               )}
-              {imageError ? (
-                <small className="composer-error" role="alert">
-                  {imageError}
-                </small>
-              ) : supportsImageInput === false ? (
-                <small className="composer-capability-note">
-                  This model doesn’t accept images.
-                </small>
-              ) : (
-                <small>
-                  {readingImages
-                    ? "Preparing images…"
-                    : `${coworker.name} can make mistakes. Review important actions.`}
-                </small>
-              )}
+              <div className="composer-footer">
+                {imageError ? (
+                  <small className="composer-error" role="alert">
+                    {imageError}
+                  </small>
+                ) : supportsImageInput === false ? (
+                  <small className="composer-capability-note">
+                    This model doesn’t accept images.
+                  </small>
+                ) : (
+                  <small>
+                    {readingImages
+                      ? "Preparing images…"
+                      : `${coworker.name} can make mistakes. Review important actions.`}
+                  </small>
+                )}
+                <QuickModelSwitcher
+                  chip
+                  coworker={coworker}
+                  disabled={agent.isRunning}
+                  modelEndpoints={modelEndpoints}
+                  onChanged={onChanged}
+                  placement="up"
+                />
+              </div>
             </form>
           </div>
         </div>
       </section>
 
-      {railHidden ? null : (
       <aside className="conversation-approval-rail conversation-right-rail">
         <header className="conversation-rail-tabs" role="tablist" aria-label="Coworker details">
           <button
@@ -2679,6 +2846,7 @@ function CoworkerSurface({
             <span>Approvals</span>
             {pending.length > 0 ? <b className="attention">{pending.length}</b> : null}
           </button>
+          {railToggle}
         </header>
 
         {rightRailTab === "files" ? (
@@ -2829,7 +2997,49 @@ function CoworkerSurface({
           </section>
         )}
       </aside>
-      )}
+
+      {pendingArchive ? (
+        <div
+          className="modal-backdrop"
+          onMouseDown={() => setPendingArchive(null)}
+          role="presentation"
+        >
+          <section
+            aria-labelledby="archive-confirm-title"
+            aria-modal="true"
+            className="modal-card archive-confirm-modal"
+            onMouseDown={(event) => event.stopPropagation()}
+            role="dialog"
+          >
+            <span className="eyebrow">Archive conversation</span>
+            <h2 id="archive-confirm-title">Archive “{pendingArchive.title}”?</h2>
+            <p>
+              It will be hidden from your history. You can restore it — or delete it
+              permanently — anytime from Settings → Archived.
+            </p>
+            <div className="modal-actions">
+              <button
+                className="secondary-button"
+                onClick={() => setPendingArchive(null)}
+                type="button"
+              >
+                Cancel
+              </button>
+              <button
+                className="primary-button"
+                onClick={() => {
+                  const target = pendingArchive;
+                  setPendingArchive(null);
+                  void archiveConversation(target);
+                }}
+                type="button"
+              >
+                Archive
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
     </div>
   );
 }

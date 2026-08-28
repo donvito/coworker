@@ -118,6 +118,130 @@ describe("multi-coworker channels", () => {
     }
   });
 
+  it("deletes group channels with their history once work is finished", async () => {
+    const root = await mkdtemp(join(tmpdir(), "coworker-channel-delete-"));
+    temporaryPaths.push(root);
+    const database = new CoworkerDatabase(join(root, "coworker.db"));
+    const ava = createCoworker(database, root, "Ava");
+    const sarah = createCoworker(database, root, "Sarah");
+    const channel = database.createConversation({
+      kind: "group",
+      memberIds: [ava.id, sarah.id],
+      title: "Disposable",
+    });
+    const service = new DesktopAppService({
+      dataPath: root,
+      database,
+      credentials: credentials(),
+    });
+    vi.spyOn(service.runtime, "enqueueTask").mockImplementation(() => undefined);
+
+    try {
+      // The coworker's default conversation is always protected.
+      expect(() => service.removeConversation(`coworker:${ava.id}`)).toThrow(
+        /main conversation can't be deleted/,
+      );
+
+      const receipt = await service.sendConversationMessage({
+        conversationId: channel.id,
+        clientMessageId: "channel-message",
+        content: "@Ava and @Sarah discuss this.",
+        mentionedCoworkerIds: [ava.id, sarah.id],
+      });
+      // Queued channel work blocks deletion until it settles.
+      expect(() => service.removeConversation(channel.id)).toThrow(/before deleting it/);
+
+      // Later discussion turns reuse the source message per coworker; those
+      // rows previously broke the delete cascade's unique-index handling.
+      const discussionId = receipt.discussion!.id;
+      const laterTurns = [
+        database.createTask({
+          coworkerId: sarah.id,
+          title: "turn 2",
+          input: "respond",
+          threadId: channel.id,
+          sourceMessageId: receipt.message.id,
+          discussionId,
+          discussionTurn: 1,
+          persistUserMessage: false,
+        }),
+        database.createTask({
+          coworkerId: ava.id,
+          title: "turn 3",
+          input: "respond again",
+          threadId: channel.id,
+          sourceMessageId: receipt.message.id,
+          discussionId,
+          discussionTurn: 2,
+          persistUserMessage: false,
+        }),
+      ];
+
+      for (const run of receipt.runs) database.cancelTask(run.taskId);
+      for (const task of laterTurns) database.cancelTask(task.id);
+      service.removeConversation(channel.id);
+      expect(() => database.getConversation(channel.id)).toThrow(/not found/);
+      expect(database.listTasks().some((task) => task.threadId === channel.id)).toBe(false);
+      expect(
+        database.listAllMessages().some((message) => message.conversationId === channel.id),
+      ).toBe(false);
+      expect(database.listDiscussions(channel.id)).toHaveLength(0);
+    } finally {
+      await service.runtime.stopAll();
+      database.close();
+    }
+  });
+
+  it("archives conversations, restores them on new activity, and deletes permanently", async () => {
+    const root = await mkdtemp(join(tmpdir(), "coworker-archive-"));
+    temporaryPaths.push(root);
+    const database = new CoworkerDatabase(join(root, "coworker.db"));
+    const ava = createCoworker(database, root, "Ava");
+    const service = new DesktopAppService({
+      dataPath: root,
+      database,
+      credentials: credentials(),
+    });
+    vi.spyOn(service.runtime, "enqueueTask").mockImplementation(() => undefined);
+
+    try {
+      const extra = database.createConversation({ coworkerId: ava.id, title: "Side quest" });
+
+      // The coworker's main conversation is a permanent anchor.
+      expect(() => service.archiveConversation(`coworker:${ava.id}`)).toThrow(
+        /can't be archived/,
+      );
+      // Permanent deletion of a direct conversation requires archiving first.
+      expect(() => service.removeConversation(extra.id)).toThrow(/Archive this conversation/);
+
+      expect(service.archiveConversation(extra.id).archivedAt).not.toBeNull();
+
+      // A new message wakes the archived conversation instead of vanishing.
+      const receipt = await service.sendConversationMessage({
+        conversationId: extra.id,
+        clientMessageId: "wake-1",
+        content: "hello again",
+        mentionedCoworkerIds: [],
+      });
+      expect(database.getConversation(extra.id).archivedAt).toBeNull();
+
+      service.archiveConversation(extra.id);
+      // Queued work still blocks permanent deletion.
+      expect(() => service.removeConversation(extra.id)).toThrow(/before deleting/);
+      for (const run of receipt.runs) database.cancelTask(run.taskId);
+      service.removeConversation(extra.id);
+      expect(() => database.getConversation(extra.id)).toThrow(/not found/);
+
+      // Restore from the archive works too.
+      const later = database.createConversation({ coworkerId: ava.id, title: "Later" });
+      service.archiveConversation(later.id);
+      expect(service.restoreConversation(later.id).archivedAt).toBeNull();
+    } finally {
+      await service.runtime.stopAll();
+      database.close();
+    }
+  });
+
   it("routes unmentioned messages to every member and auto-routes direct chats", async () => {
     const root = await mkdtemp(join(tmpdir(), "coworker-channel-routing-"));
     temporaryPaths.push(root);

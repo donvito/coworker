@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 import type {
   AppSettings,
   Coworker,
+  Integration,
   ModelEndpoint,
   RemoteModelProvider,
 } from "@shared/contracts";
@@ -14,6 +15,10 @@ import {
   CoworkerModelBadge,
   PageHeader,
   StatusLabel,
+  TelegramLinkBadge,
+  coworkerAvatarCount,
+  coworkerAvatarVisual,
+  telegramLinkedCoworkerId,
 } from "../components/Primitives";
 
 type CoworkerView = "cards" | "list";
@@ -22,6 +27,7 @@ export function CoworkersPage({
   coworkers,
   settings,
   modelEndpoints = [],
+  integrations = [],
   onOpen,
   onChanged,
   onOpenModelSettings,
@@ -29,6 +35,7 @@ export function CoworkersPage({
   coworkers: Coworker[];
   settings: AppSettings;
   modelEndpoints?: ModelEndpoint[];
+  integrations?: Integration[];
   onOpen: (coworker: Coworker) => void;
   onChanged: () => Promise<void>;
   onOpenModelSettings?: () => void;
@@ -107,8 +114,14 @@ export function CoworkersPage({
                 {coworker.enabledTools.length} tools
               </span>
               <CoworkerModelBadge coworker={coworker} modelEndpoints={modelEndpoints} />
+              {telegramLinkedCoworkerId(integrations) === coworker.id ? (
+                <TelegramLinkBadge />
+              ) : null}
             </span>
-            <Icon name="arrow" className="roster-arrow" />
+            <span className="roster-open-cta">
+              <span>Work with {coworker.name}</span>
+              <Icon name="arrow" />
+            </span>
           </button>
         ))}
         {coworkers.length === 0 ? (
@@ -160,6 +173,9 @@ export function CreateCoworkerModal({
     settings.defaultModelProvider ?? "",
   );
   const [modelName, setModelName] = useState(settings.defaultModelName ?? "");
+  const [avatarChoice, setAvatarChoice] = useState(() =>
+    Math.floor(Math.random() * coworkerAvatarCount),
+  );
 
   async function createCoworker(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -176,6 +192,7 @@ export function CreateCoworkerModal({
       const coworker = await window.coworker.coworkers.create({
         name,
         role,
+        avatarIndex: avatarChoice,
         description: String(data.get("description") ?? "").trim(),
         systemPrompt: `You are ${name}, a ${role}. Work carefully, use only the tools provided, and never claim an external action succeeded unless its tool confirms success.`,
         modelProvider: provider,
@@ -215,6 +232,30 @@ export function CreateCoworkerModal({
         <h2 id="create-coworker-title">Create a coworker</h2>
         <p>Start with a clear responsibility. Tools remain controlled by the app.</p>
         <form onSubmit={createCoworker} className="form-stack">
+          <div className="avatar-picker">
+            <span>Avatar</span>
+            <div className="avatar-picker-grid" role="radiogroup" aria-label="Coworker avatar">
+              {Array.from({ length: coworkerAvatarCount }, (_, index) => {
+                const visual = coworkerAvatarVisual(index);
+                return (
+                  <button
+                    aria-checked={index === avatarChoice}
+                    aria-label={`Avatar ${index + 1}`}
+                    className={
+                      index === avatarChoice ? "avatar-option selected" : "avatar-option"
+                    }
+                    key={index}
+                    onClick={() => setAvatarChoice(index)}
+                    role="radio"
+                    style={{ backgroundColor: visual.color }}
+                    type="button"
+                  >
+                    <img alt="" src={visual.image} />
+                  </button>
+                );
+              })}
+            </div>
+          </div>
           <label>
             <span>Name</span>
             <input name="name" placeholder="e.g. Mia" required maxLength={80} autoFocus />

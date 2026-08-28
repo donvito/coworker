@@ -1,5 +1,11 @@
-import type { ReactNode } from "react";
-import type { Coworker, ModelEndpoint, RuntimeStatus, TaskStatus } from "@shared/contracts";
+import { useState, type ReactNode } from "react";
+import type {
+  Coworker,
+  Integration,
+  ModelEndpoint,
+  RuntimeStatus,
+  TaskStatus,
+} from "@shared/contracts";
 import { modelProviderDisplayName } from "@shared/model-providers";
 import avatar1 from "../assets/coworker-avatars/avatar-1.png";
 import avatar2 from "../assets/coworker-avatars/avatar-2.png";
@@ -39,22 +45,32 @@ function avatarIndex(id: string): number {
   return hash;
 }
 
+export const coworkerAvatarCount = coworkerAvatars.length;
+
+export function coworkerAvatarVisual(index: number): { image: string; color: string } {
+  const safe = Math.abs(Math.trunc(index));
+  return {
+    image: coworkerAvatars[safe % coworkerAvatars.length]!,
+    color: coworkerAvatarColors[safe % coworkerAvatarColors.length]!,
+  };
+}
+
 export function CoworkerAvatar({
   coworker,
   className = "",
 }: {
-  coworker: Pick<Coworker, "id" | "name">;
+  coworker: Pick<Coworker, "id" | "name"> & { avatarIndex?: number | null };
   className?: string;
 }) {
-  const index = avatarIndex(coworker.id);
+  const visual = coworkerAvatarVisual(coworker.avatarIndex ?? avatarIndex(coworker.id));
   return (
     <span
       aria-label={`${coworker.name} avatar`}
       className={`coworker-avatar ${className}`.trim()}
       role="img"
-      style={{ backgroundColor: coworkerAvatarColors[index % coworkerAvatarColors.length] }}
+      style={{ backgroundColor: visual.color }}
     >
-      <img alt="" src={coworkerAvatars[index % coworkerAvatars.length]} />
+      <img alt="" src={visual.image} />
     </span>
   );
 }
@@ -132,6 +148,66 @@ export function CoworkerModelBadge({
       <code>{displayName}</code>
       <span>{provider}</span>
     </span>
+  );
+}
+
+/** The coworker linked to the connected Telegram bot, if any. */
+export function telegramLinkedCoworkerId(integrations: Integration[]): string | null {
+  const integration = integrations.find(
+    (candidate) => candidate.type === "telegram" && candidate.status === "connected",
+  );
+  const coworkerId = (integration?.config as { coworkerId?: string } | undefined)?.coworkerId;
+  return typeof coworkerId === "string" && coworkerId ? coworkerId : null;
+}
+
+export function TelegramLinkBadge({ compact = false }: { compact?: boolean }) {
+  return (
+    <span
+      aria-label="Connected to the Telegram bot"
+      className={
+        compact
+          ? "coworker-model-badge compact telegram-link-badge"
+          : "coworker-model-badge telegram-link-badge"
+      }
+      title="Connected to the Telegram bot"
+    >
+      <span>Telegram</span>
+    </span>
+  );
+}
+
+/** A quiet hover-revealed button that copies text and confirms briefly. */
+export function CopyTextButton({
+  text,
+  label = "Copy message",
+}: {
+  text: string;
+  label?: string;
+}) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      aria-label={copied ? "Copied" : label}
+      className={copied ? "copy-text-button copied" : "copy-text-button"}
+      onClick={(event) => {
+        event.stopPropagation();
+        const confirm = () => {
+          setCopied(true);
+          window.setTimeout(() => setCopied(false), 1600);
+        };
+        // The main-process clipboard is the dependable path in a sandboxed
+        // renderer; the web API stays as the fallback.
+        void window.coworker.app
+          .copyText(text)
+          .then(confirm)
+          .catch(() => navigator.clipboard.writeText(text).then(confirm));
+      }}
+      title={copied ? "Copied" : label}
+      type="button"
+    >
+      <Icon name={copied ? "check" : "copy"} />
+      {copied ? <span>Copied</span> : null}
+    </button>
   );
 }
 

@@ -22,8 +22,9 @@ import {
   type PDFPage,
 } from "pdf-lib";
 import ExcelJS from "exceljs";
+import PptxGenJS from "pptxgenjs";
 
-export type DocumentFormat = "pdf" | "docx" | "xlsx" | "csv";
+export type DocumentFormat = "pdf" | "docx" | "xlsx" | "csv" | "pptx";
 
 type DocumentBlock =
   | { type: "heading"; level: number; text: string }
@@ -615,6 +616,167 @@ export async function createWordDocument(
   return Packer.toBuffer(document);
 }
 
+interface SlideDraft {
+  title: string;
+  body: Array<{ text: string; bullet: boolean; bold: boolean }>;
+  tables: string[][][];
+}
+
+const slideBodyLineLimit = 9;
+
+/**
+ * Markdown → PowerPoint: `#` becomes the cover slide, every `##` starts a
+ * slide, `###` renders as a bold lead-in line, lists become bullets, tables
+ * become slide tables, and `---` forces a slide break.
+ */
+export async function createPptxDocument(
+  content: string,
+  fallbackTitle = "Coworker presentation",
+): Promise<Buffer> {
+  const blocks = parseDocumentMarkdown(content);
+  const title = titleFromBlocks(blocks, fallbackTitle);
+
+  const slides: SlideDraft[] = [];
+  let current: SlideDraft | null = null;
+  const openSlide = (slideTitle: string): SlideDraft => {
+    const draft: SlideDraft = { title: slideTitle, body: [], tables: [] };
+    slides.push(draft);
+    current = draft;
+    return draft;
+  };
+
+  let coverConsumed = false;
+  for (const block of blocks) {
+    if (block.type === "heading" && block.level <= 2) {
+      if (!coverConsumed && block.level === 1 && slides.length === 0) {
+        coverConsumed = true; // The document title is already the cover slide.
+        continue;
+      }
+      openSlide(plainText(block.text));
+      continue;
+    }
+    if (block.type === "rule") {
+      current = null; // The next content opens a fresh slide.
+      continue;
+    }
+    const slide = current ?? openSlide("");
+    if (block.type === "heading") {
+      slide.body.push({ text: plainText(block.text), bullet: false, bold: true });
+    } else if (block.type === "paragraph") {
+      slide.body.push({ text: plainText(block.text), bullet: false, bold: false });
+    } else if (block.type === "list") {
+      for (const item of block.items) {
+        slide.body.push({ text: plainText(item), bullet: true, bold: false });
+      }
+    } else if (block.type === "table") {
+      slide.tables.push(block.rows);
+    }
+  }
+
+  // Long sections continue onto follow-up slides instead of overflowing.
+  const paged: SlideDraft[] = [];
+  for (const slide of slides) {
+    if (slide.body.length <= slideBodyLineLimit) {
+      paged.push(slide);
+      continue;
+    }
+    for (let start = 0; start < slide.body.length; start += slideBodyLineLimit) {
+      paged.push({
+        title: start === 0 ? slide.title : `${slide.title} (cont.)`,
+        body: slide.body.slice(start, start + slideBodyLineLimit),
+        tables: start === 0 ? slide.tables : [],
+      });
+    }
+  }
+
+  const pptx = new PptxGenJS();
+  pptx.defineLayout({ name: "COWORKER_WIDE", width: 13.33, height: 7.5 });
+  pptx.layout = "COWORKER_WIDE";
+  pptx.author = "Coworker";
+  pptx.subject = "Generated locally by Coworker";
+  pptx.title = title;
+
+  const cover = pptx.addSlide();
+  cover.background = { color: "F5F3EC" };
+  cover.addText(title, {
+    x: 0.9,
+    y: 2.5,
+    w: 11.5,
+    h: 1.8,
+    fontSize: 40,
+    bold: true,
+    color: "1E3A2F",
+  });
+  cover.addText("Generated locally by Coworker", {
+    x: 0.9,
+    y: 4.3,
+    w: 11.5,
+    h: 0.5,
+    fontSize: 14,
+    color: "5E6B64",
+  });
+
+  for (const draft of paged) {
+    const slide = pptx.addSlide();
+    slide.background = { color: "FFFFFF" };
+    if (draft.title) {
+      slide.addText(draft.title, {
+        x: 0.7,
+        y: 0.45,
+        w: 12,
+        h: 0.8,
+        fontSize: 26,
+        bold: true,
+        color: "1E3A2F",
+      });
+    }
+    const contentTop = draft.title ? 1.5 : 0.8;
+    if (draft.body.length > 0) {
+      slide.addText(
+        draft.body.map((line) => ({
+          text: line.text,
+          options: {
+            bullet: line.bullet ? { indent: 12 } : (false as const),
+            bold: line.bold,
+            breakLine: true,
+            fontSize: line.bold ? 17 : 15,
+            color: "26312B",
+          },
+        })),
+        { x: 0.8, y: contentTop, w: 11.8, h: 5.6, valign: "top" },
+      );
+    }
+    let tableY = draft.body.length > 0
+      ? Math.min(contentTop + draft.body.length * 0.42 + 0.2, 5.4)
+      : contentTop;
+    for (const rows of draft.tables) {
+      const [head, ...rest] = rows;
+      slide.addTable(
+        [
+          (head ?? []).map((cell) => ({
+            text: cell,
+            options: { bold: true, fill: { color: "E7EEE9" } },
+          })),
+          ...rest.map((row) => row.map((cell) => ({ text: cell }))),
+        ],
+        {
+          x: 0.8,
+          y: tableY,
+          w: 11.8,
+          fontSize: 12,
+          color: "26312B",
+          border: { type: "solid", color: "C9D4CD", pt: 0.5 },
+          autoPage: true,
+        },
+      );
+      tableY = Math.min(tableY + (rows.length + 1) * 0.36 + 0.3, 6.4);
+    }
+  }
+
+  const output = await pptx.write({ outputType: "nodebuffer" });
+  return Buffer.isBuffer(output) ? output : Buffer.from(output as ArrayBuffer);
+}
+
 export async function createDocument(
   format: DocumentFormat,
   content: string,
@@ -623,5 +785,6 @@ export async function createDocument(
   if (format === "pdf") return createPdfDocument(content, fallbackTitle);
   if (format === "docx") return createWordDocument(content, fallbackTitle);
   if (format === "xlsx") return createExcelDocument(content, fallbackTitle);
+  if (format === "pptx") return createPptxDocument(content, fallbackTitle);
   return createCsvDocument(content);
 }

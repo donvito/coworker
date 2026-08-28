@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import type { AppSnapshot, Coworker } from "@shared/contracts";
+import type { ActivityItem, AppSnapshot, Coworker } from "@shared/contracts";
 import { Icon } from "../components/Icon";
 import {
   CoworkerAvatar,
@@ -7,6 +7,8 @@ import {
   EmptyState,
   PageHeader,
   StatusLabel,
+  TelegramLinkBadge,
+  telegramLinkedCoworkerId,
 } from "../components/Primitives";
 
 const countWords = [
@@ -29,13 +31,15 @@ export function HomePage({
   onOpenApprovals,
   onManageCoworkers,
   onOpenActivity,
+  onOpenActivityItem,
   onChanged,
 }: {
   snapshot: AppSnapshot;
-  onOpenCoworker: (coworker: Coworker) => void;
+  onOpenCoworker: (coworker: Coworker, conversationId?: string) => void;
   onOpenApprovals: () => void;
   onManageCoworkers: () => void;
   onOpenActivity: () => void;
+  onOpenActivityItem?: (item: ActivityItem) => void;
   onChanged: () => Promise<void>;
 }) {
   const pending = snapshot.approvals.filter((approval) => approval.status === "PENDING");
@@ -79,16 +83,20 @@ export function HomePage({
     setDispatching(true);
     setComposerError(null);
     try {
+      // Every composer task starts its own conversation; the conversation
+      // takes the task's title as soon as the task binds to it.
+      const conversation = await window.coworker.conversations.create({
+        coworkerId: assignee.id,
+      });
       await window.coworker.tasks.create({
         coworkerId: assignee.id,
         title: composerTaskTitle(text),
         input: text,
+        threadId: conversation.id,
       });
-      // Refresh before navigating so the task's new conversation is the
-      // latest one and gets auto-selected on the coworker page.
       await onChanged();
       setDraft("");
-      onOpenCoworker(assignee);
+      onOpenCoworker(assignee, conversation.id);
     } catch (dispatchError) {
       setComposerError(
         dispatchError instanceof Error ? dispatchError.message : String(dispatchError),
@@ -234,6 +242,9 @@ export function HomePage({
                       coworker={coworker}
                       modelEndpoints={snapshot.modelEndpoints}
                     />
+                    {telegramLinkedCoworkerId(snapshot.integrations) === coworker.id ? (
+                      <TelegramLinkBadge compact />
+                    ) : null}
                     <span className="floor-card-action">
                       <Icon name="arrow" />
                     </span>
@@ -286,8 +297,13 @@ export function HomePage({
                 const coworker = snapshot.coworkers.find(
                   (candidate) => candidate.id === item.coworkerId,
                 );
-                return (
-                  <div className="floor-activity-row" key={item.id}>
+                const canOpen = Boolean(
+                  onOpenActivityItem &&
+                    ((item.taskId && snapshot.tasks.some((task) => task.id === item.taskId)) ||
+                      item.coworkerId),
+                );
+                const body = (
+                  <>
                     <span className="floor-activity-copy">
                       <strong>{item.summary}</strong>
                       <small>
@@ -295,6 +311,21 @@ export function HomePage({
                       </small>
                     </span>
                     <time dateTime={item.createdAt}>{compactAge(item.createdAt)}</time>
+                  </>
+                );
+                return canOpen ? (
+                  <button
+                    className="floor-activity-row floor-activity-row-link"
+                    key={item.id}
+                    onClick={() => onOpenActivityItem?.(item)}
+                    title="Open the related conversation"
+                    type="button"
+                  >
+                    {body}
+                  </button>
+                ) : (
+                  <div className="floor-activity-row" key={item.id}>
+                    {body}
                   </div>
                 );
               })

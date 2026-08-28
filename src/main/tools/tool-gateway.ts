@@ -21,6 +21,7 @@ import {
 import type { CredentialStore } from "@main/security/credential-store";
 import { readDocumentText } from "@main/integrations/document-text";
 import { createEmailDraft, sendEmail, type EmailPayload } from "@main/integrations/email";
+import { sendCoworkerTelegramMessage } from "@main/integrations/telegram-send";
 import { resolveSharedFolderPath } from "./shared-folders";
 import { resolveWorkspacePath } from "./workspace-path";
 import { searchWeb } from "@main/integrations/web-search";
@@ -74,9 +75,9 @@ const schemas = {
       name: z.string().trim().min(1).max(240).optional(),
       content: z.string().max(5_000_000).optional(),
       formats: z
-        .array(z.enum(["pdf", "docx", "xlsx", "csv"]))
+        .array(z.enum(["pdf", "docx", "xlsx", "csv", "pptx"]))
         .min(1)
-        .max(4)
+        .max(5)
         .refine((formats) => new Set(formats).size === formats.length, "Formats must be unique"),
     })
     .superRefine((value, context) => {
@@ -136,6 +137,10 @@ const schemas = {
     body: z.string().max(1_000_000),
     attachments: z.array(z.string().min(1).max(2_000)).max(25).optional(),
   }),
+  "telegram.send": z.object({
+    message: z.string().trim().min(1).max(100_000),
+    attachments: z.array(z.string().min(1).max(2_000)).max(10).optional(),
+  }),
 } as const;
 
 export type ToolGatewayResult =
@@ -167,6 +172,19 @@ function approvalSummary(toolName: string, args: unknown): string {
     if (parsed.success) {
       const recipients = Array.isArray(parsed.data.to) ? parsed.data.to.join(", ") : parsed.data.to;
       return `Send “${parsed.data.subject}” to ${recipients}`;
+    }
+  }
+  if (toolName === "telegram.send") {
+    const parsed = schemas["telegram.send"].safeParse(args);
+    if (parsed.success) {
+      const preview =
+        parsed.data.message.length > 80
+          ? `${parsed.data.message.slice(0, 77)}…`
+          : parsed.data.message;
+      const files = parsed.data.attachments?.length
+        ? ` · ${parsed.data.attachments.map((path) => path.split("/").at(-1)).join(", ")}`
+        : "";
+      return `Send Telegram message “${preview}”${files}`;
     }
   }
   if (toolName === "schedules.create") {
@@ -204,7 +222,7 @@ export class ToolGateway {
     private readonly credentials: CredentialStore,
     private readonly outboxPath: string,
     private readonly actions: ToolGatewayActions = {},
-    private readonly options: { dataPath?: string } = {},
+    private readonly options: { dataPath?: string; telegramFetch?: typeof fetch } = {},
   ) {}
 
   validateArguments(toolName: string, argumentsValue: unknown): unknown {
@@ -598,7 +616,7 @@ export class ToolGateway {
           const normalizedName = args.name!.replaceAll("\\", "/");
           const baseName = posix
             .basename(normalizedName)
-            .replace(/\.(?:pdf|docx?|xlsx?|csv)$/i, "");
+            .replace(/\.(?:pdf|docx?|xlsx?|csv|pptx?)$/i, "");
           if (!baseName || baseName === "." || baseName === "..") {
             throw new Error("Document name must contain a valid file name");
           }
@@ -641,7 +659,9 @@ export class ToolGateway {
                   ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                   : format === "xlsx"
                     ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    : "text/csv",
+                    : format === "pptx"
+                      ? "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+                      : "text/csv",
             filePath: absolutePath,
           });
           files.push({
@@ -727,6 +747,19 @@ export class ToolGateway {
           workspacePath: coworker.workspacePath,
           payload: normalizeEmailPayload(args),
           idempotencyKey: toolCall.idempotencyKey,
+        });
+      }
+      case "telegram.send": {
+        const args = schemas["telegram.send"].parse(rawArgs);
+        const task = this.database.getTask(toolCall.taskId);
+        return sendCoworkerTelegramMessage({
+          database: this.database,
+          credentials: this.credentials,
+          workspacePath: coworker.workspacePath,
+          conversationId: task.threadId,
+          message: args.message,
+          attachments: args.attachments,
+          fetchImpl: this.options.telegramFetch,
         });
       }
       default:

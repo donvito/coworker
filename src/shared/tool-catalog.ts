@@ -74,7 +74,7 @@ export const toolCatalog = [
     name: "documents.export",
     label: "Export office document",
     description:
-      "Create PDF, Word DOCX, Excel XLSX, or CSV files directly from polished semantic Markdown, or convert an existing Markdown/text workspace file. Use a Markdown table with a header row for Excel or CSV. For new documents, supply the final content and name so no intermediate Markdown file is created.",
+      "Create PDF, Word DOCX, Excel XLSX, CSV, or PowerPoint PPTX files directly from polished semantic Markdown, or convert an existing Markdown/text workspace file. Use a Markdown table with a header row for Excel or CSV. For new documents, supply the final content and name so no intermediate Markdown file is created.",
     risk: "medium",
     defaultPolicy: "automatic",
   },
@@ -97,6 +97,14 @@ export const toolCatalog = [
     name: "email.send",
     label: "Send email",
     description: "Send an email through the configured email integration.",
+    risk: "high",
+    defaultPolicy: "approval",
+  },
+  {
+    name: "telegram.send",
+    label: "Send Telegram message",
+    description:
+      "Send a message, and optionally workspace files, to the user's paired Telegram chat through the connected Telegram bot.",
     risk: "high",
     defaultPolicy: "approval",
   },

@@ -219,12 +219,13 @@ const parameterSchemas: Record<string, ReturnType<typeof Type.Object>> = {
         Type.Literal("docx"),
         Type.Literal("xlsx"),
         Type.Literal("csv"),
+        Type.Literal("pptx"),
       ]),
       {
         description:
-          "One or more final output formats. For XLSX or CSV, content must include a Markdown table with a descriptive header row and one record per row. CSV supports exactly one table.",
+          "One or more final output formats. For XLSX or CSV, content must include a Markdown table with a descriptive header row and one record per row. CSV supports exactly one table. For PPTX (PowerPoint), the # title becomes the cover slide, each ## heading starts a slide, lists become bullets, and --- forces a slide break.",
         minItems: 1,
-        maxItems: 4,
+        maxItems: 5,
         uniqueItems: true,
       },
     ),
@@ -270,6 +271,17 @@ const parameterSchemas: Record<string, ReturnType<typeof Type.Object>> = {
     subject: Type.String(),
     body: Type.String(),
     attachments: Type.Optional(Type.Array(Type.String())),
+  }),
+  "telegram.send": Type.Object({
+    message: Type.String({
+      description: "Markdown message to deliver to the user's paired Telegram chat",
+    }),
+    attachments: Type.Optional(
+      Type.Array(Type.String(), {
+        description:
+          "Workspace-relative paths of files to attach. Create the files first; photos up to 10 MB, other files up to 50 MB.",
+      }),
+    ),
   }),
 };
 

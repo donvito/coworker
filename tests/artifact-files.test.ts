@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -89,6 +89,48 @@ describe("artifact file access", () => {
 
       await expect(resolveArtifactFile(database, artifact.id)).resolves.toMatchObject({
         artifact: { id: artifact.id },
+      });
+    } finally {
+      database.close();
+    }
+  });
+
+  it("resolves files when the workspace root is reached through a symlink", async () => {
+    // Mirrors macOS /tmp → /private/tmp: the coworker stores the symlinked
+    // spelling while recorded artifact paths are canonical.
+    const root = await mkdtemp(join(tmpdir(), "coworker-artifacts-"));
+    temporaryPaths.push(root);
+    const realWorkspace = join(root, "real-workspace");
+    await mkdir(realWorkspace, { recursive: true });
+    const linkedWorkspace = join(root, "linked-workspace");
+    await symlink(realWorkspace, linkedWorkspace, "dir");
+    const filePath = join(await realpath(realWorkspace), "invoice.pdf");
+    await writeFile(filePath, "pdf");
+
+    const database = new CoworkerDatabase(join(root, "coworker.db"));
+    try {
+      const coworker = database.createCoworker(
+        {
+          name: "Ava",
+          role: "Accounting Coworker",
+          systemPrompt: "Create accurate documents.",
+          modelProvider: "demo",
+          modelName: "faux-1",
+          enabledTools: ["documents.export"],
+        },
+        linkedWorkspace,
+      );
+      const artifact = database.createArtifact({
+        taskId: null,
+        coworkerId: coworker.id,
+        name: "invoice.pdf",
+        mimeType: "application/pdf",
+        filePath,
+      });
+
+      await expect(resolveArtifactFile(database, artifact.id)).resolves.toMatchObject({
+        artifact: { id: artifact.id },
+        path: filePath,
       });
     } finally {
       database.close();

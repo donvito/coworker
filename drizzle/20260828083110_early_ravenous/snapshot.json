@@ -1,0 +1,2855 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "id": "ec8b3323-37b4-4449-a6ca-118ba8bc1577",
+  "prevIds": [
+    "7b4774e8-7738-4ee3-aa57-475cfe14edf9"
+  ],
+  "ddl": [
+    {
+      "name": "activity",
+      "entityType": "tables"
+    },
+    {
+      "name": "app_metadata",
+      "entityType": "tables"
+    },
+    {
+      "name": "approvals",
+      "entityType": "tables"
+    },
+    {
+      "name": "artifacts",
+      "entityType": "tables"
+    },
+    {
+      "name": "conversation_members",
+      "entityType": "tables"
+    },
+    {
+      "name": "conversations",
+      "entityType": "tables"
+    },
+    {
+      "name": "coworker_skills",
+      "entityType": "tables"
+    },
+    {
+      "name": "coworkers",
+      "entityType": "tables"
+    },
+    {
+      "name": "discussion_sessions",
+      "entityType": "tables"
+    },
+    {
+      "name": "integrations",
+      "entityType": "tables"
+    },
+    {
+      "name": "message_mentions",
+      "entityType": "tables"
+    },
+    {
+      "name": "messages",
+      "entityType": "tables"
+    },
+    {
+      "name": "model_endpoints",
+      "entityType": "tables"
+    },
+    {
+      "name": "schedules",
+      "entityType": "tables"
+    },
+    {
+      "name": "schema_migrations",
+      "entityType": "tables"
+    },
+    {
+      "name": "settings",
+      "entityType": "tables"
+    },
+    {
+      "name": "side_effects",
+      "entityType": "tables"
+    },
+    {
+      "name": "skill_resources",
+      "entityType": "tables"
+    },
+    {
+      "name": "skills",
+      "entityType": "tables"
+    },
+    {
+      "name": "task_checkpoints",
+      "entityType": "tables"
+    },
+    {
+      "name": "task_image_attachments",
+      "entityType": "tables"
+    },
+    {
+      "name": "tasks",
+      "entityType": "tables"
+    },
+    {
+      "name": "tool_calls",
+      "entityType": "tables"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "id",
+      "entityType": "columns",
+      "table": "activity"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "coworker_id",
+      "entityType": "columns",
+      "table": "activity"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "task_id",
+      "entityType": "columns",
+      "table": "activity"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "type",
+      "entityType": "columns",
+      "table": "activity"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "summary",
+      "entityType": "columns",
+      "table": "activity"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "metadata_json",
+      "entityType": "columns",
+      "table": "activity"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "table": "activity"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "key",
+      "entityType": "columns",
+      "table": "app_metadata"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "value",
+      "entityType": "columns",
+      "table": "app_metadata"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "updated_at",
+      "entityType": "columns",
+      "table": "app_metadata"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "id",
+      "entityType": "columns",
+      "table": "approvals"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "task_id",
+      "entityType": "columns",
+      "table": "approvals"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "coworker_id",
+      "entityType": "columns",
+      "table": "approvals"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "tool_call_id",
+      "entityType": "columns",
+      "table": "approvals"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "action_type",
+      "entityType": "columns",
+      "table": "approvals"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "summary",
+      "entityType": "columns",
+      "table": "approvals"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "proposed_payload_json",
+      "entityType": "columns",
+      "table": "approvals"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "decided_payload_json",
+      "entityType": "columns",
+      "table": "approvals"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "risk_level",
+      "entityType": "columns",
+      "table": "approvals"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "status",
+      "entityType": "columns",
+      "table": "approvals"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "table": "approvals"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "decided_at",
+      "entityType": "columns",
+      "table": "approvals"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "id",
+      "entityType": "columns",
+      "table": "artifacts"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "task_id",
+      "entityType": "columns",
+      "table": "artifacts"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "coworker_id",
+      "entityType": "columns",
+      "table": "artifacts"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "name",
+      "entityType": "columns",
+      "table": "artifacts"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "mime_type",
+      "entityType": "columns",
+      "table": "artifacts"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "file_path",
+      "entityType": "columns",
+      "table": "artifacts"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "table": "artifacts"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "conversation_id",
+      "entityType": "columns",
+      "table": "conversation_members"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "coworker_id",
+      "entityType": "columns",
+      "table": "conversation_members"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "table": "conversation_members"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "id",
+      "entityType": "columns",
+      "table": "conversations"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "coworker_id",
+      "entityType": "columns",
+      "table": "conversations"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "'direct'",
+      "generated": null,
+      "name": "kind",
+      "entityType": "columns",
+      "table": "conversations"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "title",
+      "entityType": "columns",
+      "table": "conversations"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "archived_at",
+      "entityType": "columns",
+      "table": "conversations"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "table": "conversations"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "updated_at",
+      "entityType": "columns",
+      "table": "conversations"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "coworker_id",
+      "entityType": "columns",
+      "table": "coworker_skills"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "skill_id",
+      "entityType": "columns",
+      "table": "coworker_skills"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "table": "coworker_skills"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "id",
+      "entityType": "columns",
+      "table": "coworkers"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "name",
+      "entityType": "columns",
+      "table": "coworkers"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "role",
+      "entityType": "columns",
+      "table": "coworkers"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "description",
+      "entityType": "columns",
+      "table": "coworkers"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "system_prompt",
+      "entityType": "columns",
+      "table": "coworkers"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "model_provider",
+      "entityType": "columns",
+      "table": "coworkers"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "model_name",
+      "entityType": "columns",
+      "table": "coworkers"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "'active'",
+      "generated": null,
+      "name": "status",
+      "entityType": "columns",
+      "table": "coworkers"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "'STOPPED'",
+      "generated": null,
+      "name": "runtime_status",
+      "entityType": "columns",
+      "table": "coworkers"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "workspace_path",
+      "entityType": "columns",
+      "table": "coworkers"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "'[]'",
+      "generated": null,
+      "name": "enabled_tools_json",
+      "entityType": "columns",
+      "table": "coworkers"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "'{}'",
+      "generated": null,
+      "name": "policies_json",
+      "entityType": "columns",
+      "table": "coworkers"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "'[]'",
+      "generated": null,
+      "name": "shared_folders_json",
+      "entityType": "columns",
+      "table": "coworkers"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "table": "coworkers"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "updated_at",
+      "entityType": "columns",
+      "table": "coworkers"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "id",
+      "entityType": "columns",
+      "table": "discussion_sessions"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "conversation_id",
+      "entityType": "columns",
+      "table": "discussion_sessions"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "source_message_id",
+      "entityType": "columns",
+      "table": "discussion_sessions"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "participant_ids_json",
+      "entityType": "columns",
+      "table": "discussion_sessions"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "next_turn",
+      "entityType": "columns",
+      "table": "discussion_sessions"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "turn_limit",
+      "entityType": "columns",
+      "table": "discussion_sessions"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "8",
+      "generated": null,
+      "name": "hard_limit",
+      "entityType": "columns",
+      "table": "discussion_sessions"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "status",
+      "entityType": "columns",
+      "table": "discussion_sessions"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "error",
+      "entityType": "columns",
+      "table": "discussion_sessions"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "table": "discussion_sessions"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "updated_at",
+      "entityType": "columns",
+      "table": "discussion_sessions"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "id",
+      "entityType": "columns",
+      "table": "integrations"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "type",
+      "entityType": "columns",
+      "table": "integrations"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "name",
+      "entityType": "columns",
+      "table": "integrations"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "mode",
+      "entityType": "columns",
+      "table": "integrations"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "status",
+      "entityType": "columns",
+      "table": "integrations"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "credential_key",
+      "entityType": "columns",
+      "table": "integrations"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "'{}'",
+      "generated": null,
+      "name": "config_json",
+      "entityType": "columns",
+      "table": "integrations"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "table": "integrations"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "updated_at",
+      "entityType": "columns",
+      "table": "integrations"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "message_id",
+      "entityType": "columns",
+      "table": "message_mentions"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "coworker_id",
+      "entityType": "columns",
+      "table": "message_mentions"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "table": "message_mentions"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "id",
+      "entityType": "columns",
+      "table": "messages"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "conversation_id",
+      "entityType": "columns",
+      "table": "messages"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "coworker_id",
+      "entityType": "columns",
+      "table": "messages"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "author_name",
+      "entityType": "columns",
+      "table": "messages"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "task_id",
+      "entityType": "columns",
+      "table": "messages"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "role",
+      "entityType": "columns",
+      "table": "messages"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "content",
+      "entityType": "columns",
+      "table": "messages"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "table": "messages"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "id",
+      "entityType": "columns",
+      "table": "model_endpoints"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "name",
+      "entityType": "columns",
+      "table": "model_endpoints"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "base_url",
+      "entityType": "columns",
+      "table": "model_endpoints"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "table": "model_endpoints"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "updated_at",
+      "entityType": "columns",
+      "table": "model_endpoints"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "id",
+      "entityType": "columns",
+      "table": "schedules"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "coworker_id",
+      "entityType": "columns",
+      "table": "schedules"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "name",
+      "entityType": "columns",
+      "table": "schedules"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "schedule_type",
+      "entityType": "columns",
+      "table": "schedules"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "cron_expression",
+      "entityType": "columns",
+      "table": "schedules"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "run_at",
+      "entityType": "columns",
+      "table": "schedules"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "timezone",
+      "entityType": "columns",
+      "table": "schedules"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "task_template_json",
+      "entityType": "columns",
+      "table": "schedules"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "true",
+      "generated": null,
+      "name": "enabled",
+      "entityType": "columns",
+      "table": "schedules"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "last_run_at",
+      "entityType": "columns",
+      "table": "schedules"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "next_run_at",
+      "entityType": "columns",
+      "table": "schedules"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "table": "schedules"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "updated_at",
+      "entityType": "columns",
+      "table": "schedules"
+    },
+    {
+      "type": "integer",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "version",
+      "entityType": "columns",
+      "table": "schema_migrations"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "applied_at",
+      "entityType": "columns",
+      "table": "schema_migrations"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "key",
+      "entityType": "columns",
+      "table": "settings"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "value_json",
+      "entityType": "columns",
+      "table": "settings"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "updated_at",
+      "entityType": "columns",
+      "table": "settings"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "idempotency_key",
+      "entityType": "columns",
+      "table": "side_effects"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "tool_call_id",
+      "entityType": "columns",
+      "table": "side_effects"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "status",
+      "entityType": "columns",
+      "table": "side_effects"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "result_json",
+      "entityType": "columns",
+      "table": "side_effects"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "table": "side_effects"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "completed_at",
+      "entityType": "columns",
+      "table": "side_effects"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "skill_id",
+      "entityType": "columns",
+      "table": "skill_resources"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "path",
+      "entityType": "columns",
+      "table": "skill_resources"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "mime_type",
+      "entityType": "columns",
+      "table": "skill_resources"
+    },
+    {
+      "type": "blob",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "content",
+      "entityType": "columns",
+      "table": "skill_resources"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "id",
+      "entityType": "columns",
+      "table": "skills"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "name",
+      "entityType": "columns",
+      "table": "skills"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "description",
+      "entityType": "columns",
+      "table": "skills"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "content",
+      "entityType": "columns",
+      "table": "skills"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "source_url",
+      "entityType": "columns",
+      "table": "skills"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "false",
+      "generated": null,
+      "name": "bundled",
+      "entityType": "columns",
+      "table": "skills"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "table": "skills"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "updated_at",
+      "entityType": "columns",
+      "table": "skills"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "task_id",
+      "entityType": "columns",
+      "table": "task_checkpoints"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "'[]'",
+      "generated": null,
+      "name": "messages_json",
+      "entityType": "columns",
+      "table": "task_checkpoints"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "pending_tool_json",
+      "entityType": "columns",
+      "table": "task_checkpoints"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "updated_at",
+      "entityType": "columns",
+      "table": "task_checkpoints"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "id",
+      "entityType": "columns",
+      "table": "task_image_attachments"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "task_id",
+      "entityType": "columns",
+      "table": "task_image_attachments"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "coworker_id",
+      "entityType": "columns",
+      "table": "task_image_attachments"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "name",
+      "entityType": "columns",
+      "table": "task_image_attachments"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "mime_type",
+      "entityType": "columns",
+      "table": "task_image_attachments"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "relative_path",
+      "entityType": "columns",
+      "table": "task_image_attachments"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "size",
+      "entityType": "columns",
+      "table": "task_image_attachments"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "table": "task_image_attachments"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "id",
+      "entityType": "columns",
+      "table": "tasks"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "coworker_id",
+      "entityType": "columns",
+      "table": "tasks"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "schedule_id",
+      "entityType": "columns",
+      "table": "tasks"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "run_id",
+      "entityType": "columns",
+      "table": "tasks"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "thread_id",
+      "entityType": "columns",
+      "table": "tasks"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "source_message_id",
+      "entityType": "columns",
+      "table": "tasks"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "discussion_id",
+      "entityType": "columns",
+      "table": "tasks"
+    },
+    {
+      "type": "integer",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "discussion_turn",
+      "entityType": "columns",
+      "table": "tasks"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "title",
+      "entityType": "columns",
+      "table": "tasks"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "input",
+      "entityType": "columns",
+      "table": "tasks"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "status",
+      "entityType": "columns",
+      "table": "tasks"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "'manual'",
+      "generated": null,
+      "name": "source",
+      "entityType": "columns",
+      "table": "tasks"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "0",
+      "generated": null,
+      "name": "priority",
+      "entityType": "columns",
+      "table": "tasks"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "result",
+      "entityType": "columns",
+      "table": "tasks"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "error",
+      "entityType": "columns",
+      "table": "tasks"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "table": "tasks"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "started_at",
+      "entityType": "columns",
+      "table": "tasks"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "completed_at",
+      "entityType": "columns",
+      "table": "tasks"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "id",
+      "entityType": "columns",
+      "table": "tool_calls"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "task_id",
+      "entityType": "columns",
+      "table": "tool_calls"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "coworker_id",
+      "entityType": "columns",
+      "table": "tool_calls"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "tool_name",
+      "entityType": "columns",
+      "table": "tool_calls"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "arguments_json",
+      "entityType": "columns",
+      "table": "tool_calls"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "result_json",
+      "entityType": "columns",
+      "table": "tool_calls"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "status",
+      "entityType": "columns",
+      "table": "tool_calls"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "idempotency_key",
+      "entityType": "columns",
+      "table": "tool_calls"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "table": "tool_calls"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "completed_at",
+      "entityType": "columns",
+      "table": "tool_calls"
+    },
+    {
+      "columns": [
+        "coworker_id"
+      ],
+      "tableTo": "coworkers",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "SET NULL",
+      "nameExplicit": false,
+      "name": "fk_activity_coworker_id_coworkers_id_fk",
+      "entityType": "fks",
+      "table": "activity"
+    },
+    {
+      "columns": [
+        "task_id"
+      ],
+      "tableTo": "tasks",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "SET NULL",
+      "nameExplicit": false,
+      "name": "fk_activity_task_id_tasks_id_fk",
+      "entityType": "fks",
+      "table": "activity"
+    },
+    {
+      "columns": [
+        "task_id"
+      ],
+      "tableTo": "tasks",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
+      "nameExplicit": false,
+      "name": "fk_approvals_task_id_tasks_id_fk",
+      "entityType": "fks",
+      "table": "approvals"
+    },
+    {
+      "columns": [
+        "coworker_id"
+      ],
+      "tableTo": "coworkers",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
+      "nameExplicit": false,
+      "name": "fk_approvals_coworker_id_coworkers_id_fk",
+      "entityType": "fks",
+      "table": "approvals"
+    },
+    {
+      "columns": [
+        "tool_call_id"
+      ],
+      "tableTo": "tool_calls",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
+      "nameExplicit": false,
+      "name": "fk_approvals_tool_call_id_tool_calls_id_fk",
+      "entityType": "fks",
+      "table": "approvals"
+    },
+    {
+      "columns": [
+        "task_id"
+      ],
+      "tableTo": "tasks",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "SET NULL",
+      "nameExplicit": false,
+      "name": "fk_artifacts_task_id_tasks_id_fk",
+      "entityType": "fks",
+      "table": "artifacts"
+    },
+    {
+      "columns": [
+        "coworker_id"
+      ],
+      "tableTo": "coworkers",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
+      "nameExplicit": false,
+      "name": "fk_artifacts_coworker_id_coworkers_id_fk",
+      "entityType": "fks",
+      "table": "artifacts"
+    },
+    {
+      "columns": [
+        "conversation_id"
+      ],
+      "tableTo": "conversations",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
+      "nameExplicit": false,
+      "name": "fk_conversation_members_conversation_id_conversations_id_fk",
+      "entityType": "fks",
+      "table": "conversation_members"
+    },
+    {
+      "columns": [
+        "coworker_id"
+      ],
+      "tableTo": "coworkers",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
+      "nameExplicit": false,
+      "name": "fk_conversation_members_coworker_id_coworkers_id_fk",
+      "entityType": "fks",
+      "table": "conversation_members"
+    },
+    {
+      "columns": [
+        "coworker_id"
+      ],
+      "tableTo": "coworkers",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
+      "nameExplicit": false,
+      "name": "fk_conversations_coworker_id_coworkers_id_fk",
+      "entityType": "fks",
+      "table": "conversations"
+    },
+    {
+      "columns": [
+        "coworker_id"
+      ],
+      "tableTo": "coworkers",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
+      "nameExplicit": false,
+      "name": "fk_coworker_skills_coworker_id_coworkers_id_fk",
+      "entityType": "fks",
+      "table": "coworker_skills"
+    },
+    {
+      "columns": [
+        "skill_id"
+      ],
+      "tableTo": "skills",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
+      "nameExplicit": false,
+      "name": "fk_coworker_skills_skill_id_skills_id_fk",
+      "entityType": "fks",
+      "table": "coworker_skills"
+    },
+    {
+      "columns": [
+        "conversation_id"
+      ],
+      "tableTo": "conversations",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
+      "nameExplicit": false,
+      "name": "fk_discussion_sessions_conversation_id_conversations_id_fk",
+      "entityType": "fks",
+      "table": "discussion_sessions"
+    },
+    {
+      "columns": [
+        "message_id"
+      ],
+      "tableTo": "messages",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
+      "nameExplicit": false,
+      "name": "fk_message_mentions_message_id_messages_id_fk",
+      "entityType": "fks",
+      "table": "message_mentions"
+    },
+    {
+      "columns": [
+        "coworker_id"
+      ],
+      "tableTo": "coworkers",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
+      "nameExplicit": false,
+      "name": "fk_message_mentions_coworker_id_coworkers_id_fk",
+      "entityType": "fks",
+      "table": "message_mentions"
+    },
+    {
+      "columns": [
+        "conversation_id"
+      ],
+      "tableTo": "conversations",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
+      "nameExplicit": false,
+      "name": "fk_messages_conversation_id_conversations_id_fk",
+      "entityType": "fks",
+      "table": "messages"
+    },
+    {
+      "columns": [
+        "coworker_id"
+      ],
+      "tableTo": "coworkers",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "SET NULL",
+      "nameExplicit": false,
+      "name": "fk_messages_coworker_id_coworkers_id_fk",
+      "entityType": "fks",
+      "table": "messages"
+    },
+    {
+      "columns": [
+        "task_id"
+      ],
+      "tableTo": "tasks",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "SET NULL",
+      "nameExplicit": false,
+      "name": "fk_messages_task_id_tasks_id_fk",
+      "entityType": "fks",
+      "table": "messages"
+    },
+    {
+      "columns": [
+        "coworker_id"
+      ],
+      "tableTo": "coworkers",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
+      "nameExplicit": false,
+      "name": "fk_schedules_coworker_id_coworkers_id_fk",
+      "entityType": "fks",
+      "table": "schedules"
+    },
+    {
+      "columns": [
+        "tool_call_id"
+      ],
+      "tableTo": "tool_calls",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
+      "nameExplicit": false,
+      "name": "fk_side_effects_tool_call_id_tool_calls_id_fk",
+      "entityType": "fks",
+      "table": "side_effects"
+    },
+    {
+      "columns": [
+        "skill_id"
+      ],
+      "tableTo": "skills",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
+      "nameExplicit": false,
+      "name": "fk_skill_resources_skill_id_skills_id_fk",
+      "entityType": "fks",
+      "table": "skill_resources"
+    },
+    {
+      "columns": [
+        "task_id"
+      ],
+      "tableTo": "tasks",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
+      "nameExplicit": false,
+      "name": "fk_task_checkpoints_task_id_tasks_id_fk",
+      "entityType": "fks",
+      "table": "task_checkpoints"
+    },
+    {
+      "columns": [
+        "task_id"
+      ],
+      "tableTo": "tasks",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
+      "nameExplicit": false,
+      "name": "fk_task_image_attachments_task_id_tasks_id_fk",
+      "entityType": "fks",
+      "table": "task_image_attachments"
+    },
+    {
+      "columns": [
+        "coworker_id"
+      ],
+      "tableTo": "coworkers",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
+      "nameExplicit": false,
+      "name": "fk_task_image_attachments_coworker_id_coworkers_id_fk",
+      "entityType": "fks",
+      "table": "task_image_attachments"
+    },
+    {
+      "columns": [
+        "coworker_id"
+      ],
+      "tableTo": "coworkers",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
+      "nameExplicit": false,
+      "name": "fk_tasks_coworker_id_coworkers_id_fk",
+      "entityType": "fks",
+      "table": "tasks"
+    },
+    {
+      "columns": [
+        "schedule_id"
+      ],
+      "tableTo": "schedules",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "SET NULL",
+      "nameExplicit": false,
+      "name": "fk_tasks_schedule_id_schedules_id_fk",
+      "entityType": "fks",
+      "table": "tasks"
+    },
+    {
+      "columns": [
+        "thread_id"
+      ],
+      "tableTo": "conversations",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
+      "nameExplicit": false,
+      "name": "fk_tasks_thread_id_conversations_id_fk",
+      "entityType": "fks",
+      "table": "tasks"
+    },
+    {
+      "columns": [
+        "discussion_id"
+      ],
+      "tableTo": "discussion_sessions",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "SET NULL",
+      "nameExplicit": false,
+      "name": "fk_tasks_discussion_id_discussion_sessions_id_fk",
+      "entityType": "fks",
+      "table": "tasks"
+    },
+    {
+      "columns": [
+        "task_id"
+      ],
+      "tableTo": "tasks",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
+      "nameExplicit": false,
+      "name": "fk_tool_calls_task_id_tasks_id_fk",
+      "entityType": "fks",
+      "table": "tool_calls"
+    },
+    {
+      "columns": [
+        "coworker_id"
+      ],
+      "tableTo": "coworkers",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
+      "nameExplicit": false,
+      "name": "fk_tool_calls_coworker_id_coworkers_id_fk",
+      "entityType": "fks",
+      "table": "tool_calls"
+    },
+    {
+      "columns": [
+        "conversation_id",
+        "coworker_id"
+      ],
+      "nameExplicit": false,
+      "name": "conversation_members_pk",
+      "entityType": "pks",
+      "table": "conversation_members"
+    },
+    {
+      "columns": [
+        "coworker_id",
+        "skill_id"
+      ],
+      "nameExplicit": false,
+      "name": "coworker_skills_pk",
+      "entityType": "pks",
+      "table": "coworker_skills"
+    },
+    {
+      "columns": [
+        "message_id",
+        "coworker_id"
+      ],
+      "nameExplicit": false,
+      "name": "message_mentions_pk",
+      "entityType": "pks",
+      "table": "message_mentions"
+    },
+    {
+      "columns": [
+        "skill_id",
+        "path"
+      ],
+      "nameExplicit": false,
+      "name": "skill_resources_pk",
+      "entityType": "pks",
+      "table": "skill_resources"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "activity_pk",
+      "table": "activity",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "key"
+      ],
+      "nameExplicit": false,
+      "name": "app_metadata_pk",
+      "table": "app_metadata",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "approvals_pk",
+      "table": "approvals",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "artifacts_pk",
+      "table": "artifacts",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "conversations_pk",
+      "table": "conversations",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "coworkers_pk",
+      "table": "coworkers",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "discussion_sessions_pk",
+      "table": "discussion_sessions",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "integrations_pk",
+      "table": "integrations",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "messages_pk",
+      "table": "messages",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "model_endpoints_pk",
+      "table": "model_endpoints",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "schedules_pk",
+      "table": "schedules",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "version"
+      ],
+      "nameExplicit": false,
+      "name": "schema_migrations_pk",
+      "table": "schema_migrations",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "key"
+      ],
+      "nameExplicit": false,
+      "name": "settings_pk",
+      "table": "settings",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "idempotency_key"
+      ],
+      "nameExplicit": false,
+      "name": "side_effects_pk",
+      "table": "side_effects",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "skills_pk",
+      "table": "skills",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "task_id"
+      ],
+      "nameExplicit": false,
+      "name": "task_checkpoints_pk",
+      "table": "task_checkpoints",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "task_image_attachments_pk",
+      "table": "task_image_attachments",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "tasks_pk",
+      "table": "tasks",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "tool_calls_pk",
+      "table": "tool_calls",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        {
+          "value": "\"created_at\" desc",
+          "isExpression": true
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "activity_created_idx",
+      "entityType": "indexes",
+      "table": "activity"
+    },
+    {
+      "columns": [
+        {
+          "value": "status",
+          "isExpression": false
+        },
+        {
+          "value": "\"created_at\" asc",
+          "isExpression": true
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "approvals_status_created_idx",
+      "entityType": "indexes",
+      "table": "approvals"
+    },
+    {
+      "columns": [
+        {
+          "value": "task_id",
+          "isExpression": false
+        },
+        {
+          "value": "file_path",
+          "isExpression": false
+        }
+      ],
+      "isUnique": true,
+      "where": "\"artifacts\".\"task_id\" is not null",
+      "origin": "manual",
+      "name": "artifacts_task_path_idx",
+      "entityType": "indexes",
+      "table": "artifacts"
+    },
+    {
+      "columns": [
+        {
+          "value": "coworker_id",
+          "isExpression": false
+        },
+        {
+          "value": "conversation_id",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "conversation_members_coworker_idx",
+      "entityType": "indexes",
+      "table": "conversation_members"
+    },
+    {
+      "columns": [
+        {
+          "value": "coworker_id",
+          "isExpression": false
+        },
+        {
+          "value": "\"updated_at\" desc",
+          "isExpression": true
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "conversations_coworker_updated_idx",
+      "entityType": "indexes",
+      "table": "conversations"
+    },
+    {
+      "columns": [
+        {
+          "value": "conversation_id",
+          "isExpression": false
+        },
+        {
+          "value": "\"updated_at\" desc",
+          "isExpression": true
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "discussion_sessions_conversation_idx",
+      "entityType": "indexes",
+      "table": "discussion_sessions"
+    },
+    {
+      "columns": [
+        {
+          "value": "source_message_id",
+          "isExpression": false
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "origin": "manual",
+      "name": "discussion_sessions_source_message_idx",
+      "entityType": "indexes",
+      "table": "discussion_sessions"
+    },
+    {
+      "columns": [
+        {
+          "value": "coworker_id",
+          "isExpression": false
+        },
+        {
+          "value": "message_id",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "message_mentions_coworker_idx",
+      "entityType": "indexes",
+      "table": "message_mentions"
+    },
+    {
+      "columns": [
+        {
+          "value": "conversation_id",
+          "isExpression": false
+        },
+        {
+          "value": "\"created_at\" asc",
+          "isExpression": true
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "messages_conversation_created_idx",
+      "entityType": "indexes",
+      "table": "messages"
+    },
+    {
+      "columns": [
+        {
+          "value": "task_id",
+          "isExpression": false
+        },
+        {
+          "value": "\"created_at\" asc",
+          "isExpression": true
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "task_image_attachments_task_idx",
+      "entityType": "indexes",
+      "table": "task_image_attachments"
+    },
+    {
+      "columns": [
+        {
+          "value": "run_id",
+          "isExpression": false
+        }
+      ],
+      "isUnique": true,
+      "where": "\"tasks\".\"run_id\" is not null",
+      "origin": "manual",
+      "name": "tasks_run_id_idx",
+      "entityType": "indexes",
+      "table": "tasks"
+    },
+    {
+      "columns": [
+        {
+          "value": "source_message_id",
+          "isExpression": false
+        },
+        {
+          "value": "coworker_id",
+          "isExpression": false
+        }
+      ],
+      "isUnique": true,
+      "where": "\"tasks\".\"source_message_id\" is not null and \"tasks\".\"discussion_id\" is null",
+      "origin": "manual",
+      "name": "tasks_source_message_coworker_idx",
+      "entityType": "indexes",
+      "table": "tasks"
+    },
+    {
+      "columns": [
+        {
+          "value": "discussion_id",
+          "isExpression": false
+        },
+        {
+          "value": "discussion_turn",
+          "isExpression": false
+        }
+      ],
+      "isUnique": true,
+      "where": "\"tasks\".\"discussion_id\" is not null",
+      "origin": "manual",
+      "name": "tasks_discussion_turn_idx",
+      "entityType": "indexes",
+      "table": "tasks"
+    },
+    {
+      "columns": [
+        {
+          "value": "coworker_id",
+          "isExpression": false
+        },
+        {
+          "value": "status",
+          "isExpression": false
+        },
+        {
+          "value": "\"priority\" desc",
+          "isExpression": true
+        },
+        {
+          "value": "\"created_at\" asc",
+          "isExpression": true
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "tasks_coworker_queue_idx",
+      "entityType": "indexes",
+      "table": "tasks"
+    },
+    {
+      "columns": [
+        "tool_call_id"
+      ],
+      "nameExplicit": false,
+      "name": "approvals_tool_call_id_unique",
+      "entityType": "uniques",
+      "table": "approvals"
+    },
+    {
+      "columns": [
+        "name"
+      ],
+      "nameExplicit": false,
+      "name": "skills_name_unique",
+      "entityType": "uniques",
+      "table": "skills"
+    },
+    {
+      "columns": [
+        "idempotency_key"
+      ],
+      "nameExplicit": false,
+      "name": "tool_calls_idempotency_key_unique",
+      "entityType": "uniques",
+      "table": "tool_calls"
+    },
+    {
+      "value": "\"risk_level\" in ('low', 'medium', 'high')",
+      "name": "approvals_risk_level_check",
+      "entityType": "checks",
+      "table": "approvals"
+    },
+    {
+      "value": "\"status\" in ('PENDING', 'APPROVED', 'REJECTED', 'EDITED', 'EXPIRED')",
+      "name": "approvals_status_check",
+      "entityType": "checks",
+      "table": "approvals"
+    },
+    {
+      "value": "\"kind\" in ('direct', 'group')",
+      "name": "conversations_kind_check",
+      "entityType": "checks",
+      "table": "conversations"
+    },
+    {
+      "value": "\"status\" in ('active', 'paused')",
+      "name": "coworkers_status_check",
+      "entityType": "checks",
+      "table": "coworkers"
+    },
+    {
+      "value": "\"runtime_status\" in ('STOPPED', 'STARTING', 'IDLE', 'WORKING', 'WAITING_FOR_APPROVAL', 'ERROR')",
+      "name": "coworkers_runtime_status_check",
+      "entityType": "checks",
+      "table": "coworkers"
+    },
+    {
+      "value": "\"status\" in ('active', 'awaiting_user', 'completed', 'cancelled', 'failed')",
+      "name": "discussion_sessions_status_check",
+      "entityType": "checks",
+      "table": "discussion_sessions"
+    },
+    {
+      "value": "\"next_turn\" >= 0",
+      "name": "discussion_sessions_next_turn_check",
+      "entityType": "checks",
+      "table": "discussion_sessions"
+    },
+    {
+      "value": "\"turn_limit\" > 0",
+      "name": "discussion_sessions_turn_limit_check",
+      "entityType": "checks",
+      "table": "discussion_sessions"
+    },
+    {
+      "value": "\"hard_limit\" >= \"turn_limit\"",
+      "name": "discussion_sessions_hard_limit_check",
+      "entityType": "checks",
+      "table": "discussion_sessions"
+    },
+    {
+      "value": "\"type\" in ('email', 'telegram')",
+      "name": "integrations_type_check",
+      "entityType": "checks",
+      "table": "integrations"
+    },
+    {
+      "value": "\"mode\" in ('local-outbox', 'resend', 'bot')",
+      "name": "integrations_mode_check",
+      "entityType": "checks",
+      "table": "integrations"
+    },
+    {
+      "value": "\"status\" in ('connected', 'disconnected', 'error')",
+      "name": "integrations_status_check",
+      "entityType": "checks",
+      "table": "integrations"
+    },
+    {
+      "value": "\"role\" in ('user', 'assistant', 'system', 'tool')",
+      "name": "messages_role_check",
+      "entityType": "checks",
+      "table": "messages"
+    },
+    {
+      "value": "\"schedule_type\" in ('cron', 'once')",
+      "name": "schedules_type_check",
+      "entityType": "checks",
+      "table": "schedules"
+    },
+    {
+      "value": "\"enabled\" in (0, 1)",
+      "name": "schedules_enabled_check",
+      "entityType": "checks",
+      "table": "schedules"
+    },
+    {
+      "value": "\"status\" in ('RUNNING', 'COMPLETED', 'FAILED')",
+      "name": "side_effects_status_check",
+      "entityType": "checks",
+      "table": "side_effects"
+    },
+    {
+      "value": "\"bundled\" in (0, 1)",
+      "name": "skills_bundled_check",
+      "entityType": "checks",
+      "table": "skills"
+    },
+    {
+      "value": "\"size\" > 0",
+      "name": "task_image_attachments_size_check",
+      "entityType": "checks",
+      "table": "task_image_attachments"
+    },
+    {
+      "value": "\"status\" in ('QUEUED', 'RUNNING', 'WAITING_FOR_APPROVAL', 'COMPLETED', 'FAILED', 'CANCELLED')",
+      "name": "tasks_status_check",
+      "entityType": "checks",
+      "table": "tasks"
+    },
+    {
+      "value": "\"source\" in ('manual', 'schedule', 'recovery')",
+      "name": "tasks_source_check",
+      "entityType": "checks",
+      "table": "tasks"
+    },
+    {
+      "value": "\"status\" in ('REQUESTED', 'WAITING_FOR_APPROVAL', 'RUNNING', 'COMPLETED', 'FAILED', 'DENIED')",
+      "name": "tool_calls_status_check",
+      "entityType": "checks",
+      "table": "tool_calls"
+    }
+  ],
+  "renames": []
+}

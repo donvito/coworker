@@ -159,7 +159,8 @@ svg {
 }
 
 /* Window-wide titlebar drag strip over the main content; the sidebar keeps
-   its own drag region so its buttons stay clickable. */
+   its own drag region so its buttons stay clickable. The top-right corner is
+   left free for the panel toggle. */
 .app-window-drag {
   position: fixed;
   z-index: 15;
@@ -300,12 +301,14 @@ svg {
   align-items: center;
   gap: 11px;
   min-height: 42px;
-  padding: 0 11px;
+  /* Bleed to the sidebar edges so the highlight spans the full row. */
+  margin: 0 -14px;
+  padding: 0 25px;
   color: rgba(245, 248, 246, 0.7);
   text-align: left;
   background: transparent;
-  border: 1px solid transparent;
-  border-radius: 10px;
+  border: 0;
+  border-radius: 0;
   transition:
     color 150ms ease,
     background 150ms ease,
@@ -329,8 +332,6 @@ svg {
 .nav-item.active {
   color: #fff;
   background: rgba(255, 255, 255, 0.1);
-  border-color: rgba(255, 255, 255, 0.08);
-  box-shadow: inset 3px 0 #91d1ad;
 }
 
 .nav-badge {
@@ -365,11 +366,7 @@ svg {
   min-width: 0;
   height: 100%;
   overflow: auto;
-  background:
-    linear-gradient(rgba(255, 255, 255, 0.32) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.28) 1px, transparent 1px),
-    var(--cloud);
-  background-size: 32px 32px;
+  background: var(--cloud);
 }
 
 .page {
@@ -779,9 +776,8 @@ svg {
 
 .floor-card-foot {
   display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 10px;
+  align-items: center;
+  gap: 8px;
   margin-top: auto;
   padding-top: 10px;
   border-top: 1px solid var(--cloud);
@@ -791,6 +787,7 @@ svg {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  margin-left: auto;
   color: var(--blue);
   font-size: 12.5px;
   font-weight: 650;
@@ -997,18 +994,25 @@ svg {
 
 .coworker-model-badge > code {
   min-width: 0;
-  max-width: 100%;
+  /* Long model ids truncate on one line; the tooltip carries the full name. */
+  max-width: 220px;
+  overflow: hidden;
   color: #36486b;
   font-family: var(--mono);
   font-size: 10.5px;
   font-weight: 700;
   line-height: 1.35;
-  overflow-wrap: anywhere;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .coworker-model-badge.compact {
   gap: 1px;
   padding: 3px 6px;
+}
+
+.coworker-model-badge.compact > code {
+  max-width: 150px;
 }
 
 .status-label {
@@ -1324,6 +1328,8 @@ svg {
   grid-column: 1 / -1;
   padding-top: 11px;
   align-self: end;
+  align-items: flex-start;
+  gap: 7px;
   border-top: 1px solid var(--line);
 }
 
@@ -1359,14 +1365,39 @@ svg {
   gap: 2px;
 }
 
-.roster-arrow {
-  width: 15px;
-  height: 15px;
-  color: var(--line-strong);
+
+.roster-open-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--forest);
+  font-size: 11.5px;
+  font-weight: 650;
 }
 
-.coworker-roster.cards .roster-arrow {
-  margin-top: 5px;
+.roster-open-cta svg {
+  width: 13px;
+  height: 13px;
+  transition: transform 160ms ease;
+}
+
+.roster-card:hover .roster-open-cta svg {
+  transform: translateX(3px);
+}
+
+.coworker-roster.cards .roster-open-cta {
+  grid-column: 1 / -1;
+  justify-self: end;
+  align-self: end;
+}
+
+/* The compact directory keeps just the quiet chevron at the row's end. */
+.coworker-roster.list .roster-open-cta > span {
+  display: none;
+}
+
+.coworker-roster.list .roster-open-cta {
+  color: var(--line-strong);
 }
 
 .coworker-directory-empty {
@@ -1734,6 +1765,7 @@ svg {
   display: grid;
   place-items: center;
   padding: 28px;
+  -webkit-app-region: no-drag;
   background: radial-gradient(
     110% 110% at 50% 12%,
     rgba(19, 36, 29, 0.28) 0%,
@@ -3023,7 +3055,7 @@ select:focus {
 .conversation-layout {
   position: relative;
   display: grid;
-  grid-template-columns: var(--conversation-roster-width, 260px) minmax(540px, 1fr) 340px;
+  grid-template-columns: var(--conversation-roster-width, 260px) minmax(540px, 1fr) auto;
   width: 100%;
   height: 100%;
   min-height: 0;
@@ -3031,8 +3063,31 @@ select:focus {
   background: var(--paper);
 }
 
-.conversation-layout.rail-hidden {
-  grid-template-columns: var(--conversation-roster-width, 260px) minmax(0, 1fr);
+.conversation-layout .conversation-right-rail {
+  width: var(--conversation-rail-width, 340px);
+  overflow: hidden;
+  visibility: visible;
+  opacity: 1;
+  transition:
+    width 280ms cubic-bezier(0.32, 0.72, 0.24, 1),
+    opacity 200ms ease,
+    visibility 0s linear 0s;
+}
+
+/* Pin inner content so it clips instead of reflowing while the rail animates. */
+.conversation-layout .conversation-right-rail > * {
+  min-width: min(280px, var(--conversation-rail-width, 340px));
+}
+
+.conversation-layout.rail-hidden .conversation-right-rail {
+  width: 0;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    width 280ms cubic-bezier(0.32, 0.72, 0.24, 1),
+    opacity 200ms ease,
+    visibility 0s linear 280ms;
 }
 
 .conversation-history-loading {
@@ -3100,11 +3155,19 @@ select:focus {
   );
 }
 
+/* The header bars double as the window titlebar: the whole bar drags the
+   window while every interactive control inside opts back out. */
 .conversation-roster-head,
 .conversation-main-head,
 .conversation-approval-head {
   position: relative;
   z-index: 13;
+  -webkit-app-region: drag;
+}
+
+.conversation-roster-head :is(button, input, select, a, label, [role="button"]),
+.conversation-main-head :is(button, input, select, a, label, [role="button"]),
+.conversation-approval-head :is(button, input, select, a, label, [role="button"]) {
   -webkit-app-region: no-drag;
 }
 
@@ -3478,6 +3541,54 @@ select:focus {
   height: 14px;
 }
 
+.conversation-identity-tools {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 3px;
+}
+
+/* The rail toggle rides the top-right: inside the rail's tab header when the
+   panel is open, at the end of the header controls when hidden. The active
+   state means "panel visible", not a tab, so keep the icon-button look. */
+.conversation-rail-tabs .conversation-rail-toggle,
+.conversation-rail-tabs .conversation-rail-toggle.active {
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  margin-bottom: 5px;
+  padding: 0;
+  align-self: center;
+  color: var(--ink-soft);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.conversation-rail-tabs .conversation-rail-toggle:hover {
+  color: var(--ink);
+  background: var(--forest-soft);
+}
+
+.conversation-profile-tools {
+  display: flex;
+  align-items: center;
+  align-self: center;
+  gap: 4px;
+  margin-left: 10px;
+}
+
+.conversation-head-profile .conversation-history-trigger {
+  min-height: 30px;
+  padding: 0 10px;
+}
+
+.conversation-head-profile .conversation-icon-button {
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  min-height: 30px;
+}
+
 .conversation-history-menu {
   position: absolute;
   z-index: 40;
@@ -3580,13 +3691,20 @@ select:focus {
   text-align: center;
 }
 
-.conversation-history-list > button {
+.conversation-history-row {
   display: flex;
-  width: 100%;
+  align-items: stretch;
+  gap: 2px;
+}
+
+.conversation-history-row > .conversation-history-select {
+  display: flex;
+  min-width: 0;
   padding: 10px;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  flex: 1;
   color: var(--ink);
   text-align: left;
   background: transparent;
@@ -3594,13 +3712,58 @@ select:focus {
   border-radius: 8px;
 }
 
-.conversation-history-list > button:hover,
-.conversation-history-list > button.selected {
+.conversation-history-row:hover > .conversation-history-select,
+.conversation-history-row.selected > .conversation-history-select {
   background: var(--forest-soft);
   border-color: #c2d7cb;
 }
 
-.conversation-history-list > button > span {
+.conversation-history-archive {
+  display: flex;
+  width: 30px;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  color: var(--ink-soft);
+  visibility: hidden;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+}
+
+.conversation-history-row:hover .conversation-history-archive {
+  visibility: visible;
+}
+
+.conversation-history-archive:hover {
+  color: var(--ink);
+  background: var(--forest-soft);
+  border-color: #c2d7cb;
+}
+
+.conversation-history-archive svg {
+  width: 13px;
+  height: 13px;
+}
+
+/* Invisible click-catcher behind popover menus; also covers window drag strips. */
+.menu-backdrop {
+  position: fixed;
+  z-index: 39;
+  inset: 0;
+  background: transparent;
+  -webkit-app-region: no-drag;
+}
+
+.archive-confirm-modal {
+  width: min(440px, calc(100vw - 48px));
+}
+
+.archive-confirm-modal h2 {
+  overflow-wrap: anywhere;
+}
+
+.conversation-history-select > span {
   display: flex;
   min-width: 0;
   flex-direction: column;
@@ -3620,7 +3783,7 @@ select:focus {
   font-size: 9px;
 }
 
-.conversation-history-list > button > svg {
+.conversation-history-select > svg {
   width: 14px;
   height: 14px;
   color: var(--forest);
@@ -4675,6 +4838,63 @@ select:focus {
   display: none;
 }
 
+.composer-footer {
+  display: flex;
+  grid-column: 1 / -1;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1px 3px 11px;
+  gap: 10px;
+}
+
+.composer-footer > small {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-thread .workroom-composer .composer-footer small {
+  text-align: left;
+}
+
+.conversation-model-switcher.chip-mode {
+  margin-top: 0;
+}
+
+.quick-model-trigger.chip,
+.workroom-composer .quick-model-trigger.chip {
+  display: inline-flex;
+  width: auto;
+  max-width: min(360px, 42vw);
+  min-height: 30px;
+  padding: 5px 13px;
+  gap: 7px;
+  align-items: center;
+  color: #33443c;
+  font-size: 12px;
+  background: var(--white);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+}
+
+.quick-model-trigger.chip:hover,
+.quick-model-trigger.chip[aria-expanded="true"] {
+  color: var(--forest);
+  border-color: #9dbcac;
+}
+
+.conversation-model-switcher.up .quick-model-popover {
+  top: auto;
+  right: 0;
+  bottom: calc(100% + 10px);
+  left: auto;
+  /* Fixed height: the popover hangs upward, so growing once models load
+     would shift its top edge. Open at full size and fill in place. */
+  height: min(520px, calc(100vh - 190px));
+}
+
 .composer-image-tray {
   display: flex;
   grid-column: 1 / -1;
@@ -4794,7 +5014,7 @@ select:focus {
   position: relative;
   z-index: 13;
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr 1fr auto;
   min-height: 52px;
   padding: 5px 9px 0;
   background: rgba(255, 255, 255, 0.72);
@@ -6180,6 +6400,224 @@ select:focus {
   max-width: 560px;
 }
 
+.telegram-connection {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+}
+
+.telegram-connection-identity {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.modal-delete-action {
+  margin-right: auto;
+}
+
+.telegram-link-badge {
+  color: #2a6f97 !important;
+  background: #e3f0f7 !important;
+  border-color: #c4dcea !important;
+}
+
+.avatar-picker > span {
+  display: block;
+  margin-bottom: 7px;
+  font-size: 12px;
+  font-weight: 620;
+}
+
+.avatar-picker-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.avatar-option {
+  display: flex;
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  overflow: hidden;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid transparent;
+  border-radius: 50%;
+  opacity: 0.75;
+}
+
+.avatar-option img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.avatar-option:hover {
+  opacity: 1;
+}
+
+.avatar-option.selected {
+  opacity: 1;
+  border-color: var(--forest);
+  box-shadow: 0 0 0 3px var(--forest-soft);
+}
+
+/* Hover-revealed copy control on chat messages. */
+.copy-text-button {
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink-soft);
+  vertical-align: middle;
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  opacity: 0;
+  transition: opacity 120ms ease, color 120ms ease;
+}
+
+.copy-text-button svg {
+  width: 12px;
+  height: 12px;
+}
+
+.copy-text-button:hover {
+  color: var(--ink);
+  background: rgba(20, 35, 28, 0.08);
+}
+
+.copy-text-button.copied {
+  width: auto;
+  padding: 0 6px;
+  gap: 3px;
+  color: var(--forest);
+  font-size: 10px;
+  font-weight: 680;
+  background: rgba(60, 157, 104, 0.14);
+  opacity: 1;
+}
+
+.workroom-turn:hover .copy-text-button,
+.copy-text-button:focus-visible {
+  opacity: 1;
+}
+
+.workroom-message-meta .copy-text-button,
+.channel-message-author .copy-text-button {
+  margin-left: 4px;
+}
+
+/* Activity rows that resolve to a conversation render as buttons. */
+button.activity-entry,
+button.floor-activity-row {
+  width: 100%;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  background: transparent;
+  border-right: 0;
+  border-bottom: 0;
+  border-left: 0;
+  border-radius: 0;
+}
+
+button.activity-entry:hover,
+button.floor-activity-row:hover {
+  background: var(--forest-soft);
+}
+
+.settings-section h2.integration-divider {
+  margin-top: 34px;
+  padding-top: 26px;
+  border-top: 1px solid var(--line);
+}
+
+.telegram-connection-identity strong {
+  overflow: hidden;
+  font-size: 13.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.telegram-connection-identity small {
+  color: var(--ink-soft);
+  font-size: 11px;
+}
+
+.telegram-connection-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 8px;
+}
+
+.telegram-pairing {
+  max-width: 560px;
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  background: #fdf4e3;
+  border: 1px solid #ecd9ae;
+  border-radius: 11px;
+}
+
+.telegram-pairing strong {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 13px;
+}
+
+.telegram-pairing p {
+  margin: 0 0 10px;
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
+.telegram-pairing-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.telegram-relink-warning {
+  margin: 0;
+  padding: 9px 12px;
+  color: #7a4b12;
+  font-size: 12px;
+  line-height: 1.5;
+  background: #fdf3e4;
+  border: 1px solid #f0d9b4;
+  border-radius: 10px;
+}
+
+.telegram-hint {
+  max-width: 560px;
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
+.telegram-steps {
+  display: grid;
+  max-width: 560px;
+  margin: 0 0 14px;
+  padding-left: 20px;
+  gap: 4px;
+  color: var(--ink-soft);
+  font-size: 12.5px;
+}
+
 .settings-notice {
   margin-bottom: 17px;
   padding: 9px 11px;
@@ -6501,7 +6939,8 @@ select:focus {
   }
 
   .conversation-layout {
-    grid-template-columns: var(--conversation-roster-width, 214px) minmax(430px, 1fr) 282px;
+    --conversation-rail-width: 282px;
+    grid-template-columns: var(--conversation-roster-width, 214px) minmax(430px, 1fr) auto;
   }
 
   .page {
@@ -6577,6 +7016,7 @@ select:focus {
   .nav-item {
     justify-content: center;
     width: 48px;
+    margin: 0;
     padding: 0;
   }
 

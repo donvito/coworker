@@ -39,6 +39,7 @@ export const createCoworkerSchema = z.object({
   name: z.string().trim().min(1).max(80),
   role: z.string().trim().min(1).max(120),
   description: optionalText,
+  avatarIndex: z.number().int().min(0).max(8).optional(),
   systemPrompt: z.string().trim().min(1).max(50_000),
   modelProvider: modelProviderSchema,
   modelName: z.string().trim().min(1).max(160),
@@ -331,6 +332,15 @@ export const addModelEndpointSchema = z.object({
 export const configureWebSearchSchema = z.object({
   provider: z.enum(webSearchProviders),
   apiKey: z.string().trim().min(1).max(2_000),
+});
+
+export const configureTelegramSchema = z.object({
+  botToken: z
+    .string()
+    .trim()
+    .regex(/^\d+:[\w-]{20,}$/, "That does not look like a BotFather token")
+    .optional(),
+  coworkerId: identifier,
 });
 
 export const installSkillUrlSchema = z.object({

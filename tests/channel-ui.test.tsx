@@ -73,6 +73,7 @@ describe("group channel creation", () => {
       kind: "direct",
       memberIds: ["ava"],
       title: "Ava",
+      archivedAt: null,
       createdAt: "2026-08-24T00:00:00.000Z",
       updatedAt: "2026-08-24T00:00:00.000Z",
     };
@@ -82,6 +83,7 @@ describe("group channel creation", () => {
       kind: "group",
       memberIds: ["ava", "sarah"],
       title: "Launch",
+      archivedAt: null,
       createdAt: "2026-08-24T01:00:00.000Z",
       updatedAt: "2026-08-24T01:00:00.000Z",
     };
@@ -98,6 +100,7 @@ describe("group channel creation", () => {
       kind: "group",
       memberIds: [ava.id, sarah.id],
       title: "Launch",
+      archivedAt: null,
       createdAt: "2026-08-24T00:00:00.000Z",
       updatedAt: "2026-08-24T00:00:00.000Z",
     };
