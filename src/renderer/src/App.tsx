@@ -113,7 +113,9 @@ export default function App() {
       {page === "home" ? (
         <HomePage
           snapshot={snapshot}
-          onOpenCoworker={(coworker) => openCoworker(coworker.id)}
+          onOpenCoworker={(coworker, conversationId) =>
+            openCoworker(coworker.id, conversationId ?? null)
+          }
           onOpenApprovals={() => navigate("approvals")}
           onManageCoworkers={() => navigate("coworkers")}
           onOpenActivity={() => navigate("activity")}

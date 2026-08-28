@@ -35,7 +35,7 @@ export function HomePage({
   onChanged,
 }: {
   snapshot: AppSnapshot;
-  onOpenCoworker: (coworker: Coworker) => void;
+  onOpenCoworker: (coworker: Coworker, conversationId?: string) => void;
   onOpenApprovals: () => void;
   onManageCoworkers: () => void;
   onOpenActivity: () => void;
@@ -83,16 +83,20 @@ export function HomePage({
     setDispatching(true);
     setComposerError(null);
     try {
+      // Every composer task starts its own conversation; the conversation
+      // takes the task's title as soon as the task binds to it.
+      const conversation = await window.coworker.conversations.create({
+        coworkerId: assignee.id,
+      });
       await window.coworker.tasks.create({
         coworkerId: assignee.id,
         title: composerTaskTitle(text),
         input: text,
+        threadId: conversation.id,
       });
-      // Refresh before navigating so the task's new conversation is the
-      // latest one and gets auto-selected on the coworker page.
       await onChanged();
       setDraft("");
-      onOpenCoworker(assignee);
+      onOpenCoworker(assignee, conversation.id);
     } catch (dispatchError) {
       setComposerError(
         dispatchError instanceof Error ? dispatchError.message : String(dispatchError),
