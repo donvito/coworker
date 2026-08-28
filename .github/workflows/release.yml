@@ -64,6 +64,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
       - uses: actions/download-artifact@v4
         with:
           path: dist
@@ -75,7 +77,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.tag || github.ref_name }}
         run: |
-          cat > notes.md <<'NOTES'
+          RELEASE_NOTES="docs/releases/${TAG}.md"
+          if [[ -f "$RELEASE_NOTES" ]]; then
+            cp "$RELEASE_NOTES" notes.md
+            printf '\n' >> notes.md
+          else
+            : > notes.md
+          fi
+          cat >> notes.md <<'NOTES'
           ## Downloads
 
           | Platform | File |
@@ -95,6 +104,11 @@ jobs:
           NOTES
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" dist/* --clobber
+            gh release edit "$TAG" --title "Coworker $TAG" --notes-file notes.md
+          elif [[ -f "$RELEASE_NOTES" ]]; then
+            gh release create "$TAG" dist/* \
+              --title "Coworker $TAG" \
+              --notes-file notes.md
           else
             gh release create "$TAG" dist/* \
               --title "Coworker $TAG" \
