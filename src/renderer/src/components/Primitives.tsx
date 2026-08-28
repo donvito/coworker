@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import type {
   Coworker,
   Integration,
@@ -173,6 +173,41 @@ export function TelegramLinkBadge({ compact = false }: { compact?: boolean }) {
     >
       <span>Telegram</span>
     </span>
+  );
+}
+
+/** A quiet hover-revealed button that copies text and confirms briefly. */
+export function CopyTextButton({
+  text,
+  label = "Copy message",
+}: {
+  text: string;
+  label?: string;
+}) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      aria-label={copied ? "Copied" : label}
+      className={copied ? "copy-text-button copied" : "copy-text-button"}
+      onClick={(event) => {
+        event.stopPropagation();
+        const confirm = () => {
+          setCopied(true);
+          window.setTimeout(() => setCopied(false), 1600);
+        };
+        // The main-process clipboard is the dependable path in a sandboxed
+        // renderer; the web API stays as the fallback.
+        void window.coworker.app
+          .copyText(text)
+          .then(confirm)
+          .catch(() => navigator.clipboard.writeText(text).then(confirm));
+      }}
+      title={copied ? "Copied" : label}
+      type="button"
+    >
+      <Icon name={copied ? "check" : "copy"} />
+      {copied ? <span>Copied</span> : null}
+    </button>
   );
 }
 

@@ -526,6 +526,7 @@ export interface DesktopApi {
   platform: string;
   app: {
     bootstrap(): Promise<AppSnapshot>;
+    copyText(text: string): Promise<void>;
     openDataFolder(): Promise<void>;
     backup(): Promise<string | null>;
     exportDataBackup(): Promise<string | null>;

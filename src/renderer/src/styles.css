@@ -300,12 +300,14 @@ svg {
   align-items: center;
   gap: 11px;
   min-height: 42px;
-  padding: 0 11px;
+  /* Bleed to the sidebar edges so the highlight spans the full row. */
+  margin: 0 -14px;
+  padding: 0 25px;
   color: rgba(245, 248, 246, 0.7);
   text-align: left;
   background: transparent;
-  border: 1px solid transparent;
-  border-radius: 10px;
+  border: 0;
+  border-radius: 0;
   transition:
     color 150ms ease,
     background 150ms ease,
@@ -329,8 +331,6 @@ svg {
 .nav-item.active {
   color: #fff;
   background: rgba(255, 255, 255, 0.1);
-  border-color: rgba(255, 255, 255, 0.08);
-  box-shadow: inset 3px 0 #91d1ad;
 }
 
 .nav-badge {
@@ -365,11 +365,7 @@ svg {
   min-width: 0;
   height: 100%;
   overflow: auto;
-  background:
-    linear-gradient(rgba(255, 255, 255, 0.32) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.28) 1px, transparent 1px),
-    var(--cloud);
-  background-size: 32px 32px;
+  background: var(--cloud);
 }
 
 .page {
@@ -779,9 +775,8 @@ svg {
 
 .floor-card-foot {
   display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 10px;
+  align-items: center;
+  gap: 8px;
   margin-top: auto;
   padding-top: 10px;
   border-top: 1px solid var(--cloud);
@@ -791,6 +786,7 @@ svg {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  margin-left: auto;
   color: var(--blue);
   font-size: 12.5px;
   font-weight: 650;
@@ -997,18 +993,25 @@ svg {
 
 .coworker-model-badge > code {
   min-width: 0;
-  max-width: 100%;
+  /* Long model ids truncate on one line; the tooltip carries the full name. */
+  max-width: 220px;
+  overflow: hidden;
   color: #36486b;
   font-family: var(--mono);
   font-size: 10.5px;
   font-weight: 700;
   line-height: 1.35;
-  overflow-wrap: anywhere;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .coworker-model-badge.compact {
   gap: 1px;
   padding: 3px 6px;
+}
+
+.coworker-model-badge.compact > code {
+  max-width: 150px;
 }
 
 .status-label {
@@ -1324,6 +1327,8 @@ svg {
   grid-column: 1 / -1;
   padding-top: 11px;
   align-self: end;
+  align-items: flex-start;
+  gap: 7px;
   border-top: 1px solid var(--line);
 }
 
@@ -1358,6 +1363,7 @@ svg {
   align-self: flex-start;
   gap: 2px;
 }
+
 
 .roster-open-cta {
   display: inline-flex;
@@ -3517,23 +3523,31 @@ select:focus {
   margin-top: 3px;
 }
 
-.conversation-identity-tools .conversation-history-trigger {
-  min-height: 28px;
-  padding: 0 9px;
+.conversation-profile-tools {
+  display: flex;
+  align-items: center;
+  align-self: center;
+  gap: 4px;
+  margin-left: 10px;
 }
 
-.conversation-identity-tools .conversation-icon-button {
-  width: 28px;
-  min-width: 28px;
-  height: 28px;
-  min-height: 28px;
+.conversation-head-profile .conversation-history-trigger {
+  min-height: 30px;
+  padding: 0 10px;
+}
+
+.conversation-head-profile .conversation-icon-button {
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  min-height: 30px;
 }
 
 .conversation-history-menu {
   position: absolute;
   z-index: 40;
   top: calc(100% + 8px);
-  left: 0;
+  right: 0;
   width: min(350px, calc(100vw - 48px));
   overflow: hidden;
   background: rgba(255, 255, 255, 0.99);
@@ -6338,6 +6352,54 @@ select:focus {
   box-shadow: 0 0 0 3px var(--forest-soft);
 }
 
+/* Hover-revealed copy control on chat messages. */
+.copy-text-button {
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink-soft);
+  vertical-align: middle;
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  opacity: 0;
+  transition: opacity 120ms ease, color 120ms ease;
+}
+
+.copy-text-button svg {
+  width: 12px;
+  height: 12px;
+}
+
+.copy-text-button:hover {
+  color: var(--ink);
+  background: rgba(20, 35, 28, 0.08);
+}
+
+.copy-text-button.copied {
+  width: auto;
+  padding: 0 6px;
+  gap: 3px;
+  color: var(--forest);
+  font-size: 10px;
+  font-weight: 680;
+  background: rgba(60, 157, 104, 0.14);
+  opacity: 1;
+}
+
+.workroom-turn:hover .copy-text-button,
+.copy-text-button:focus-visible {
+  opacity: 1;
+}
+
+.workroom-message-meta .copy-text-button,
+.channel-message-author .copy-text-button {
+  margin-left: 4px;
+}
+
 /* Activity rows that resolve to a conversation render as buttons. */
 button.activity-entry,
 button.floor-activity-row {
@@ -6822,6 +6884,7 @@ button.floor-activity-row:hover {
   .nav-item {
     justify-content: center;
     width: 48px;
+    margin: 0;
     padding: 0;
   }
 

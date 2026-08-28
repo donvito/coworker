@@ -143,6 +143,12 @@ export function registerIpc(input: {
     if (result.canceled || !result.filePath) return null;
     return input.service.exportDataBackup(result.filePath);
   });
+  handle(ipcChannels.copyText, (_event, text) => {
+    if (typeof text !== "string" || text.length > 1_000_000) {
+      throw new Error("Only text up to 1 MB can be copied");
+    }
+    clipboard.writeText(text);
+  });
   handle(ipcChannels.getSettings, () => input.service.database.getSettings());
   handle(ipcChannels.updateSettings, (_event, patch) =>
     input.service.updateSettings(settingsPatchSchema.parse(patch)),

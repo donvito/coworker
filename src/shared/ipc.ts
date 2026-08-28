@@ -3,6 +3,7 @@ export const ipcChannels = {
   openDataFolder: "coworker:app:open-data-folder",
   backup: "coworker:app:backup",
   exportDataBackup: "coworker:app:export-data-backup",
+  copyText: "coworker:app:copy-text",
   getSettings: "coworker:app:get-settings",
   updateSettings: "coworker:app:update-settings",
   coworkersList: "coworker:coworkers:list",

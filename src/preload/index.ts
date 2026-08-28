@@ -6,6 +6,7 @@ const api: DesktopApi = {
   platform: process.platform,
   app: {
     bootstrap: () => ipcRenderer.invoke(ipcChannels.bootstrap),
+    copyText: (text) => ipcRenderer.invoke(ipcChannels.copyText, text),
     openDataFolder: () => ipcRenderer.invoke(ipcChannels.openDataFolder),
     backup: () => ipcRenderer.invoke(ipcChannels.backup),
     exportDataBackup: () => ipcRenderer.invoke(ipcChannels.exportDataBackup),

@@ -49,6 +49,7 @@ import {
   messageDayLabel,
 } from "../lib/conversation-utils";
 import {
+  CopyTextButton,
   CoworkerAvatar,
   CoworkerModelBadge,
   StatusLabel,
@@ -1156,7 +1157,10 @@ function GroupConversationSurface({
                       <CoworkerAvatar className="conversation-message-avatar" coworker={author} />
                     ) : null}
                     <div className="channel-message-stack">
-                      <small className="channel-message-author">{message.authorName}</small>
+                      <small className="channel-message-author">
+                        {message.authorName}
+                        <CopyTextButton text={message.content} />
+                      </small>
                       <div className="workroom-bubble">
                         {uniqueAttachments.length > 0 ? (
                           <PersistedMessageImages attachments={uniqueAttachments} />
@@ -2297,7 +2301,21 @@ function CoworkerSurface({
                   modelEndpoints={modelEndpoints}
                   onChanged={onChanged}
                 />
-                <div className="conversation-history-control" ref={historyRef}>
+              </span>
+            </span>
+            <span className="conversation-profile-tools">
+              <button
+                className="conversation-icon-button"
+                onClick={() => onManageCoworker(coworker)}
+                aria-label={`Configure ${coworker.name}`}
+                title={`Configure ${coworker.name}`}
+              >
+                <Icon name="settings" />
+              </button>
+            </span>
+          </div>
+          <div className="conversation-head-controls">
+            <div className="conversation-history-control" ref={historyRef}>
               <button
                 aria-expanded={historyOpen}
                 aria-haspopup="dialog"
@@ -2390,18 +2408,6 @@ function CoworkerSurface({
                 </div>
               ) : null}
                 </div>
-                <button
-                  className="conversation-icon-button"
-                  onClick={() => onManageCoworker(coworker)}
-                  aria-label={`Configure ${coworker.name}`}
-                  title={`Configure ${coworker.name}`}
-                >
-                  <Icon name="settings" />
-                </button>
-              </span>
-            </span>
-          </div>
-          <div className="conversation-head-controls">
             {selectedConversation && conversationId !== `coworker:${coworker.id}` ? (
               <button
                 aria-label="Archive this conversation"
@@ -2609,6 +2615,7 @@ function CoworkerSurface({
                         <small className="workroom-message-meta">
                           {message.role === "assistant" ? coworker.name : "You"} ·{" "}
                           {formatMessageTime(timestamp)}
+                          {content ? <CopyTextButton text={content} /> : null}
                         </small>
                       ) : null}
                     </div>
