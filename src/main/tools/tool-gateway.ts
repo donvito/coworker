@@ -75,9 +75,9 @@ const schemas = {
       name: z.string().trim().min(1).max(240).optional(),
       content: z.string().max(5_000_000).optional(),
       formats: z
-        .array(z.enum(["pdf", "docx", "xlsx", "csv"]))
+        .array(z.enum(["pdf", "docx", "xlsx", "csv", "pptx"]))
         .min(1)
-        .max(4)
+        .max(5)
         .refine((formats) => new Set(formats).size === formats.length, "Formats must be unique"),
     })
     .superRefine((value, context) => {
@@ -616,7 +616,7 @@ export class ToolGateway {
           const normalizedName = args.name!.replaceAll("\\", "/");
           const baseName = posix
             .basename(normalizedName)
-            .replace(/\.(?:pdf|docx?|xlsx?|csv)$/i, "");
+            .replace(/\.(?:pdf|docx?|xlsx?|csv|pptx?)$/i, "");
           if (!baseName || baseName === "." || baseName === "..") {
             throw new Error("Document name must contain a valid file name");
           }
@@ -659,7 +659,9 @@ export class ToolGateway {
                   ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                   : format === "xlsx"
                     ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    : "text/csv",
+                    : format === "pptx"
+                      ? "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+                      : "text/csv",
             filePath: absolutePath,
           });
           files.push({

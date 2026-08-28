@@ -219,12 +219,13 @@ const parameterSchemas: Record<string, ReturnType<typeof Type.Object>> = {
         Type.Literal("docx"),
         Type.Literal("xlsx"),
         Type.Literal("csv"),
+        Type.Literal("pptx"),
       ]),
       {
         description:
-          "One or more final output formats. For XLSX or CSV, content must include a Markdown table with a descriptive header row and one record per row. CSV supports exactly one table.",
+          "One or more final output formats. For XLSX or CSV, content must include a Markdown table with a descriptive header row and one record per row. CSV supports exactly one table. For PPTX (PowerPoint), the # title becomes the cover slide, each ## heading starts a slide, lists become bullets, and --- forces a slide break.",
         minItems: 1,
-        maxItems: 4,
+        maxItems: 5,
         uniqueItems: true,
       },
     ),

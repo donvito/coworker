@@ -226,10 +226,10 @@ export const bundledDocumentAuthoringSkill = {
   id: bundledDocumentAuthoringSkillId,
   name: "document-authoring",
   description:
-    "Create or substantially revise polished office documents and data reports in PDF, Word DOCX, Excel XLSX, CSV, Markdown, or plain text. Use for drafting, restructuring, or improving a final document's content and presentation. Do not use for merely reviewing, summarizing, or answering questions about a document.",
+    "Create or substantially revise polished office documents, presentations, and data reports in PDF, Word DOCX, Excel XLSX, CSV, PowerPoint PPTX, Markdown, or plain text. Use for drafting, restructuring, or improving a final document's content and presentation. Do not use for merely reviewing, summarizing, or answering questions about a document.",
   content: `---
 name: document-authoring
-description: Create or substantially revise polished office documents and data reports in PDF, Word DOCX, Excel XLSX, CSV, Markdown, or plain text. Use for drafting, restructuring, or improving a final document's content and presentation. Do not use for merely reviewing, summarizing, or answering questions about a document.
+description: Create or substantially revise polished office documents, presentations, and data reports in PDF, Word DOCX, Excel XLSX, CSV, PowerPoint PPTX, Markdown, or plain text. Use for drafting, restructuring, or improving a final document's content and presentation. Do not use for merely reviewing, summarizing, or answering questions about a document.
 ---
 
 # Document authoring
@@ -258,6 +258,13 @@ For Excel XLSX and CSV:
 - Use XLSX when presentation, titles, explanatory sections, filters, or multiple tables matter.
 - Use CSV for one portable data table. CSV supports exactly one table and does not preserve presentation layout.
 - Keep amounts, dates, percentages, identifiers, and formulas unambiguous. Do not add decorative prose inside the data table.
+
+For PowerPoint PPTX:
+
+- The single \`#\` title becomes the cover slide; every \`##\` heading starts a new slide with that heading as the slide title.
+- Write slide content as short bullet lists (about 4–7 bullets per slide); \`###\` renders as a bold lead-in line and \`---\` forces a slide break.
+- Markdown tables render as slide tables. Long sections continue automatically onto follow-up slides.
+- Call \`documents.export\` with the "pptx" format — never claim PowerPoint is unavailable, and do not export a different format than the user chose.
 
 ## Export and verify
 

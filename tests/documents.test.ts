@@ -6,6 +6,7 @@ import {
   createCsvDocument,
   createExcelDocument,
   createPdfDocument,
+  createPptxDocument,
   createWordDocument,
   parseDocumentMarkdown,
 } from "@main/integrations/documents";
@@ -43,6 +44,42 @@ afterEach(async () => {
 });
 
 describe("local document generation", () => {
+  it("generates a PowerPoint deck from slide-structured markdown", async () => {
+    const deck = `# AI and Safety
+
+## Why it matters
+
+- AI systems influence decisions at scale
+- Failures can be subtle and hard to detect
+- Students meet AI daily through apps and search
+
+## Key risks
+
+### The big four
+
+- Privacy and data misuse
+- Misinformation and deepfakes
+- Bias in automated decisions
+- Over-reliance on unverified answers
+
+---
+
+| Risk | Example |
+| --- | --- |
+| Bias | Unfair loan screening |
+| Misinformation | Fabricated citations |
+
+## Staying safe
+
+- Verify important claims with primary sources
+- Protect personal data in prompts
+`;
+    const pptx = await createPptxDocument(deck);
+    // A PPTX is an OOXML zip container.
+    expect(pptx.subarray(0, 2).toString()).toBe("PK");
+    expect(pptx.byteLength).toBeGreaterThan(5_000);
+  });
+
   it("parses invoice structure and generates valid PDF and DOCX containers", async () => {
     const blocks = parseDocumentMarkdown(invoiceMarkdown);
     expect(blocks.some((block) => block.type === "table")).toBe(true);
