@@ -306,14 +306,21 @@ export class TelegramBridgeService {
       }
       // Some Telegram clients drop the deep link's start payload when the bot
       // chat already exists, so the raw pairing code pasted as a message must
-      // also pair.
-      if (
-        config.chatId === null &&
-        config.pairingCode &&
-        text.trim() === config.pairingCode
-      ) {
-        await this.completePairing(message.chat.id);
-        return;
+      // also pair. In a chat that is already paired (for example after the
+      // bot moved to another coworker), confirm instead of forwarding the
+      // code to the coworker as chat.
+      if (config.pairingCode && text.trim() === config.pairingCode) {
+        if (config.chatId === null) {
+          await this.completePairing(message.chat.id);
+          return;
+        }
+        if (message.chat.id === config.chatId) {
+          await this.sendPlain(
+            message.chat.id,
+            `You're already connected — messages here go to ${this.linkedCoworkerName()}. Just send a message.`,
+          );
+          return;
+        }
       }
       if (config.chatId === null || message.chat.id !== config.chatId) {
         await this.refuseUnpairedChat(message.chat.id);

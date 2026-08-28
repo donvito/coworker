@@ -94,6 +94,7 @@ export function SettingsPage({
     settings.globalOperatingInstructions,
   );
   const [telegramStatus, setTelegramStatus] = useState<TelegramIntegrationStatus | null>(null);
+  const [telegramCoworkerChoice, setTelegramCoworkerChoice] = useState<string | null>(null);
   const [confirmingArchivedDelete, setConfirmingArchivedDelete] = useState<string | null>(null);
 
   const knownProviderCards = remoteModelProviderDefinitions.filter(
@@ -376,18 +377,23 @@ export function SettingsPage({
     setWorking(true);
     setNotice(null);
     try {
+      const chosenCoworkerId = String(data.get("coworkerId") || "");
       const status = await window.coworker.integrations.configureTelegram({
         botToken: String(data.get("botToken") || "") || undefined,
-        coworkerId: String(data.get("coworkerId") || ""),
+        coworkerId: chosenCoworkerId,
       });
       setTelegramStatus(status);
+      setTelegramCoworkerChoice(null);
       form.reset();
       await onChanged();
+      const chosenName = coworkers.find(
+        (candidate) => candidate.id === chosenCoworkerId,
+      )?.name;
       setNoticeKind("success");
       setNotice(
         status.pairingLink
           ? "Telegram bot connected. One required step left: pair your chat with the link or code below."
-          : "Telegram bot connected.",
+          : `Telegram bot connected — messages go to ${chosenName ?? "your coworker"}.`,
       );
     } catch (configureError) {
       setNoticeKind("error");
@@ -1185,6 +1191,16 @@ export function SettingsPage({
                   (candidate) => candidate.id === telegramConfig.coworkerId,
                 );
                 const pairingCode = telegramStatus?.pairingLink?.split("start=")[1];
+                const chosenCoworkerId =
+                  telegramCoworkerChoice ?? telegramConfig.coworkerId ?? coworkers[0]?.id;
+                const chosenCoworker =
+                  coworkers.find((candidate) => candidate.id === chosenCoworkerId) ?? null;
+                const relinking = Boolean(
+                  telegramConnected &&
+                    linkedCoworker &&
+                    chosenCoworker &&
+                    chosenCoworker.id !== linkedCoworker.id,
+                );
                 return (
                   <>
                     <p>
@@ -1297,7 +1313,8 @@ export function SettingsPage({
                         <span>Linked coworker</span>
                         <select
                           name="coworkerId"
-                          defaultValue={telegramConfig.coworkerId ?? coworkers[0]?.id}
+                          onChange={(event) => setTelegramCoworkerChoice(event.target.value)}
+                          value={chosenCoworkerId}
                         >
                           {coworkers.map((candidate) => (
                             <option key={candidate.id} value={candidate.id}>
@@ -1306,9 +1323,23 @@ export function SettingsPage({
                           ))}
                         </select>
                       </label>
+                      {relinking ? (
+                        <p className="telegram-relink-warning" role="alert">
+                          This bot currently chats with {linkedCoworker!.name}. Saving moves
+                          it to {chosenCoworker!.name} and disconnects {linkedCoworker!.name}{" "}
+                          from Telegram.
+                          {telegramPaired
+                            ? " Your paired chat carries over — no re-pairing needed."
+                            : ""}
+                        </p>
+                      ) : null}
                       <div>
                         <button className="primary-button" disabled={working}>
-                          {telegramConnected ? "Save changes" : "Connect Telegram bot"}
+                          {telegramConnected
+                            ? relinking
+                              ? `Move bot to ${chosenCoworker?.name}`
+                              : "Save changes"
+                            : "Connect Telegram bot"}
                         </button>
                       </div>
                     </form>

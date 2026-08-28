@@ -1103,6 +1103,30 @@ export class DesktopAppService {
       config: { ...config },
     });
     this.enableTelegramTool(coworker.id);
+
+    // Moving the bot between coworkers keeps the paired chat; hand off
+    // loudly so neither side is left guessing where messages go now.
+    const previousCoworkerId = previous?.coworkerId ?? null;
+    if (sameBot && previousCoworkerId && previousCoworkerId !== coworker.id) {
+      this.disableTelegramTool(previousCoworkerId);
+      const previousName = this.coworkerNameOrNull(previousCoworkerId);
+      this.database.addActivity({
+        type: "telegram.relinked",
+        summary: `Telegram bot @${me.username} moved from ${previousName ?? "another coworker"} to ${coworker.name}`,
+      });
+      this.emit({ type: "entity.changed", entity: "activity" });
+      if (config.chatId !== null) {
+        try {
+          await api.sendMessage({
+            chatId: config.chatId,
+            text: `This chat now goes to ${coworker.name}${previousName ? ` (previously ${previousName})` : ""}. No re-pairing needed — just send a message.`,
+          });
+        } catch (error) {
+          void this.options.applicationLogger?.error("telegram.relink-notice", error);
+        }
+      }
+    }
+
     this.emit({ type: "entity.changed", entity: "integrations", id: integration.id });
     await this.telegram.restart();
     return this.telegramStatus();
@@ -1163,6 +1187,26 @@ export class DesktopAppService {
       },
     });
     this.emit({ type: "entity.changed", entity: "coworkers", id: coworkerId });
+  }
+
+  /** Removes telegram.send from a coworker that lost its Telegram link. */
+  private disableTelegramTool(coworkerId: string): void {
+    const name = this.coworkerNameOrNull(coworkerId);
+    if (name === null) return;
+    const coworker = this.database.getCoworker(coworkerId);
+    if (!coworker.enabledTools.includes("telegram.send")) return;
+    this.database.updateCoworker(coworkerId, {
+      enabledTools: coworker.enabledTools.filter((tool) => tool !== "telegram.send"),
+    });
+    this.emit({ type: "entity.changed", entity: "coworkers", id: coworkerId });
+  }
+
+  private coworkerNameOrNull(coworkerId: string): string | null {
+    try {
+      return this.database.getCoworker(coworkerId).name;
+    } catch {
+      return null;
+    }
   }
 
   async configureModel(input: {

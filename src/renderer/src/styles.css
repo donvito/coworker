@@ -6591,6 +6591,17 @@ button.floor-activity-row:hover {
   gap: 10px;
 }
 
+.telegram-relink-warning {
+  margin: 0;
+  padding: 9px 12px;
+  color: #7a4b12;
+  font-size: 12px;
+  line-height: 1.5;
+  background: #fdf3e4;
+  border: 1px solid #f0d9b4;
+  border-radius: 10px;
+}
+
 .telegram-hint {
   max-width: 560px;
   color: var(--ink-soft);

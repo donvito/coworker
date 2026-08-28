@@ -305,6 +305,60 @@ describe("telegram bridge", () => {
     expect(config.chatId).toBe(888);
   });
 
+  it("moves the bot to another coworker, keeping the paired chat and handing off loudly", async () => {
+    const context = await setup();
+    await connectAndPair(context);
+    const sarah = context.database.createCoworker(
+      {
+        name: "Sarah",
+        role: "Research",
+        systemPrompt: "You are Sarah.",
+        modelProvider: "demo",
+        modelName: "faux-1",
+        enabledTools: [],
+      },
+      join(context.root, "sarah"),
+    );
+
+    // Re-configuring the stored bot for Sarah keeps the paired chat.
+    const status = await context.service.configureTelegram({ coworkerId: sarah.id });
+    const config = status.integration?.config as {
+      coworkerId?: string;
+      chatId?: number | null;
+      pairingCode?: string;
+    };
+    expect(config.coworkerId).toBe(sarah.id);
+    expect(config.chatId).toBe(777);
+    expect(status.pairingLink).toBeNull();
+
+    // The telegram.send tool follows the link.
+    expect(context.database.getCoworker(sarah.id).enabledTools).toContain("telegram.send");
+    expect(context.database.getCoworker(context.ava.id).enabledTools).not.toContain(
+      "telegram.send",
+    );
+
+    // The chat is told about the hand-off.
+    await waitFor(
+      () =>
+        context.fake
+          .sent("sendMessage")
+          .some((body) => String(body.text).includes("This chat now goes to Sarah")),
+      "the relink notice",
+    );
+
+    // Pasting the pairing code in the already-paired chat confirms the link
+    // instead of forwarding the code to Sarah as a message.
+    context.fake.push({ chatId: 777, text: config.pairingCode! });
+    await waitFor(
+      () =>
+        context.fake
+          .sent("sendMessage")
+          .some((body) => String(body.text).includes("already connected")),
+      "the already-connected reply",
+    );
+    expect(context.enqueue).not.toHaveBeenCalled();
+  });
+
   it("injects inbound text idempotently and queues the coworker", async () => {
     const context = await setup();
     await connectAndPair(context);
