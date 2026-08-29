@@ -3,6 +3,7 @@ import {
   EventType,
   type AgentCapabilities,
   type AgentConfig,
+  type AgentSubscriber,
   type BaseEvent,
   type RunAgentInput,
 } from "@ag-ui/client";
@@ -88,6 +89,18 @@ export class IpcCoworkerAgent extends AbstractAgent {
         });
       return () => unsubscribe();
     });
+  }
+
+  /** Approvals settle in SQLite, the authoritative store, rather than through
+   * AG-UI's resume protocol, so a decided interrupt would otherwise reject every
+   * later run on this thread. Clearing them loses no safety: executeApproval
+   * still refuses any tool call without an APPROVED row in the database. */
+  protected override async onInitialize(
+    input: RunAgentInput,
+    subscribers: AgentSubscriber[],
+  ): Promise<void> {
+    this.pendingInterrupts = [];
+    await super.onInitialize(input, subscribers);
   }
 
   override abortRun(): void {
