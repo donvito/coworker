@@ -2,7 +2,7 @@
 
 AI agents for your work, running on your own computer.
 
-![Team room](docs/images/home.png)
+![Coworker chat](docs/images/coworker-chat.png)
 
 Coworker is a local-first desktop app for independent AI coworkers. There is **no subscription**. The app runs on **your computer**, talks to **local models** or keys you bring, learns new **skills**, keeps a **scheduler**, pauses on **approvals**, and can meet you on **Telegram**.
 
