@@ -6,7 +6,7 @@
   "productName": "Coworker",
   "main": "./out/main/index.js",
   "author": "Coworker",
-  "license": "UNLICENSED",
+  "license": "Apache-2.0",
   "private": true,
   "packageManager": "pnpm@9.15.0",
   "engines": {

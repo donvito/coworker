@@ -1,6 +1,10 @@
 # Screenshots
 
-The [team room](../README.md) is on the main README. These are the other surfaces.
+The [chat view](../README.md) is also the hero image on the main README.
+
+**Team room** — the floor at a glance, a composer that puts any coworker to work, and a live activity log.
+
+![Team room](images/home.png)
 
 **Coworkers** — each one has an independent runtime, workspace, and single focused task queue.
 
