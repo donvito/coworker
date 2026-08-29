@@ -2884,6 +2884,10 @@ function CoworkerSurface({
                   </Fragment>
                 );
               })}
+              {/* Flushed above the live turns: a decision raised during this run
+                  belongs before the answer it authorized, which is where timestamp
+                  interleaving puts it once the run's messages persist. */}
+              {renderApprovalEntries(takeApprovalsUntil("9999"))}
               {Object.entries(externalLiveResponses).map(([runId, response]) => (
                 <div
                   className="workroom-turn workroom-turn-assistant"
@@ -2910,7 +2914,6 @@ function CoworkerSurface({
                   </small>
                 </div>
               ))}
-              {renderApprovalEntries(takeApprovalsUntil("9999"))}
               {approvalError ? (
                 <div className="workroom-run-error" role="alert">
                   <Icon name="shield" />
