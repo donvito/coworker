@@ -180,6 +180,7 @@ export class CoworkerRuntimeManager {
       this.setStatus(coworkerId, "STOPPED");
       return;
     }
+    if (runtime.currentTaskId) this.options.tools.releaseBrowserTask(runtime.currentTaskId);
     runtime.stopping = true;
     if (runtime.idleTimer) clearTimeout(runtime.idleTimer);
     this.send(runtime, { type: "shutdown" });
@@ -317,6 +318,7 @@ export class CoworkerRuntimeManager {
       const taskId = runtime?.currentTaskId ?? claimedTask?.id;
       const message = error instanceof Error ? error.message : String(error);
       if (taskId) {
+        this.options.tools.releaseBrowserTask(taskId);
         this.options.database.setTaskStatus(taskId, "FAILED", { error: message });
         const failedTask = this.options.database.getTask(taskId);
         await this.options.onTaskFailed?.(failedTask, message);
@@ -447,6 +449,7 @@ export class CoworkerRuntimeManager {
       return;
     }
     if (message.type === "run.completed") {
+      if (!message.waitingForApproval) this.options.tools.releaseBrowserTask(message.taskId);
       runtime.currentTaskId = null;
       runtime.currentRunId = null;
       const task = this.options.database.getTask(message.taskId);
@@ -470,6 +473,7 @@ export class CoworkerRuntimeManager {
       return;
     }
     if (message.type === "run.failed") {
+      this.options.tools.releaseBrowserTask(message.taskId);
       runtime.currentTaskId = null;
       runtime.currentRunId = null;
       const task = this.options.database.getTask(message.taskId);
@@ -540,6 +544,7 @@ export class CoworkerRuntimeManager {
     if (runtime.stopping) return;
 
     if (runtime.currentTaskId) {
+      this.options.tools.releaseBrowserTask(runtime.currentTaskId);
       const task = this.options.database.getTask(runtime.currentTaskId);
       if (task.status === "RUNNING") {
         this.options.database.setTaskStatus(task.id, "QUEUED");
