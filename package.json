@@ -1,6 +1,6 @@
 {
   "name": "coworker",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "A local-first desktop app for independent AI coworkers.",
   "type": "module",
   "productName": "Coworker",
