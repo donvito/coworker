@@ -67,6 +67,25 @@ export function CoworkerSettingsModal({
     }
   }
 
+  async function clearBrowserProfile() {
+    if (
+      !confirm(
+        `Clear ${coworker.name}’s browser cookies, logins, history, and site data? This cannot be undone.`,
+      )
+    ) {
+      return;
+    }
+    setWorking(true);
+    setError(null);
+    try {
+      await window.coworker.browser.clearProfile(coworker.id);
+    } catch (clearError) {
+      setError(clearError instanceof Error ? clearError.message : String(clearError));
+    } finally {
+      setWorking(false);
+    }
+  }
+
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
@@ -162,6 +181,26 @@ export function CoworkerSettingsModal({
               </label>
             ))}
           </fieldset>
+          {skills.some(
+            (skill) =>
+              skill.name === "browser-control" && enabledSkillIds.includes(skill.id),
+          ) ? (
+            <fieldset className="folder-picker">
+              <legend>Browser data</legend>
+              <small>
+                This coworker keeps an isolated browser profile for website logins and cookies.
+                Clearing it also closes the controlled browser.
+              </small>
+              <button
+                className="secondary-button"
+                disabled={working}
+                onClick={() => void clearBrowserProfile()}
+                type="button"
+              >
+                Clear browser data…
+              </button>
+            </fieldset>
+          ) : null}
           <fieldset className="folder-picker">
             <legend>Folder access</legend>
             <small>

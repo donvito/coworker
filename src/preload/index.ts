@@ -19,6 +19,10 @@ const api: DesktopApi = {
     update: (id, input) => ipcRenderer.invoke(ipcChannels.coworkersUpdate, id, input),
     remove: (id) => ipcRenderer.invoke(ipcChannels.coworkersRemove, id),
   },
+  browser: {
+    clearProfile: (coworkerId) =>
+      ipcRenderer.invoke(ipcChannels.browserClearProfile, coworkerId),
+  },
   folders: {
     pick: () => ipcRenderer.invoke(ipcChannels.foldersPick),
     reveal: (coworkerId, path) =>

@@ -17,6 +17,7 @@ import { getToolCatalogEntry } from "@shared/tool-catalog";
 import { isoWithLocalOffset, shiftTimestampsDeep } from "@shared/time";
 import { formatGrantedFolders } from "@shared/folder-access-prompt";
 import { formatModelSelectableSkills } from "@shared/pi-skill-prompt";
+import { toolNamesForSkills } from "@shared/skill-capabilities";
 import {
   documentFormatClarification,
   documentFormatInstruction,
@@ -112,8 +113,18 @@ function checkpointActiveRun(): void {
     type: "checkpoint",
     coworkerId: config.coworker.id,
     taskId: activeRun.taskId,
-    messages: agent.state.messages,
+    messages: durableCheckpointMessages(agent.state.messages),
     pendingTool: activeRun.approval,
+  });
+}
+
+function durableCheckpointMessages(messages: AgentMessage[]): AgentMessage[] {
+  return messages.map((message) => {
+    if (message.role !== "toolResult" || !Array.isArray(message.content)) return message;
+    return {
+      ...message,
+      content: message.content.filter((part) => part.type !== "image"),
+    };
   });
 }
 
@@ -157,6 +168,59 @@ const parameterSchemas: Record<string, ReturnType<typeof Type.Object>> = {
       ]),
     ),
   }),
+  "browser.start_session": Type.Object({
+    goal: Type.String({ description: "The specific website task the user asked to complete" }),
+    startUrl: Type.Optional(
+      Type.String({ description: "Optional HTTP or HTTPS page to open first" }),
+    ),
+  }),
+  "browser.inspect": Type.Object({
+    pageId: Type.Optional(Type.String({ description: "Page id returned by an earlier browser result" })),
+  }),
+  "browser.act": Type.Object({
+    pageId: Type.Optional(Type.String({ description: "Page id returned by browser.inspect" })),
+    action: Type.Union([
+      Type.Object({ kind: Type.Literal("navigate"), url: Type.String() }),
+      Type.Object({ kind: Type.Literal("back") }),
+      Type.Object({ kind: Type.Literal("forward") }),
+      Type.Object({ kind: Type.Literal("reload") }),
+      Type.Object({ kind: Type.Literal("closePage") }),
+      Type.Object({
+        kind: Type.Literal("click"),
+        target: Type.Object({}, { additionalProperties: true }),
+        expectDownload: Type.Optional(Type.Boolean()),
+      }),
+      Type.Object({
+        kind: Type.Literal("fill"),
+        target: Type.Object({}, { additionalProperties: true }),
+        value: Type.String(),
+      }),
+      Type.Object({
+        kind: Type.Literal("press"),
+        target: Type.Object({}, { additionalProperties: true }),
+        key: Type.String(),
+      }),
+      Type.Object({
+        kind: Type.Literal("select"),
+        target: Type.Object({}, { additionalProperties: true }),
+        values: Type.Array(Type.String()),
+      }),
+      ...["check", "uncheck", "hover"].map((kind) =>
+        Type.Object({
+          kind: Type.Literal(kind),
+          target: Type.Object({}, { additionalProperties: true }),
+        }),
+      ),
+      Type.Object({ kind: Type.Literal("scroll"), deltaY: Type.Number() }),
+      Type.Object({ kind: Type.Literal("wait"), milliseconds: Type.Number() }),
+      Type.Object({
+        kind: Type.Literal("upload"),
+        target: Type.Object({}, { additionalProperties: true }),
+        paths: Type.Array(Type.String()),
+      }),
+    ]),
+  }),
+  "browser.close": Type.Object({}),
   "files.list": Type.Object({
     path: Type.Optional(Type.String({ description: "Relative directory path; use . for the root" })),
   }),
@@ -343,6 +407,22 @@ function createProxyTool(controlledName: string, providerName: string): AgentToo
           terminate: true,
         };
       }
+      if (
+        typeof response.result === "object" &&
+        response.result !== null &&
+        "__coworkerRichToolResult" in response.result &&
+        response.result.__coworkerRichToolResult === true &&
+        "content" in response.result &&
+        Array.isArray(response.result.content)
+      ) {
+        const content = response.result.content.filter(
+          (part: { type?: unknown }) => part.type !== "image" || imageInputSupported,
+        );
+        return {
+          content,
+          details: "details" in response.result ? response.result.details : response.result,
+        } as ReturnType<AgentTool<any>["execute"]> extends Promise<infer R> ? R : never;
+      }
       return {
         content: [{ type: "text", text: JSON.stringify(response.result) }],
         details: response.result,
@@ -440,9 +520,7 @@ async function initialize(workerConfig: WorkerCoworkerConfig): Promise<void> {
   controlledToolNamesByProviderName.clear();
   const usePortableToolNames = workerConfig.coworker.modelProvider !== "demo";
   const skillToolNames = workerConfig.skills.length > 0 ? ["skills.read"] : [];
-  if (workerConfig.skills.some((skill) => skill.name === "web-search")) {
-    skillToolNames.push("web.search");
-  }
+  skillToolNames.push(...toolNamesForSkills(workerConfig.skills));
   const folderToolNames =
     workerConfig.coworker.sharedFolders.length > 0 ? ["folders.list", "folders.read"] : [];
   const enabledToolNames = [
@@ -989,7 +1067,7 @@ async function runTask(message: Extract<MainToWorkerMessage, { type: "run" }>): 
       type: "checkpoint",
       coworkerId: config.coworker.id,
       taskId: message.taskId,
-      messages: agent.state.messages,
+      messages: durableCheckpointMessages(agent.state.messages),
       pendingTool: finishedRun.approval,
     });
     emit({

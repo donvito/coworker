@@ -10,6 +10,7 @@ export const ipcChannels = {
   coworkersCreate: "coworker:coworkers:create",
   coworkersUpdate: "coworker:coworkers:update",
   coworkersRemove: "coworker:coworkers:remove",
+  browserClearProfile: "coworker:browser:clear-profile",
   foldersPick: "coworker:folders:pick",
   foldersReveal: "coworker:folders:reveal",
   conversationsList: "coworker:conversations:list",

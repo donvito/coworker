@@ -10,6 +10,7 @@ export const bundledDocumentAuthoringSkillId = "bundled:document-authoring";
 export const bundledTeamChannelSkillId = "bundled:team-channel-collaboration";
 export const bundledFolderAccessSkillId = "bundled:folder-access";
 export const bundledTelegramMessagingSkillId = "bundled:telegram-messaging";
+export const bundledBrowserControlSkillId = "bundled:browser-control";
 
 export interface PackagedSkillResource {
   path: string;
@@ -293,12 +294,18 @@ export const bundledTelegramMessagingSkill = loadBundledSkill(
   bundledTelegramMessagingSkillId,
 );
 
+export const bundledBrowserControlSkill = loadBundledSkill(
+  "browser-control",
+  bundledBrowserControlSkillId,
+);
+
 export const bundledSkills = [
   bundledWebSearchSkill,
   bundledDocumentAuthoringSkill,
   bundledTeamChannelSkill,
   bundledFolderAccessSkill,
   bundledTelegramMessagingSkill,
+  bundledBrowserControlSkill,
 ] as const;
 
 function unquote(value: string): string {

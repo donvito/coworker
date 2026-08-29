@@ -543,6 +543,9 @@ export interface DesktopApi {
     update(id: string, input: UpdateCoworkerInput): Promise<Coworker>;
     remove(id: string): Promise<void>;
   };
+  browser: {
+    clearProfile(coworkerId: string): Promise<void>;
+  };
   folders: {
     /** Open the native directory picker; returns the selected absolute paths. */
     pick(): Promise<string[]>;

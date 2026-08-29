@@ -6,6 +6,8 @@ export interface ToolCatalogEntry {
   description: string;
   risk: RiskLevel;
   defaultPolicy: ToolPolicy;
+  /** Volatile tools must execute every call and store only their audit-safe result. */
+  volatile?: boolean;
 }
 
 export const toolCatalog = [
@@ -24,6 +26,41 @@ export const toolCatalog = [
       "Search the live web through an available configured Firecrawl, Tavily, Exa, or SerpAPI credential.",
     risk: "low",
     defaultPolicy: "automatic",
+  },
+  {
+    name: "browser.start_session",
+    label: "Start browser control",
+    description:
+      "Open or reuse this coworker's visible browser and request task-scoped permission to control it. State the actual goal and optional HTTP(S) starting URL.",
+    risk: "high",
+    defaultPolicy: "approval",
+    volatile: true,
+  },
+  {
+    name: "browser.inspect",
+    label: "Inspect browser page",
+    description:
+      "Inspect an open page in the approved browser session. Returns an accessibility snapshot and, for vision-capable models, a screenshot.",
+    risk: "low",
+    defaultPolicy: "automatic",
+    volatile: true,
+  },
+  {
+    name: "browser.act",
+    label: "Use browser page",
+    description:
+      "Perform one validated browser action in the approved task-scoped session, then inspect the resulting page state.",
+    risk: "high",
+    defaultPolicy: "automatic",
+    volatile: true,
+  },
+  {
+    name: "browser.close",
+    label: "Close controlled browser",
+    description: "Close this coworker's controlled browser and revoke its active grant.",
+    risk: "low",
+    defaultPolicy: "automatic",
+    volatile: true,
   },
   {
     name: "files.list",

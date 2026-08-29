@@ -81,6 +81,8 @@ import {
 } from "@main/integrations/telegram";
 import { TelegramBridgeService } from "@main/integrations/telegram-bridge";
 import { DISCUSSION_PASS_MARKER, isDiscussionPass } from "@shared/discussion";
+import { defaultEnabledBundledSkillNames } from "@shared/skill-capabilities";
+import { BrowserAutomationService } from "@main/integrations/browser-automation";
 
 export interface DesktopAppServiceOptions {
   dataPath: string;
@@ -131,6 +133,7 @@ export class DesktopAppService {
   readonly scheduler: SchedulerService;
   readonly telegram: TelegramBridgeService;
   readonly tools: ToolGateway;
+  readonly browser: BrowserAutomationService;
   readonly providerErrors: ProviderErrorLogger;
   private readonly listeners = new Set<(event: DesktopEvent) => void>();
   private initialized = false;
@@ -143,12 +146,14 @@ export class DesktopAppService {
     this.providerErrors = new ProviderErrorLogger(
       join(options.dataPath, "logs", "provider-errors.jsonl"),
     );
+    this.browser = new BrowserAutomationService(options.dataPath);
     this.tools = new ToolGateway(
       this.database,
       options.credentials,
       join(options.dataPath, "outbox"),
       {
         createSchedule: (input) => this.createSchedule(input),
+        browser: this.browser,
       },
       { dataPath: options.dataPath, telegramFetch: options.telegram?.fetchImpl },
     );
@@ -221,6 +226,7 @@ export class DesktopAppService {
     this.scheduler.stop();
     await this.telegram.stop();
     await this.runtime.stopAll();
+    await this.browser.closeAll();
     this.database.close();
     this.initialized = false;
   }
@@ -293,7 +299,12 @@ export class DesktopAppService {
         ...input,
         enabledSkillIds:
           input.enabledSkillIds ??
-          this.database.listSkills().filter((skill) => skill.bundled).map((skill) => skill.id),
+          this.database
+            .listSkills()
+            .filter(
+              (skill) => skill.bundled && defaultEnabledBundledSkillNames.has(skill.name),
+            )
+            .map((skill) => skill.id),
         sharedFolders,
       },
       provisionalPath,
@@ -312,6 +323,7 @@ export class DesktopAppService {
           });
     const coworker = this.database.updateCoworker(id, { ...input, sharedFolders });
     if (this.runtime) await this.runtime.stop(id);
+    this.browser.releaseCoworker(id);
     if (coworker.status === "active") this.runtime.enqueueTask(id);
     this.emit({ type: "entity.changed", entity: "coworkers", id });
     this.emit({ type: "entity.changed", entity: "activity" });
@@ -320,6 +332,7 @@ export class DesktopAppService {
 
   async removeCoworker(id: string): Promise<void> {
     await this.runtime.stop(id);
+    await this.browser.clearProfile(id);
     this.database.deleteCoworker(id);
     this.emit({ type: "entity.changed", entity: "coworkers", id });
     this.emit({ type: "entity.changed", entity: "activity" });
@@ -915,12 +928,24 @@ export class DesktopAppService {
   async cancelTask(id: string) {
     const task = this.database.getTask(id);
     await this.runtime.abort(task.coworkerId, task.runId);
+    this.browser.releaseTask(task.id);
     const cancelled = this.database.cancelTask(id);
     this.emit({ type: "entity.changed", entity: "tasks", id });
     this.emit({ type: "entity.changed", entity: "approvals" });
     this.emit({ type: "entity.changed", entity: "activity" });
     this.runtime.enqueueTask(task.coworkerId);
     return cancelled;
+  }
+
+  async clearCoworkerBrowserProfile(coworkerId: string): Promise<void> {
+    this.database.getCoworker(coworkerId);
+    await this.browser.clearProfile(coworkerId);
+    this.database.addActivity({
+      coworkerId,
+      type: "browser.profile-cleared",
+      summary: "Browser profile data was cleared",
+    });
+    this.emit({ type: "entity.changed", entity: "activity" });
   }
 
   decideApproval(input: ApprovalDecisionInput): Approval {
@@ -1603,7 +1628,9 @@ export class DesktopAppService {
     if (this.database.getMetadata(migrationKey) === "true") return;
     const bundledIds = this.database
       .listSkills()
-      .filter((skill) => skill.bundled)
+      .filter(
+        (skill) => skill.bundled && defaultEnabledBundledSkillNames.has(skill.name),
+      )
       .map((skill) => skill.id);
     for (const coworker of this.database.listCoworkers()) {
       this.database.setCoworkerSkills(coworker.id, [

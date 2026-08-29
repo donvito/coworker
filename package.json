@@ -1,6 +1,6 @@
 {
   "name": "coworker",
-  "version": "0.3.3",
+  "version": "0.4.0",
   "description": "A local-first desktop app for independent AI coworkers.",
   "type": "module",
   "productName": "Coworker",
@@ -14,7 +14,7 @@
   },
   "scripts": {
     "dev": "node scripts/dev-app-name.js && electron-vite dev",
-    "postinstall": "install-electron && node scripts/dev-app-name.js",
+    "postinstall": "install-electron && node scripts/dev-app-name.js && node scripts/install-playwright-browser.js",
     "build": "pnpm typecheck && electron-vite build",
     "db:generate": "drizzle-kit generate",
     "db:check": "drizzle-kit check",
@@ -46,6 +46,9 @@
       "out/**/*",
       "build/icon.png",
       "package.json"
+    ],
+    "asarUnpack": [
+      "node_modules/playwright-core/.local-browsers/**/*"
     ],
     "extraResources": [
       {
@@ -148,6 +151,7 @@
     "exceljs": "^4.4.0",
     "jszip": "^3.10.1",
     "pdf-lib": "^1.17.1",
+    "playwright": "^1.62.1",
     "pptxgenjs": "^4.0.1",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",

@@ -26,8 +26,71 @@ import { sendCoworkerTelegramMessage } from "@main/integrations/telegram-send";
 import { resolveSharedFolderPath } from "./shared-folders";
 import { resolveWorkspacePath } from "./workspace-path";
 import { searchWeb } from "@main/integrations/web-search";
+import { skillEnablesTool } from "@shared/skill-capabilities";
+import {
+  BrowserAutomationService,
+  isBrowserRichToolResult,
+} from "@main/integrations/browser-automation";
 
 const localTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+
+const browserUrlSchema = z
+  .string()
+  .url()
+  .max(4_000)
+  .refine((value) => ["http:", "https:"].includes(new URL(value).protocol), {
+    message: "Browser URLs must use HTTP or HTTPS",
+  });
+
+const browserLocatorSchema = z.discriminatedUnion("by", [
+  z.object({
+    by: z.literal("role"),
+    role: z.string().trim().min(1).max(80),
+    name: z.string().max(500).optional(),
+    exact: z.boolean().optional(),
+  }),
+  z.object({
+    by: z.enum(["label", "text", "placeholder", "testId", "css"]),
+    value: z.string().min(1).max(1_000),
+    exact: z.boolean().optional(),
+  }),
+]);
+
+const browserActionSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("navigate"), url: browserUrlSchema }),
+  z.object({ kind: z.enum(["back", "forward", "reload", "closePage"]) }),
+  z.object({
+    kind: z.literal("click"),
+    target: browserLocatorSchema,
+    expectDownload: z.boolean().optional(),
+  }),
+  z.object({
+    kind: z.literal("fill"),
+    target: browserLocatorSchema,
+    value: z.string().max(100_000),
+  }),
+  z.object({
+    kind: z.literal("press"),
+    target: browserLocatorSchema,
+    key: z.string().trim().min(1).max(100),
+  }),
+  z.object({
+    kind: z.literal("select"),
+    target: browserLocatorSchema,
+    values: z.array(z.string().max(1_000)).min(1).max(100),
+  }),
+  z.object({
+    kind: z.enum(["check", "uncheck", "hover"]),
+    target: browserLocatorSchema,
+  }),
+  z.object({ kind: z.literal("scroll"), deltaY: z.number().int().min(-20_000).max(20_000) }),
+  z.object({ kind: z.literal("wait"), milliseconds: z.number().int().min(0).max(5_000) }),
+  z.object({
+    kind: z.literal("upload"),
+    target: browserLocatorSchema,
+    paths: z.array(z.string().min(1).max(2_000)).min(1).max(10),
+  }),
+]);
 
 const schemas = {
   "skills.read": z.object({
@@ -39,6 +102,16 @@ const schemas = {
     limit: z.number().int().min(1).max(10).default(5),
     provider: z.enum(["tavily", "exa", "firecrawl", "serpapi"]).optional(),
   }),
+  "browser.start_session": z.object({
+    goal: z.string().trim().min(1).max(1_000),
+    startUrl: browserUrlSchema.optional(),
+  }),
+  "browser.inspect": z.object({ pageId: z.string().uuid().optional() }),
+  "browser.act": z.object({
+    pageId: z.string().uuid().optional(),
+    action: browserActionSchema,
+  }),
+  "browser.close": z.object({}),
   "files.list": z.object({ path: z.string().min(1).max(2_000).default(".") }),
   "files.read": z.object({ path: z.string().min(1).max(2_000) }),
   "files.write": z.object({
@@ -151,6 +224,7 @@ export type ToolGatewayResult =
 
 export interface ToolGatewayActions {
   createSchedule?: (input: CreateScheduleInput) => Schedule;
+  browser?: BrowserAutomationService;
 }
 
 function normalizeEmailPayload(input: z.infer<(typeof schemas)["email.send"]>): EmailPayload {
@@ -168,6 +242,13 @@ function policyFor(coworker: Coworker, toolName: string): ToolPolicy {
 }
 
 function approvalSummary(toolName: string, args: unknown): string {
+  if (toolName === "browser.start_session") {
+    const parsed = schemas["browser.start_session"].safeParse(args);
+    if (parsed.success) {
+      const origin = parsed.data.startUrl ? ` at ${new URL(parsed.data.startUrl).origin}` : "";
+      return `Allow browser control${origin} for “${parsed.data.goal}”`;
+    }
+  }
   if (toolName === "email.send") {
     const parsed = schemas["email.send"].safeParse(args);
     if (parsed.success) {
@@ -199,6 +280,19 @@ function approvalSummary(toolName: string, args: unknown): string {
     }
   }
   return `Allow ${toolName}`;
+}
+
+function auditArguments(toolName: string, args: unknown): unknown {
+  if (toolName !== "browser.act") return args;
+  const parsed = schemas["browser.act"].safeParse(args);
+  if (!parsed.success || parsed.data.action.kind !== "fill") return args;
+  return {
+    ...parsed.data,
+    action: {
+      ...parsed.data.action,
+      value: `[redacted ${parsed.data.action.value.length} characters]`,
+    },
+  };
 }
 
 function formatMoney(value: number, currency: string): string {
@@ -253,16 +347,15 @@ export class ToolGateway {
       taskId: input.task.id,
       coworkerId: input.coworker.id,
       toolName: input.toolName,
-      arguments: input.arguments,
+      arguments: auditArguments(input.toolName, input.arguments),
       idempotencyKey,
     });
 
-    const skillNames = new Set(
-      this.database.listCoworkerSkills(input.coworker.id).map((skill) => skill.name),
-    );
+    const coworkerSkills = this.database.listCoworkerSkills(input.coworker.id);
+    const skillNames = new Set(coworkerSkills.map((skill) => skill.name));
     const enabledBySkill =
       (input.toolName === "skills.read" && skillNames.size > 0) ||
-      (input.toolName === "web.search" && skillNames.has("web-search"));
+      skillEnablesTool(coworkerSkills, input.toolName);
     // Shared-folder tools are granted by the user configuring folders, not by
     // the generic tool toggles: the folder grant is the permission.
     const enabledByFolderGrant =
@@ -346,18 +439,23 @@ export class ToolGateway {
   }
 
   private async execute(toolCall: ToolCall, coworker: Coworker, args: unknown): Promise<unknown> {
-    const cached = this.database.getSideEffect(toolCall.idempotencyKey);
+    const metadata = getToolCatalogEntry(toolCall.toolName);
+    const volatile = metadata?.volatile === true;
+    const cached = volatile ? null : this.database.getSideEffect(toolCall.idempotencyKey);
     if (cached?.status === "COMPLETED") {
       this.database.updateToolCall(toolCall.id, "COMPLETED", cached.result);
       return cached.result;
     }
 
     this.database.updateToolCall(toolCall.id, "RUNNING");
-    this.database.startSideEffect(toolCall.idempotencyKey, toolCall.id);
+    if (!volatile) this.database.startSideEffect(toolCall.idempotencyKey, toolCall.id);
     try {
       const result = await this.executeUnchecked(toolCall, coworker, args);
-      this.database.finishSideEffect(toolCall.idempotencyKey, "COMPLETED", result);
-      this.database.updateToolCall(toolCall.id, "COMPLETED", result);
+      const auditResult = isBrowserRichToolResult(result) ? result.audit : result;
+      if (!volatile) {
+        this.database.finishSideEffect(toolCall.idempotencyKey, "COMPLETED", auditResult);
+      }
+      this.database.updateToolCall(toolCall.id, "COMPLETED", auditResult);
       this.database.addActivity({
         coworkerId: coworker.id,
         taskId: toolCall.taskId,
@@ -368,7 +466,9 @@ export class ToolGateway {
       return result;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      this.database.finishSideEffect(toolCall.idempotencyKey, "FAILED", { error: message });
+      if (!volatile) {
+        this.database.finishSideEffect(toolCall.idempotencyKey, "FAILED", { error: message });
+      }
       this.database.updateToolCall(toolCall.id, "FAILED", { error: message });
       throw error;
     }
@@ -432,6 +532,58 @@ export class ToolGateway {
           limit: args.limit,
           preferredProvider: args.provider as WebSearchProvider | undefined,
         });
+      }
+      case "browser.start_session": {
+        const args = schemas["browser.start_session"].parse(rawArgs);
+        if (!this.actions.browser) throw new Error("Browser control is unavailable");
+        return this.actions.browser.startSession({
+          taskId: toolCall.taskId,
+          coworkerId: coworker.id,
+          startUrl: args.startUrl,
+        });
+      }
+      case "browser.inspect": {
+        const args = schemas["browser.inspect"].parse(rawArgs);
+        if (!this.actions.browser) throw new Error("Browser control is unavailable");
+        return this.actions.browser.inspect({
+          taskId: toolCall.taskId,
+          coworkerId: coworker.id,
+          pageId: args.pageId,
+        });
+      }
+      case "browser.act": {
+        const args = schemas["browser.act"].parse(rawArgs);
+        if (!this.actions.browser) throw new Error("Browser control is unavailable");
+        const result = await this.actions.browser.act({
+          taskId: toolCall.taskId,
+          coworkerId: coworker.id,
+          workspacePath: coworker.workspacePath,
+          pageId: args.pageId,
+          action: args.action,
+        });
+        if (result.details.download) {
+          const path = await resolveWorkspacePath(
+            coworker.workspacePath,
+            result.details.download.path,
+          );
+          const artifact = this.database.createArtifact({
+            taskId: toolCall.taskId,
+            coworkerId: coworker.id,
+            name: posix.basename(result.details.download.path),
+            mimeType: "application/octet-stream",
+            filePath: path,
+          });
+          result.details.download.artifactId = artifact.id;
+          if (result.audit.download) result.audit.download.artifactId = artifact.id;
+          result.content[0] = { type: "text", text: JSON.stringify(result.details) };
+        }
+        return result;
+      }
+      case "browser.close": {
+        schemas["browser.close"].parse(rawArgs);
+        if (!this.actions.browser) throw new Error("Browser control is unavailable");
+        await this.actions.browser.closeForTask(toolCall.taskId, coworker.id);
+        return { closed: true };
       }
       case "files.list": {
         const args = schemas["files.list"].parse(rawArgs);
@@ -769,5 +921,9 @@ export class ToolGateway {
       default:
         throw new Error(`Unknown or uncontrolled tool: ${toolCall.toolName}`);
     }
+  }
+
+  releaseBrowserTask(taskId: string): void {
+    this.actions.browser?.releaseTask(taskId);
   }
 }

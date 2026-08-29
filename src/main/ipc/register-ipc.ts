@@ -51,6 +51,7 @@ const mutationChannels = new Set<string>([
   ipcChannels.coworkersCreate,
   ipcChannels.coworkersUpdate,
   ipcChannels.coworkersRemove,
+  ipcChannels.browserClearProfile,
   ipcChannels.conversationsCreate,
   ipcChannels.conversationsUpdate,
   ipcChannels.conversationsRemove,
@@ -166,6 +167,9 @@ export function registerIpc(input: {
   );
   handle(ipcChannels.coworkersRemove, (_event, id) =>
     input.service.removeCoworker(idSchema.parse(id)),
+  );
+  handle(ipcChannels.browserClearProfile, (_event, id) =>
+    input.service.clearCoworkerBrowserProfile(idSchema.parse(id)),
   );
   handle(ipcChannels.foldersPick, async () => {
     const window = input.getMainWindow();
