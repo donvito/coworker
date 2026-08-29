@@ -5,11 +5,8 @@ Coworker is a local-first Electron app for independent AI coworkers. Each cowork
 ## Coworkers and chat
 
 - Multiple coworkers, each with its own role, system prompt, tool set, and workspace
-- Direct conversations with one coworker and shared group channels with two or more coworkers
-- Channel messages reach every member by default; typed `@mentions` narrow a request to specific coworkers
-- Channel requests involving two or more coworkers become turn-based discussions: each coworker sees the latest shared transcript, decides whether it has something to add, and passes quietly when it doesn't
-- Discussions conclude on their own when every coworker passes, with a safety check-in on unusually long discussions; reply mid-discussion to interject and steer, or stop it at any time
-- Multiple named conversations and channels persisted across restarts
+- Direct conversations with one coworker
+- Multiple named conversations persisted across restarts
 - Search conversation titles and message contents, with messages grouped and timestamped by day
 - Right-click any coworker in the chat sidebar to open their settings
 - Streaming, Markdown-rendered replies with typed tool call rendering
@@ -34,7 +31,7 @@ Coworker is a local-first Electron app for independent AI coworkers. Each cowork
 ## Skills
 
 - Agent Skills-compatible global skill library with per-coworker enablement
-- Bundled `web-search`, `document-authoring`, and `team-channel-collaboration` skills
+- Bundled `web-search` and `document-authoring` skills
 - Install by uploading a `SKILL.md`, from an HTTPS URL in Settings, or by pasting a skill URL into chat
 - Metadata is exposed to the model first; full instructions load on demand through a controlled skill reader
 
