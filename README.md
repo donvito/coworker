@@ -8,6 +8,7 @@ AI agents for your work, running on your own computer.
 ![Linux](https://img.shields.io/badge/Linux-AppImage%20%7C%20deb-FCC624?logo=linux&logoColor=black)
 ![Local-first](https://img.shields.io/badge/local--first-yes-2ea44f)
 ![No subscription](https://img.shields.io/badge/subscription-none-2ea44f)
+![Telegram](https://img.shields.io/badge/Telegram-supported-26A5E4?logo=telegram&logoColor=white)
 
 ![Coworker chat](docs/images/coworker-chat.png)
 
