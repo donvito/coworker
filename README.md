@@ -3,6 +3,7 @@
 AI agents for your work, running on your own computer.
 
 [![Latest release](https://img.shields.io/github/v/release/donvito/coworker)](https://github.com/donvito/coworker/releases/latest)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 ![macOS](https://img.shields.io/badge/macOS-arm64%20%7C%20Intel-111111?logo=apple&logoColor=white)
 ![Windows](https://img.shields.io/badge/Windows-x64%20%7C%20ARM64-0078D4?logo=windows&logoColor=white)
 ![Linux](https://img.shields.io/badge/Linux-AppImage%20%7C%20deb-FCC624?logo=linux&logoColor=black)
@@ -57,3 +58,7 @@ Scripts, tests, evals, and packaging: [Development](docs/development.md)
 - [Development](docs/development.md)
 - [Data and security](docs/security.md)
 - [Releasing](docs/releasing.md)
+
+## License
+
+[Apache License 2.0](LICENSE)
