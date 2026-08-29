@@ -7733,3 +7733,207 @@ button.floor-activity-row:hover {
   color: var(--forest);
   text-decoration: underline;
 }
+
+/* Folder access and skill toggles, parked under the composer card. */
+.composer-tools {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 7px 2px 0;
+}
+
+/* The composer is a centred, max-width card, so the bar under it has to take
+   the same box or it drifts to the column edge. */
+.conversation-thread .composer-tools {
+  width: min(720px, calc(100% - 34px));
+  margin: -6px auto 14px;
+  padding-left: 3px;
+}
+
+.composer-tool {
+  position: relative;
+}
+
+.composer-tool-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 240px;
+  padding: 6px 11px;
+  color: #5d6b64;
+  font-size: 12px;
+  font-weight: 620;
+  background: transparent;
+  border: 0;
+  border-radius: 9px;
+}
+
+.composer-tool-trigger span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-tool-trigger svg {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+}
+
+.composer-tool-trigger:hover:not(:disabled),
+.composer-tool-trigger.active {
+  color: var(--ink);
+  background: rgba(31, 44, 38, 0.06);
+}
+
+.composer-tool-trigger:disabled {
+  opacity: 0.45;
+}
+
+.composer-tool-popover {
+  position: absolute;
+  bottom: calc(100% + 7px);
+  left: 0;
+  z-index: 30;
+  width: min(320px, 72vw);
+  padding: 10px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  box-shadow: 0 18px 44px rgba(31, 44, 38, 0.16);
+}
+
+.composer-tool-popover > header {
+  display: flex;
+  margin-bottom: 8px;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.composer-tool-popover > header strong {
+  font-size: 12.5px;
+  font-weight: 690;
+}
+
+.composer-tool-popover > header small {
+  color: var(--ink-soft);
+  font-size: 10.5px;
+  line-height: 1.4;
+}
+
+.composer-tool-list {
+  display: flex;
+  max-height: 232px;
+  /* The UA stylesheet's 40px list indent pushed every row off the header. */
+  margin-bottom: 7px;
+  padding-left: 0;
+  list-style: none;
+  overflow-y: auto;
+  flex-direction: column;
+  gap: 1px;
+  scrollbar-width: thin;
+}
+
+.composer-tool-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 7px;
+  border-radius: 8px;
+}
+
+.composer-tool-list li:hover {
+  background: var(--cloud);
+}
+
+.composer-tool-list > li > svg {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  color: var(--forest);
+}
+
+.composer-tool-list li > span {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.composer-tool-list li strong {
+  overflow: hidden;
+  font-size: 11.5px;
+  font-weight: 640;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-tool-list li small {
+  overflow: hidden;
+  color: var(--ink-soft);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Skills are a plain on/off list: the name carries it, no descriptions. */
+.composer-skill-list li > strong {
+  overflow: hidden;
+  flex: 1;
+  font-size: 12.5px;
+  font-weight: 620;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-tool-remove {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  color: #8a3529;
+  font-size: 11px;
+  font-weight: 620;
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+}
+
+.composer-tool-remove:hover:not(:disabled) {
+  background: rgba(196, 90, 74, 0.1);
+}
+
+.composer-tool-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 29px;
+  color: var(--ink);
+  font-size: 11.5px;
+  font-weight: 650;
+  background: var(--cloud);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+}
+
+.composer-tool-action svg {
+  width: 13px;
+  height: 13px;
+}
+
+.composer-tool-action:hover:not(:disabled) {
+  background: #e8efea;
+}
+
+.composer-tool-empty {
+  padding: 4px 2px 9px;
+  color: var(--ink-soft);
+  font-size: 11.5px;
+}
+
+.composer-tool-error {
+  margin-top: 8px;
+  color: #8a3529;
+  font-size: 11px;
+}

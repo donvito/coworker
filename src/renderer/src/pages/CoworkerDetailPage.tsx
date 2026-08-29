@@ -39,6 +39,7 @@ import {
   artifactKind,
   type ArtifactTarget,
 } from "../components/ArtifactActions";
+import { ComposerTools } from "../components/ComposerTools";
 import { CoworkerSettingsModal } from "../components/CoworkerSettingsModal";
 import { ChatMarkdown } from "../components/ChatMarkdown";
 import { ModalPortal } from "../components/ModalPortal";
@@ -673,6 +674,7 @@ export function CoworkerDetailPage({
             storedMessages={conversationMessages}
             imageAttachments={imageAttachments}
             schedules={schedules}
+            skills={skills}
             showReasoning={settings.showReasoning}
             modelEndpoints={modelEndpoints}
             onBack={onBack}
@@ -1614,6 +1616,7 @@ function CoworkerSurface({
   storedMessages,
   imageAttachments,
   schedules,
+  skills,
   showReasoning,
   modelEndpoints = [],
   onBack,
@@ -1638,6 +1641,7 @@ function CoworkerSurface({
   storedMessages: StoredMessage[];
   imageAttachments: TaskImageAttachmentSummary[];
   schedules: Schedule[];
+  skills: Skill[];
   showReasoning: boolean;
   modelEndpoints?: ModelEndpoint[];
   onBack: () => void;
@@ -3066,6 +3070,12 @@ function CoworkerSurface({
                 />
               </div>
             </form>
+            <ComposerTools
+              coworker={coworker}
+              disabled={agent.isRunning}
+              onChanged={onChanged}
+              skills={skills}
+            />
           </div>
         </div>
       </section>

@@ -15,6 +15,7 @@ import {
 } from "@earendil-works/pi-ai";
 import { getToolCatalogEntry } from "@shared/tool-catalog";
 import { isoWithLocalOffset, shiftTimestampsDeep } from "@shared/time";
+import { formatGrantedFolders } from "@shared/folder-access-prompt";
 import { formatModelSelectableSkills } from "@shared/pi-skill-prompt";
 import {
   documentFormatClarification,
@@ -474,6 +475,7 @@ async function initialize(workerConfig: WorkerCoworkerConfig): Promise<void> {
         Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"
       }; treat any time they give without a timezone as being in it, and never ask them which timezone they meant.`
     : "";
+  const folderRule = formatGrantedFolders(workerConfig.coworker.sharedFolders);
   const skillsRule = formatModelSelectableSkills(workerConfig.skills);
   const recentSkillUses = workerConfig.recentSkillUses.length
     ? `Recent durable skill usage: ${[...new Set(workerConfig.recentSkillUses)].join(", ")}. When asked whether a skill was used, answer from this record and the current tool history.`
@@ -488,6 +490,7 @@ async function initialize(workerConfig: WorkerCoworkerConfig): Promise<void> {
         documentFormatInstruction,
         "Final office file rule: invoice.create writes the selected final format directly. For a new PDF, Word, Excel, or CSV file, pass its content directly to documents.export with a name; do not create a temporary Markdown or text file first. You can create genuine XLSX and CSV files with documents.export, so never claim those formats are unavailable when that tool is enabled.",
         schedulingRule,
+        folderRule,
         skillsRule,
         recentSkillUses,
       ]

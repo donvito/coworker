@@ -23,6 +23,8 @@ export type IconName =
   | "spark"
   | "panel"
   | "archive"
+  | "folder"
+  | "tool"
   | "copy";
 
 const paths: Record<IconName, React.ReactNode> = {
@@ -119,6 +121,12 @@ const paths: Record<IconName, React.ReactNode> = {
   ),
   shield: <path d="M12 22s8-4 8-11V5l-8-3-8 3v6c0 7 8 11 8 11Zm-3-10 2 2 4-4" />,
   spark: <path d="m12 3 1.4 4.6L18 9l-4.6 1.4L12 15l-1.4-4.6L6 9l4.6-1.4ZM19 16l.7 2.3L22 19l-2.3.7L19 22l-.7-2.3L16 19l2.3-.7Z" />,
+  tool: (
+    <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.8-3.8a6 6 0 0 1-8 7.9l-6.9 6.9a2.1 2.1 0 0 1-3-3l6.9-6.9a6 6 0 0 1 7.9-8Z" />
+  ),
+  folder: (
+    <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" />
+  ),
   panel: (
     <>
       <rect x="3" y="4" width="18" height="16" rx="2" />
