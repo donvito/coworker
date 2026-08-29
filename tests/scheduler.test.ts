@@ -176,4 +176,86 @@ describe("local scheduler", () => {
       database.close();
     }
   });
+
+  it("routes runs into the conversation the schedule was created in", async () => {
+    const { database, coworker } = await fixture();
+    const created: string[] = [];
+    const scheduler = new SchedulerService(database, (task) => {
+      created.push(task.threadId);
+    });
+    const conversation = database.createConversation({ coworkerId: coworker.id });
+    const schedule = scheduler.create({
+      coworkerId: coworker.id,
+      conversationId: conversation.id,
+      name: "Weekly digest",
+      scheduleType: "once",
+      runAt: new Date(Date.now() + 60_000).toISOString(),
+      timezone: "UTC",
+      taskTemplate: { title: "Digest", input: "Write the digest." },
+    });
+
+    expect(schedule.conversationId).toBe(conversation.id);
+    const task = await scheduler.runNow(schedule.id);
+    expect(task.threadId).toBe(conversation.id);
+    expect(created).toEqual([conversation.id]);
+  });
+
+  it("falls back to the coworker's default thread when no conversation is bound", async () => {
+    const { database, coworker } = await fixture();
+    const scheduler = new SchedulerService(database, () => {});
+    const schedule = scheduler.create({
+      coworkerId: coworker.id,
+      name: "Weekly digest",
+      scheduleType: "once",
+      runAt: new Date(Date.now() + 60_000).toISOString(),
+      timezone: "UTC",
+      taskTemplate: { title: "Digest", input: "Write the digest." },
+    });
+
+    expect(schedule.conversationId).toBeNull();
+    const task = await scheduler.runNow(schedule.id);
+    expect(task.threadId).toBe(`coworker:${coworker.id}`);
+  });
+
+  it("restores an archived destination so a run is never written out of sight", async () => {
+    const { database, coworker } = await fixture();
+    const scheduler = new SchedulerService(database, () => {});
+    const conversation = database.createConversation({ coworkerId: coworker.id });
+    database.setConversationArchived(conversation.id, true);
+    expect(database.getConversation(conversation.id).archivedAt).not.toBeNull();
+
+    const schedule = scheduler.create({
+      coworkerId: coworker.id,
+      conversationId: conversation.id,
+      name: "Weekly digest",
+      scheduleType: "once",
+      runAt: new Date(Date.now() + 60_000).toISOString(),
+      timezone: "UTC",
+      taskTemplate: { title: "Digest", input: "Write the digest." },
+    });
+    await scheduler.runNow(schedule.id);
+
+    expect(database.getConversation(conversation.id).archivedAt).toBeNull();
+  });
+
+  it("drops the binding when the destination conversation is deleted", async () => {
+    const { database, coworker } = await fixture();
+    const scheduler = new SchedulerService(database, () => {});
+    const conversation = database.createConversation({ coworkerId: coworker.id });
+    const schedule = scheduler.create({
+      coworkerId: coworker.id,
+      conversationId: conversation.id,
+      name: "Weekly digest",
+      scheduleType: "once",
+      runAt: new Date(Date.now() + 60_000).toISOString(),
+      timezone: "UTC",
+      taskTemplate: { title: "Digest", input: "Write the digest." },
+    });
+
+    database.deleteConversation(conversation.id);
+
+    expect(database.getSchedule(schedule.id).conversationId).toBeNull();
+    const task = await scheduler.runNow(schedule.id);
+    expect(task.threadId).toBe(`coworker:${coworker.id}`);
+  });
 });

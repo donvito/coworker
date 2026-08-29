@@ -12,6 +12,7 @@ import type {
   ToolPolicy,
   WebSearchProvider,
 } from "@shared/contracts";
+import { describeCronExpression } from "@shared/schedule-frequency";
 import { getToolCatalogEntry } from "@shared/tool-catalog";
 import type { CoworkerDatabase } from "@main/db/database";
 import {
@@ -192,7 +193,7 @@ function approvalSummary(toolName: string, args: unknown): string {
     if (parsed.success) {
       const timing =
         parsed.data.scheduleType === "cron"
-          ? `${parsed.data.cronExpression} (${parsed.data.timezone})`
+          ? `${describeCronExpression(parsed.data.cronExpression ?? null)} (${parsed.data.timezone})`
           : new Date(parsed.data.runAt!).toLocaleString();
       return `Create schedule “${parsed.data.name}” · ${timing}`;
     }
@@ -711,6 +712,9 @@ export class ToolGateway {
         }
         const schedule = this.actions.createSchedule({
           coworkerId: coworker.id,
+          // Reply where the schedule was asked for, not in whichever thread
+          // happens to be the coworker's default.
+          conversationId: this.database.getTask(toolCall.taskId).threadId,
           name: args.name,
           scheduleType: args.scheduleType,
           cronExpression: args.cronExpression,

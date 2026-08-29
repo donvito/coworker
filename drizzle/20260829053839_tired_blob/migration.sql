@@ -1,0 +1,1 @@
+ALTER TABLE `schedules` ADD `conversation_id` text REFERENCES conversations(id) ON DELETE SET NULL;

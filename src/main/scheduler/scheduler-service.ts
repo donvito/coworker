@@ -109,6 +109,7 @@ export class SchedulerService {
     const task = this.database.createTask({
       coworkerId: schedule.coworkerId,
       scheduleId: schedule.id,
+      threadId: schedule.conversationId ?? undefined,
       title: schedule.taskTemplate.title,
       input: schedule.taskTemplate.input,
       priority: schedule.taskTemplate.priority,
@@ -161,6 +162,7 @@ export class SchedulerService {
           const created = this.database.createTask({
             coworkerId: schedule.coworkerId,
             scheduleId: schedule.id,
+            threadId: schedule.conversationId ?? undefined,
             title: schedule.taskTemplate.title,
             input: schedule.taskTemplate.input,
             priority: schedule.taskTemplate.priority,

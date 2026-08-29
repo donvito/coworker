@@ -150,6 +150,7 @@ const taskTemplateSchema = z.object({
 export const createScheduleSchema = z
   .object({
     coworkerId: identifier,
+    conversationId: identifier.nullable().optional(),
     name: z.string().trim().min(1).max(160),
     scheduleType: z.enum(["cron", "once"]),
     cronExpression: z.string().trim().min(1).max(160).optional(),
@@ -177,6 +178,7 @@ export const createScheduleSchema = z
 
 export const updateScheduleSchema = z
   .object({
+    conversationId: identifier.nullable().optional(),
     name: z.string().trim().min(1).max(160).optional(),
     scheduleType: z.enum(["cron", "once"]).optional(),
     cronExpression: z.string().trim().min(1).max(160).nullable().optional(),

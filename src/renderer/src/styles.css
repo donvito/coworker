@@ -5014,9 +5014,9 @@ select:focus {
   position: relative;
   z-index: 13;
   display: grid;
-  grid-template-columns: 1fr 1fr auto;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
   min-height: 52px;
-  padding: 5px 9px 0;
+  padding: 5px 7px 0;
   background: rgba(255, 255, 255, 0.72);
   border-bottom: 1px solid var(--line);
   -webkit-app-region: no-drag;
@@ -5027,10 +5027,11 @@ select:focus {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: 4px;
   min-width: 0;
+  padding: 0 2px;
   color: #78857f;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 660;
   background: transparent;
   border: 0;
@@ -5049,6 +5050,13 @@ select:focus {
 .conversation-rail-tabs svg {
   width: 12px;
   height: 12px;
+  flex: 0 0 auto;
+}
+
+.conversation-rail-tabs button > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .conversation-rail-tabs b {
@@ -5070,6 +5078,7 @@ select:focus {
 }
 
 .conversation-approvals-panel,
+.conversation-schedule-rail,
 .conversation-file-rail {
   display: flex;
   min-height: 0;
@@ -7298,4 +7307,429 @@ button.floor-activity-row:hover {
 
 .group-member-picker label {
   cursor: pointer;
+}
+
+.conversation-schedule-rail .conversation-file-rail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.conversation-schedule-new {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 9px;
+  color: var(--forest);
+  font-size: 11px;
+  font-weight: 660;
+  background: var(--forest-soft);
+  border: 1px solid #c2d7cb;
+  border-radius: 8px;
+}
+
+.conversation-schedule-new svg {
+  width: 12px;
+  height: 12px;
+}
+
+.conversation-schedule-notice {
+  margin: 8px 10px 0;
+  padding: 7px 9px;
+  color: #2c5a48;
+  font-size: 11px;
+  background: var(--forest-soft);
+  border-radius: 8px;
+}
+
+.conversation-schedule-list {
+  display: flex;
+  min-height: 0;
+  padding: 10px;
+  overflow-y: auto;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+  scrollbar-width: thin;
+}
+
+.conversation-schedule-card {
+  display: flex;
+  padding: 10px;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 8px;
+  background: #fff;
+  border: 1px solid #dde5e0;
+  border-radius: 10px;
+  box-shadow: 0 4px 14px rgba(31, 44, 38, 0.03);
+}
+
+.conversation-schedule-card.disabled {
+  opacity: 0.62;
+}
+
+.conversation-schedule-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.conversation-schedule-copy strong {
+  overflow: hidden;
+  font-size: 12.5px;
+  font-weight: 690;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-schedule-copy small {
+  color: #34483f;
+  font-size: 11px;
+}
+
+.conversation-schedule-copy p {
+  color: var(--ink-soft);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+.conversation-schedule-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.conversation-schedule-actions .toggle {
+  margin-right: auto;
+}
+
+.conversation-schedule-actions .toggle small {
+  font-size: 10px;
+}
+
+.conversation-schedule-actions button {
+  padding: 4px 9px;
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 620;
+  background: var(--cloud);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+}
+
+.conversation-schedule-actions button:hover:not(:disabled) {
+  background: #e8efea;
+}
+
+.conversation-schedule-actions button:disabled {
+  opacity: 0.5;
+}
+
+.schedule-editor-modal {
+  width: min(560px, 100%);
+}
+
+.frequency-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.frequency-fields > label:only-child,
+.frequency-fields .frequency-custom {
+  grid-column: 1 / -1;
+}
+
+.frequency-preview {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  color: #263c33;
+  background: var(--forest-soft);
+  border: 1px solid #bfd5c8;
+  border-radius: 10px;
+}
+
+.frequency-preview svg {
+  width: 17px;
+  flex: 0 0 auto;
+  color: var(--forest);
+}
+
+.frequency-preview > span {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.frequency-preview strong {
+  font-size: 13px;
+}
+
+.frequency-preview small {
+  color: #5c7468;
+  font-size: 11px;
+}
+
+.frequency-preview.invalid {
+  color: #6b2f2a;
+  background: rgba(196, 90, 74, 0.09);
+  border-color: rgba(196, 90, 74, 0.32);
+}
+
+.frequency-preview.invalid svg {
+  color: var(--ember);
+}
+
+.frequency-preview.invalid small {
+  color: #8a4238;
+}
+
+/* An approval raised by this conversation is answered inline, where the
+   coworker asked, rather than only in the side rail. */
+.workroom-approval {
+  align-self: flex-start;
+  max-width: min(560px, 82%);
+  margin: 4px 0 2px;
+  padding: 13px 15px 11px;
+  background: #fff;
+  border: 1px solid #e2c9a4;
+  border-left: 3px solid var(--ember, #c45a4a);
+  border-radius: 13px;
+  box-shadow: 0 6px 18px rgba(31, 44, 38, 0.05);
+}
+
+.workroom-approval > header {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.workroom-approval > header > span:last-child {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.workroom-approval-icon {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  color: #9a4a2f;
+  background: rgba(214, 145, 74, 0.14);
+  border-radius: 8px;
+}
+
+.workroom-approval-icon svg {
+  width: 15px;
+  height: 15px;
+}
+
+.workroom-approval header small {
+  color: var(--ink-soft);
+  font-size: 10px;
+  text-transform: capitalize;
+}
+
+.workroom-approval header strong {
+  font-size: 13.5px;
+  font-weight: 660;
+  line-height: 1.35;
+}
+
+.workroom-approval .workroom-approval-details {
+  display: flex;
+  margin: 9px 0 10px;
+  padding: 8px 10px;
+  flex-direction: column;
+  background: var(--cloud);
+  border-radius: 9px;
+}
+
+.workroom-approval-details > span {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 8px;
+  padding: 2px 0;
+}
+
+.workroom-approval-details small {
+  color: var(--ink-soft);
+  font-size: 10.5px;
+}
+
+.workroom-approval-details strong {
+  overflow: hidden;
+  font-size: 10.5px;
+  font-weight: 620;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workroom-approval-actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.workroom-approval-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 30px;
+  padding: 0 13px;
+  font-size: 11.5px;
+  font-weight: 680;
+  border-radius: 8px;
+}
+
+.workroom-approval-actions svg {
+  width: 12px;
+  height: 12px;
+}
+
+.workroom-approval-actions button:disabled {
+  opacity: 0.6;
+}
+
+.workroom-approval-reject {
+  color: #8a3529;
+  background: #fff;
+  border: 1px solid #e0b6ad;
+}
+
+.workroom-approval-reject:hover:not(:disabled) {
+  background: rgba(196, 90, 74, 0.08);
+}
+
+.workroom-approval .workroom-message-meta {
+  display: block;
+  margin-top: 9px;
+}
+
+.workroom-approval-resolved {
+  display: flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: 8px;
+  max-width: min(560px, 82%);
+  margin: 2px 0;
+  padding: 7px 11px;
+  background: rgba(233, 238, 235, 0.7);
+  border-radius: 9px;
+}
+
+.workroom-approval-resolved svg {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
+  color: var(--forest);
+}
+
+.workroom-approval-resolved > span {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.workroom-approval-resolved strong {
+  overflow: hidden;
+  color: #34483f;
+  font-size: 11.5px;
+  font-weight: 620;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workroom-approval-resolved small {
+  color: var(--ink-soft);
+  font-size: 10px;
+  text-transform: capitalize;
+}
+
+.conversation-schedule-destination {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 2px 0;
+  overflow: hidden;
+  color: var(--ink-soft);
+  font-size: 10px;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+}
+
+.conversation-schedule-destination > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-schedule-destination:hover {
+  color: var(--forest);
+  text-decoration: underline;
+}
+
+.conversation-schedule-destination svg {
+  width: 10px;
+  height: 10px;
+  flex: 0 0 auto;
+}
+
+.schedule-destination-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ink-soft);
+  font-size: 11.5px;
+}
+
+.schedule-destination-note svg {
+  width: 12px;
+  flex: 0 0 auto;
+}
+
+.schedule-destination-note strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-weight: 640;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.schedule-destination-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 320px;
+  overflow: hidden;
+  color: var(--ink-soft);
+  font-family: var(--mono);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: transparent;
+  border: 0;
+}
+
+.schedule-destination-link svg {
+  width: 12px;
+  flex: 0 0 auto;
+}
+
+.schedule-destination-link:hover {
+  color: var(--forest);
+  text-decoration: underline;
 }

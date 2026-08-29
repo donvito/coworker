@@ -24,6 +24,7 @@ import type {
   DiscussionSession,
   ModelEndpoint,
   Message as StoredMessage,
+  Schedule,
   Task,
   TaskImageAttachmentSummary,
   Skill,
@@ -42,7 +43,9 @@ import { CoworkerSettingsModal } from "../components/CoworkerSettingsModal";
 import { ChatMarkdown } from "../components/ChatMarkdown";
 import { ModalPortal } from "../components/ModalPortal";
 import { QuickModelSwitcher } from "../components/QuickModelSwitcher";
+import { ScheduleEditorModal } from "../components/ScheduleEditorModal";
 import { Icon } from "../components/Icon";
+import { describeCronExpression, describeSchedule } from "@shared/schedule-frequency";
 import {
   filterConversations,
   type LiveResponse,
@@ -118,6 +121,12 @@ const acceptedImageTypes = new Set(["image/jpeg", "image/png", "image/webp", "im
 const maxImageCount = 4;
 const maxImageBytes = 8 * 1024 * 1024;
 const maxImagesTotalBytes = 20 * 1024 * 1024;
+
+interface ApprovalEntry {
+  approval: Approval;
+  /** Timestamp for a day divider this approval must introduce, if any. */
+  divider: string | null;
+}
 
 interface PendingImage {
   id: string;
@@ -285,6 +294,30 @@ export function mentionedCoworkerIdsInText(
     .map((member) => member.id);
 }
 
+/**
+ * A schedule with no conversation of its own posts into the coworker's default
+ * thread, so name that explicitly rather than leaving it a mystery.
+ */
+export function scheduleDestination(
+  schedule: Schedule,
+  conversations: Conversation[],
+  coworker: Coworker,
+): string {
+  if (!schedule.conversationId) return `Replies in ${coworker.name}’s main thread`;
+  const conversation = conversations.find((item) => item.id === schedule.conversationId);
+  if (!conversation) return `Replies in ${coworker.name}’s main thread`;
+  return `Replies in ${conversationTitle(conversation, coworker)}`;
+}
+
+export function conversationTitle(
+  conversation: Conversation | null,
+  coworker: Coworker,
+): string {
+  if (!conversation) return `${coworker.name}’s main thread`;
+  if (conversation.id === `coworker:${coworker.id}`) return `${coworker.name}’s main thread`;
+  return conversation.title;
+}
+
 export function latestDirectConversation(
   conversations: Conversation[],
   coworkerId: string,
@@ -393,6 +426,7 @@ export function CoworkerDetailPage({
   artifacts,
   messages,
   imageAttachments,
+  schedules,
   skills,
   settings,
   modelEndpoints = [],
@@ -413,6 +447,7 @@ export function CoworkerDetailPage({
   artifacts: Artifact[];
   messages: StoredMessage[];
   imageAttachments: TaskImageAttachmentSummary[];
+  schedules: Schedule[];
   skills: Skill[];
   settings: AppSettings;
   modelEndpoints?: ModelEndpoint[];
@@ -637,6 +672,7 @@ export function CoworkerDetailPage({
             allMessages={messages}
             storedMessages={conversationMessages}
             imageAttachments={imageAttachments}
+            schedules={schedules}
             showReasoning={settings.showReasoning}
             modelEndpoints={modelEndpoints}
             onBack={onBack}
@@ -1577,6 +1613,7 @@ function CoworkerSurface({
   allMessages,
   storedMessages,
   imageAttachments,
+  schedules,
   showReasoning,
   modelEndpoints = [],
   onBack,
@@ -1600,6 +1637,7 @@ function CoworkerSurface({
   allMessages: StoredMessage[];
   storedMessages: StoredMessage[];
   imageAttachments: TaskImageAttachmentSummary[];
+  schedules: Schedule[];
   showReasoning: boolean;
   modelEndpoints?: ModelEndpoint[];
   onBack: () => void;
@@ -1660,9 +1698,27 @@ function CoworkerSurface({
   const [externalLiveResponses, setExternalLiveResponses] = useState<
     Record<string, LiveResponse>
   >({});
-  const [rightRailTab, setRightRailTab] = useState<"files" | "approvals">(
-    pending.length > 0 ? "approvals" : "files",
+  // The surface remounts when the conversation changes, so the chosen tab is
+  // remembered: following a schedule's "Replies in" link must not silently
+  // drop you back on Files.
+  const [rightRailTab, setRightRailTabState] = useState<"files" | "approvals" | "schedules">(
+    () => {
+      const stored = window.localStorage.getItem("conversation-rail-tab");
+      if (stored === "files" || stored === "approvals" || stored === "schedules") {
+        return stored;
+      }
+      return pending.length > 0 ? "approvals" : "files";
+    },
   );
+  function setRightRailTab(tab: "files" | "approvals" | "schedules") {
+    setRightRailTabState(tab);
+    window.localStorage.setItem("conversation-rail-tab", tab);
+  }
+  const [scheduleEditorOpen, setScheduleEditorOpen] = useState(false);
+  const [editingSchedule, setEditingSchedule] = useState<Schedule | null>(null);
+  const [scheduleBusy, setScheduleBusy] = useState<string | null>(null);
+  const [scheduleNotice, setScheduleNotice] = useState<string | null>(null);
+  const [scheduleError, setScheduleError] = useState<string | null>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const historyRef = useRef<HTMLDivElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
@@ -1698,7 +1754,20 @@ function CoworkerSurface({
   const sortedArtifacts = [...artifacts].sort((left, right) =>
     right.createdAt.localeCompare(left.createdAt),
   );
+  // Schedules arrive for the whole workspace; the rail only speaks for the
+  // coworker whose conversation is open, with the soonest run first.
+  const coworkerSchedules = schedules
+    .filter((schedule) => schedule.coworkerId === coworker.id)
+    .sort((left, right) => {
+      if (left.enabled !== right.enabled) return left.enabled ? -1 : 1;
+      return (left.nextRunAt ?? "9999").localeCompare(right.nextRunAt ?? "9999");
+    });
   const tasksById = new Map(tasks.map((task) => [task.id, task]));
+  // An approval belongs to the conversation whose task raised it, so the
+  // decision can be made in the thread that asked for it instead of a rail.
+  const conversationApprovals = approvals
+    .filter((approval) => tasksById.get(approval.taskId)?.threadId === conversationId)
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
   const conversationTaskCounts = new Map<string, number>();
   for (const task of tasks) {
     if (task.coworkerId !== coworker.id) continue;
@@ -2061,7 +2130,9 @@ function CoworkerSurface({
     render: ({ status, parameters }) => {
       const timing =
         parameters.scheduleType === "cron"
-          ? parameters.cronExpression || "Recurring schedule"
+          ? parameters.cronExpression
+            ? describeCronExpression(parameters.cronExpression)
+            : "Recurring schedule"
           : parameters.runAt
             ? new Date(parameters.runAt).toLocaleString()
             : "One-time schedule";
@@ -2183,7 +2254,134 @@ function CoworkerSurface({
     }
   }
 
+  async function decideApproval(approval: Approval, decision: "approve" | "reject") {
+    setApprovalInFlight(approval.id);
+    setApprovalError(null);
+    try {
+      await window.coworker.approvals.decide({ approvalId: approval.id, decision });
+      await onChanged();
+    } catch (error) {
+      setApprovalError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setApprovalInFlight(null);
+    }
+  }
+
+  async function toggleSchedule(schedule: Schedule) {
+    setScheduleBusy(schedule.id);
+    setScheduleError(null);
+    try {
+      await window.coworker.schedules.update(schedule.id, { enabled: !schedule.enabled });
+      await onChanged();
+    } catch (error) {
+      setScheduleError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setScheduleBusy(null);
+    }
+  }
+
+  async function runScheduleNow(schedule: Schedule) {
+    setScheduleBusy(schedule.id);
+    setScheduleError(null);
+    setScheduleNotice(null);
+    try {
+      const task = await window.coworker.schedules.runNow(schedule.id);
+      await onChanged();
+      setScheduleNotice(`“${task.title}” is queued.`);
+    } catch (error) {
+      setScheduleError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setScheduleBusy(null);
+    }
+  }
+
   let previousMessageDay: string | null = null;
+  // Approvals are interleaved into the transcript by the time they were
+  // raised, so a decision never floats below messages that came after it.
+  let approvalCursor = 0;
+
+  function takeApprovalsUntil(timestamp: string): ApprovalEntry[] {
+    const due: ApprovalEntry[] = [];
+    while (approvalCursor < conversationApprovals.length) {
+      const approval = conversationApprovals[approvalCursor];
+      if (!approval || approval.createdAt > timestamp) break;
+      const dayKey = messageDayKey(approval.createdAt);
+      const divider = dayKey === previousMessageDay ? null : approval.createdAt;
+      previousMessageDay = dayKey;
+      due.push({ approval, divider });
+      approvalCursor += 1;
+    }
+    return due;
+  }
+
+  function renderApprovalEntries(entries: ApprovalEntry[]) {
+    return entries.map(({ approval, divider }) => (
+      <Fragment key={approval.id}>
+        {divider ? (
+          <div className="conversation-date-divider">
+            <span>{messageDayLabel(divider)}</span>
+          </div>
+        ) : null}
+        {approval.status === "PENDING" ? (
+          <div className="workroom-approval">
+            <header>
+              <span className="workroom-approval-icon">
+                <Icon name="shield" />
+              </span>
+              <span>
+                <small>
+                  {formatActionType(approval.actionType)} · {approval.riskLevel} risk
+                </small>
+                <strong>{approval.summary}</strong>
+              </span>
+            </header>
+            <div className="workroom-approval-details">
+              {approvalPreviewRows(approval).map(([label, value]) => (
+                <span key={label}>
+                  <small>{label}</small>
+                  <strong>{value}</strong>
+                </span>
+              ))}
+            </div>
+            <div className="workroom-approval-actions">
+              <button
+                className="quick-approve-button"
+                disabled={approvalInFlight === approval.id}
+                onClick={() => void decideApproval(approval, "approve")}
+              >
+                <Icon name="check" />
+                {approvalInFlight === approval.id ? "Approving…" : "Approve"}
+              </button>
+              <button
+                className="workroom-approval-reject"
+                disabled={approvalInFlight === approval.id}
+                onClick={() => void decideApproval(approval, "reject")}
+              >
+                Reject
+              </button>
+              <button className="quick-review-button" onClick={onOpenApprovals}>
+                Review
+              </button>
+            </div>
+            <small className="workroom-message-meta">
+              {coworker.name} is waiting · {formatMessageTime(approval.createdAt)}
+            </small>
+          </div>
+        ) : (
+          <div className="workroom-approval-resolved">
+            <Icon name={approval.status === "REJECTED" ? "stop" : "check"} />
+            <span>
+              <strong>{approval.summary}</strong>
+              <small>
+                {approval.status.toLowerCase()}
+                {approval.decidedAt ? ` · ${formatMessageTime(approval.decidedAt)}` : ""}
+              </small>
+            </span>
+          </div>
+        )}
+      </Fragment>
+    ));
+  }
 
   const railToggle = (
     <button
@@ -2590,6 +2788,7 @@ function CoworkerSurface({
                   timestamp = new Date().toISOString();
                   liveMessageTimes.current.set(message.id, timestamp);
                 }
+                const dueApprovals = takeApprovalsUntil(timestamp);
                 const dayKey = messageDayKey(timestamp);
                 const showDayDivider = dayKey !== previousMessageDay;
                 previousMessageDay = dayKey;
@@ -2604,6 +2803,7 @@ function CoworkerSurface({
                 const toolCalls = message.role === "assistant" ? (message.toolCalls ?? []) : [];
                 return (
                   <Fragment key={message.id}>
+                    {renderApprovalEntries(dueApprovals)}
                     {showDayDivider ? (
                       <div className="conversation-date-divider">
                         <span>{messageDayLabel(timestamp)}</span>
@@ -2706,6 +2906,16 @@ function CoworkerSurface({
                   </small>
                 </div>
               ))}
+              {renderApprovalEntries(takeApprovalsUntil("9999"))}
+              {approvalError ? (
+                <div className="workroom-run-error" role="alert">
+                  <Icon name="shield" />
+                  <span>
+                    <strong>Could not record that decision</strong>
+                    <small>{approvalError}</small>
+                  </span>
+                </div>
+              ) : null}
               {latestTask?.status === "FAILED" && latestTask.error ? (
                 <div className="workroom-run-error" role="alert">
                   <Icon name="shield" />
@@ -2888,10 +3098,135 @@ function CoworkerSurface({
             <span>Approvals</span>
             {pending.length > 0 ? <b className="attention">{pending.length}</b> : null}
           </button>
+          <button
+            aria-controls="conversation-schedules-panel"
+            aria-selected={rightRailTab === "schedules"}
+            className={rightRailTab === "schedules" ? "active" : ""}
+            id="conversation-schedules-tab"
+            onClick={() => setRightRailTab("schedules")}
+            role="tab"
+            type="button"
+          >
+            <Icon name="clock" />
+            <span>Schedules</span>
+            <b>{coworkerSchedules.length}</b>
+          </button>
           {railToggle}
         </header>
 
-        {rightRailTab === "files" ? (
+        {rightRailTab === "schedules" ? (
+          <section
+            aria-labelledby="conversation-schedules-tab"
+            className="conversation-schedule-rail"
+            id="conversation-schedules-panel"
+            role="tabpanel"
+          >
+            <header className="conversation-file-rail-head">
+              <span>
+                <strong>{coworker.name}’s schedules</strong>
+                <small>Recurring work queued automatically</small>
+              </span>
+              <button
+                className="conversation-schedule-new"
+                onClick={() => {
+                  setEditingSchedule(null);
+                  setScheduleEditorOpen(true);
+                }}
+                type="button"
+              >
+                <Icon name="plus" />
+                New
+              </button>
+            </header>
+
+            {scheduleNotice ? (
+              <div className="conversation-schedule-notice" role="status">
+                {scheduleNotice}
+              </div>
+            ) : null}
+            {scheduleError ? (
+              <div className="quick-approval-error" role="alert">
+                {scheduleError}
+              </div>
+            ) : null}
+
+            <div className="conversation-schedule-list">
+              {coworkerSchedules.length === 0 ? (
+                <div className="conversation-file-empty">
+                  <span>
+                    <Icon name="clock" />
+                  </span>
+                  <strong>No schedules yet</strong>
+                  <small>
+                    Give {coworker.name} a rhythm — a daily digest or a Friday check.
+                  </small>
+                </div>
+              ) : (
+                coworkerSchedules.map((schedule) => (
+                  <article
+                    className={
+                      schedule.enabled
+                        ? "conversation-schedule-card"
+                        : "conversation-schedule-card disabled"
+                    }
+                    key={schedule.id}
+                  >
+                    <div className="conversation-schedule-copy">
+                      <strong title={schedule.name}>{schedule.name}</strong>
+                      <small>{describeSchedule(schedule)}</small>
+                      <p>
+                        {schedule.enabled
+                          ? `Next ${formatRelativeTime(schedule.nextRunAt)}`
+                          : "Paused"}
+                      </p>
+                      <button
+                        className="conversation-schedule-destination"
+                        onClick={() =>
+                          onSelectConversation(
+                            schedule.conversationId ?? `coworker:${coworker.id}`,
+                          )
+                        }
+                        title={scheduleDestination(schedule, conversations, coworker)}
+                        type="button"
+                      >
+                        <Icon name="send" />
+                        <span>{scheduleDestination(schedule, conversations, coworker)}</span>
+                      </button>
+                    </div>
+                    <div className="conversation-schedule-actions">
+                      <label className="toggle">
+                        <input
+                          checked={schedule.enabled}
+                          disabled={scheduleBusy === schedule.id}
+                          onChange={() => void toggleSchedule(schedule)}
+                          type="checkbox"
+                        />
+                        <span />
+                        <small>{schedule.enabled ? "On" : "Off"}</small>
+                      </label>
+                      <button
+                        onClick={() => {
+                          setEditingSchedule(schedule);
+                          setScheduleEditorOpen(true);
+                        }}
+                        type="button"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        disabled={scheduleBusy === schedule.id}
+                        onClick={() => void runScheduleNow(schedule)}
+                        type="button"
+                      >
+                        Run now
+                      </button>
+                    </div>
+                  </article>
+                ))
+              )}
+            </div>
+          </section>
+        ) : rightRailTab === "files" ? (
           <section
             aria-labelledby="conversation-files-tab"
             className="conversation-file-rail"
@@ -3040,6 +3375,22 @@ function CoworkerSurface({
         )}
       </aside>
 
+      {scheduleEditorOpen ? (
+        <ScheduleEditorModal
+          conversationId={conversationId}
+          conversationTitle={conversationTitle(selectedConversation, coworker)}
+          coworkers={[coworker]}
+          defaultCoworkerId={coworker.id}
+          lockCoworker
+          onClose={() => {
+            setScheduleEditorOpen(false);
+            setEditingSchedule(null);
+          }}
+          onSaved={onChanged}
+          schedule={editingSchedule}
+        />
+      ) : null}
+
       {pendingArchive ? (
         <div
           className="modal-backdrop"
@@ -3149,7 +3500,7 @@ function formatActionType(actionType: string): string {
     .join(" · ");
 }
 
-function approvalPreviewRows(approval: Approval): Array<[string, string]> {
+export function approvalPreviewRows(approval: Approval): Array<[string, string]> {
   const payload = approval.proposedPayload;
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
     return [
@@ -3160,6 +3511,20 @@ function approvalPreviewRows(approval: Approval): Array<[string, string]> {
 
   const record = payload as Record<string, unknown>;
   const rows: Array<[string, string]> = [];
+  if (approval.actionType.startsWith("schedules.")) {
+    if (typeof record.name === "string") rows.push(["Name", record.name]);
+    if (typeof record.cronExpression === "string") {
+      rows.push(["Runs", describeCronExpression(record.cronExpression)]);
+    } else if (typeof record.runAt === "string") {
+      rows.push(["Runs", `Once on ${new Date(record.runAt).toLocaleString()}`]);
+    }
+    const template = record.taskTemplate;
+    if (template && typeof template === "object" && !Array.isArray(template)) {
+      const title = (template as Record<string, unknown>).title;
+      if (typeof title === "string") rows.push(["Task", title]);
+    }
+    if (rows.length > 0) return rows.slice(0, 3);
+  }
   if (typeof record.subject === "string") rows.push(["Subject", record.subject]);
   if (typeof record.to === "string") rows.push(["Recipient", record.to]);
   if (Array.isArray(record.to)) {

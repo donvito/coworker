@@ -148,6 +148,9 @@ export default function App() {
           imageAttachments={snapshot.imageAttachments.filter(
             (attachment) => attachment.coworkerId === selectedCoworker.id,
           )}
+          schedules={snapshot.schedules.filter(
+            (schedule) => schedule.coworkerId === selectedCoworker.id,
+          )}
           key={selectedCoworker.id}
           skills={snapshot.skills}
           settings={snapshot.settings}
@@ -193,8 +196,10 @@ export default function App() {
       {page === "schedules" ? (
         <SchedulesPage
           schedules={snapshot.schedules}
+          conversations={snapshot.conversations}
           coworkers={snapshot.coworkers}
           onChanged={refresh}
+          onOpenConversation={openCoworker}
         />
       ) : null}
       {page === "activity" ? (

@@ -271,6 +271,7 @@ function scheduleFromRow(row: typeof schedules.$inferSelect): Schedule {
   return {
     id: row.id,
     coworkerId: row.coworkerId,
+    conversationId: row.conversationId,
     name: row.name,
     scheduleType: row.scheduleType,
     cronExpression: row.cronExpression,
@@ -1166,6 +1167,9 @@ export class CoworkerDatabase {
         .update(conversations)
         .set({
           title: existingTitle === "New conversation" ? input.title : existingTitle,
+          // New work means the thread is live again. Without this a scheduled
+          // run would write into a conversation the roster filters out.
+          archivedAt: null,
           updatedAt: timestamp,
         })
         .where(eq(conversations.id, threadId))
@@ -1760,6 +1764,7 @@ export class CoworkerDatabase {
       .values({
         id,
         coworkerId: input.coworkerId,
+        conversationId: input.conversationId ?? null,
         name: input.name,
         scheduleType: input.scheduleType,
         cronExpression: input.cronExpression ?? null,
@@ -1806,6 +1811,7 @@ export class CoworkerDatabase {
       nextRunAt,
       updatedAt: now(),
     };
+    if (input.conversationId !== undefined) patch.conversationId = input.conversationId;
     if (input.name !== undefined) patch.name = input.name;
     if (input.scheduleType !== undefined) patch.scheduleType = input.scheduleType;
     if (input.cronExpression !== undefined) patch.cronExpression = input.cronExpression;

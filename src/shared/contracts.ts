@@ -346,6 +346,8 @@ export interface ScheduleTaskTemplate {
 export interface Schedule {
   id: string;
   coworkerId: string;
+  /** Conversation a run replies into; null uses the coworker's default thread. */
+  conversationId: string | null;
   name: string;
   scheduleType: "cron" | "once";
   cronExpression: string | null;
@@ -361,6 +363,7 @@ export interface Schedule {
 
 export interface CreateScheduleInput {
   coworkerId: string;
+  conversationId?: string | null;
   name: string;
   scheduleType: Schedule["scheduleType"];
   cronExpression?: string;
@@ -371,6 +374,7 @@ export interface CreateScheduleInput {
 }
 
 export interface UpdateScheduleInput {
+  conversationId?: string | null;
   name?: string;
   scheduleType?: Schedule["scheduleType"];
   cronExpression?: string | null;

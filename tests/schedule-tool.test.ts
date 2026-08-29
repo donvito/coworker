@@ -102,6 +102,9 @@ describe("conversational schedule tool", () => {
       });
       expect(database.listSchedules()).toHaveLength(1);
       expect(database.listSchedules()[0]?.nextRunAt).toBeTruthy();
+      // The schedule replies where it was asked for, not in the default thread.
+      expect(database.listSchedules()[0]?.conversationId).toBe(task.threadId);
+      expect(requested.approval.summary).toContain("Every Monday at 9:00");
     } finally {
       database.close();
     }

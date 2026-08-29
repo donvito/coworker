@@ -1,59 +1,34 @@
-import { useState, type FormEvent } from "react";
-import type { Coworker, Schedule } from "@shared/contracts";
+import { useState } from "react";
+import type { Conversation, Coworker, Schedule } from "@shared/contracts";
 import { Icon } from "../components/Icon";
-import { ModalPortal } from "../components/ModalPortal";
+import { ScheduleEditorModal } from "../components/ScheduleEditorModal";
 import {
   CoworkerAvatar,
   EmptyState,
   PageHeader,
   formatRelativeTime,
 } from "../components/Primitives";
+import { describeSchedule } from "@shared/schedule-frequency";
+import { scheduleDestination } from "./CoworkerDetailPage";
 
 export function SchedulesPage({
   schedules,
+  conversations,
   coworkers,
   onChanged,
+  onOpenConversation,
 }: {
   schedules: Schedule[];
+  conversations: Conversation[];
   coworkers: Coworker[];
   onChanged: () => Promise<void>;
+  onOpenConversation: (coworkerId: string, conversationId: string) => void;
 }) {
   const [creating, setCreating] = useState(false);
-  const [scheduleType, setScheduleType] = useState<"cron" | "once">("cron");
+  const [editing, setEditing] = useState<Schedule | null>(null);
   const [working, setWorking] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-
-  async function create(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const data = new FormData(event.currentTarget);
-    setWorking("create");
-    setError(null);
-    try {
-      await window.coworker.schedules.create({
-        coworkerId: String(data.get("coworkerId")),
-        name: String(data.get("name")),
-        scheduleType,
-        cronExpression:
-          scheduleType === "cron" ? String(data.get("cronExpression")) : undefined,
-        runAt:
-          scheduleType === "once"
-            ? new Date(String(data.get("runAt"))).toISOString()
-            : undefined,
-        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-        taskTemplate: {
-          title: String(data.get("taskTitle")),
-          input: String(data.get("taskInput")),
-        },
-      });
-      setCreating(false);
-      await onChanged();
-    } catch (createError) {
-      setError(createError instanceof Error ? createError.message : String(createError));
-    } finally {
-      setWorking(null);
-    }
-  }
 
   async function toggle(schedule: Schedule) {
     setWorking(schedule.id);
@@ -113,7 +88,7 @@ export function SchedulesPage({
       </div>
 
       {notice ? <div className="settings-notice" role="status">{notice}</div> : null}
-      {error && !creating ? <div className="settings-notice error" role="alert">{error}</div> : null}
+      {error ? <div className="settings-notice error" role="alert">{error}</div> : null}
 
       {schedules.length === 0 ? (
         <EmptyState
@@ -149,13 +124,28 @@ export function SchedulesPage({
                   <div className="schedule-meta">
                     <span>
                       <Icon name="clock" />
-                      {humanSchedule(schedule)}
+                      {describeSchedule(schedule)}
                     </span>
                     <span>
                       Next: {schedule.enabled ? formatRelativeTime(schedule.nextRunAt) : "Paused"}
                     </span>
                     {schedule.lastRunAt ? (
                       <span>Last ran {formatRelativeTime(schedule.lastRunAt)}</span>
+                    ) : null}
+                    {coworker ? (
+                      <button
+                        className="schedule-destination-link"
+                        onClick={() =>
+                          onOpenConversation(
+                            coworker.id,
+                            schedule.conversationId ?? `coworker:${coworker.id}`,
+                          )
+                        }
+                        type="button"
+                      >
+                        <Icon name="send" />
+                        {scheduleDestination(schedule, conversations, coworker)}
+                      </button>
                     ) : null}
                   </div>
                 </div>
@@ -170,6 +160,9 @@ export function SchedulesPage({
                     <span />
                     <small>{schedule.enabled ? "On" : "Off"}</small>
                   </label>
+                  <button className="secondary-button" onClick={() => setEditing(schedule)}>
+                    Edit
+                  </button>
                   <button
                     className="secondary-button"
                     disabled={working === schedule.id}
@@ -192,101 +185,17 @@ export function SchedulesPage({
         </div>
       )}
 
-      {creating ? (
-        <ModalPortal>
-        <div className="modal-backdrop" onMouseDown={() => setCreating(false)}>
-          <section
-            className="modal-card"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="create-schedule-title"
-            onMouseDown={(event) => event.stopPropagation()}
-          >
-            <span className="eyebrow">New rhythm</span>
-            <h2 id="create-schedule-title">Schedule coworker work</h2>
-            <p>The scheduler creates a normal queued task at each due time.</p>
-            <form className="form-stack" onSubmit={create}>
-              <label>
-                <span>Coworker</span>
-                <select name="coworkerId" required>
-                  {coworkers.map((coworker) => (
-                    <option value={coworker.id} key={coworker.id}>
-                      {coworker.name} · {coworker.role}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                <span>Schedule name</span>
-                <input name="name" placeholder="Weekday lead follow-ups" required />
-              </label>
-              <div className="segmented-control">
-                <button
-                  type="button"
-                  className={scheduleType === "cron" ? "active" : ""}
-                  onClick={() => setScheduleType("cron")}
-                >
-                  Recurring
-                </button>
-                <button
-                  type="button"
-                  className={scheduleType === "once" ? "active" : ""}
-                  onClick={() => setScheduleType("once")}
-                >
-                  One time
-                </button>
-              </div>
-              {scheduleType === "cron" ? (
-                <label>
-                  <span>Cron expression</span>
-                  <input name="cronExpression" defaultValue="0 8 * * 1-5" required />
-                  <small>Example: 0 8 * * 1-5 means weekdays at 8:00 AM.</small>
-                </label>
-              ) : (
-                <label>
-                  <span>Run at</span>
-                  <input
-                    name="runAt"
-                    type="datetime-local"
-                    required
-                    defaultValue={new Date(Date.now() + 3_600_000).toISOString().slice(0, 16)}
-                  />
-                </label>
-              )}
-              <label>
-                <span>Task title</span>
-                <input name="taskTitle" placeholder="Prepare overdue lead follow-ups" required />
-              </label>
-              <label>
-                <span>Instructions</span>
-                <textarea
-                  name="taskInput"
-                  rows={4}
-                  placeholder="Review overdue leads, prepare follow-up notes, and save a report."
-                  required
-                />
-              </label>
-              {error ? <div className="inline-error">{error}</div> : null}
-              <div className="modal-actions">
-                <button type="button" className="secondary-button" onClick={() => setCreating(false)}>
-                  Cancel
-                </button>
-                <button className="primary-button" disabled={working === "create"}>
-                  {working === "create" ? "Scheduling…" : "Create schedule"}
-                </button>
-              </div>
-            </form>
-          </section>
-        </div>
-        </ModalPortal>
+      {creating || editing ? (
+        <ScheduleEditorModal
+          coworkers={coworkers}
+          onClose={() => {
+            setCreating(false);
+            setEditing(null);
+          }}
+          onSaved={onChanged}
+          schedule={editing}
+        />
       ) : null}
     </div>
   );
-}
-
-function humanSchedule(schedule: Schedule): string {
-  if (schedule.scheduleType === "once") {
-    return schedule.runAt ? new Date(schedule.runAt).toLocaleString() : "One time";
-  }
-  return `${schedule.cronExpression} · ${schedule.timezone}`;
 }

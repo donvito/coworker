@@ -89,6 +89,11 @@ export const schedules = sqliteTable(
     coworkerId: text("coworker_id")
       .notNull()
       .references(() => coworkers.id, { onDelete: "cascade" }),
+    // The conversation a run replies into. Null falls back to the coworker's
+    // default thread, which is where every pre-existing schedule posted.
+    conversationId: text("conversation_id").references(() => conversations.id, {
+      onDelete: "set null",
+    }),
     name: text("name").notNull(),
     scheduleType: text("schedule_type", { enum: ["cron", "once"] }).notNull(),
     cronExpression: text("cron_expression"),
