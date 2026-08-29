@@ -2,6 +2,13 @@
 
 AI agents for your work, running on your own computer.
 
+[![Latest release](https://img.shields.io/github/v/release/donvito/coworker)](https://github.com/donvito/coworker/releases/latest)
+![macOS](https://img.shields.io/badge/macOS-arm64%20%7C%20Intel-111111?logo=apple&logoColor=white)
+![Windows](https://img.shields.io/badge/Windows-x64%20%7C%20ARM64-0078D4?logo=windows&logoColor=white)
+![Linux](https://img.shields.io/badge/Linux-AppImage%20%7C%20deb-FCC624?logo=linux&logoColor=black)
+![Local-first](https://img.shields.io/badge/local--first-yes-2ea44f)
+![No subscription](https://img.shields.io/badge/subscription-none-2ea44f)
+
 ![Coworker chat](docs/images/coworker-chat.png)
 
 Coworker is a local-first desktop app for independent AI coworkers. There is **no subscription**. The app runs on **your computer**, talks to **local models** or keys you bring, learns new **skills**, keeps a **scheduler**, pauses on **approvals**, and can meet you on **Telegram**.
