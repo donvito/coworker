@@ -1,9 +1,9 @@
 ---
-name: browser-computer-use
+name: browser-control
 description: Control a visible, isolated browser to navigate websites and interact with web pages on the user's computer. Use when the user asks the coworker to operate a website or complete a browser-based task. Do not use for ordinary web research, browser programming help, API-only work, or native desktop applications.
 ---
 
-# Browser computer use
+# Browser control
 
 Use the controlled browser tools to complete the requested website task in a visible browser owned by this coworker.
 

@@ -183,7 +183,7 @@ export function CoworkerSettingsModal({
           </fieldset>
           {skills.some(
             (skill) =>
-              skill.name === "browser-computer-use" && enabledSkillIds.includes(skill.id),
+              skill.name === "browser-control" && enabledSkillIds.includes(skill.id),
           ) ? (
             <fieldset className="folder-picker">
               <legend>Browser data</legend>

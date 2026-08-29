@@ -1,6 +1,6 @@
 export const skillToolCapabilities = {
   "web-search": ["web.search"],
-  "browser-computer-use": [
+  "browser-control": [
     "browser.start_session",
     "browser.inspect",
     "browser.act",

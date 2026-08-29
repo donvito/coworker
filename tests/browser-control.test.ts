@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { BrowserAutomationService } from "@main/integrations/browser-automation";
 import { CoworkerDatabase } from "@main/db/database";
 import {
-  bundledBrowserComputerUseSkill,
+  bundledBrowserControlSkill,
   parseSkillMarkdown,
 } from "@main/integrations/skills";
 import { MemoryCredentialStore } from "@main/security/credential-store";
@@ -22,9 +22,9 @@ afterEach(async () => {
   await Promise.allSettled(cleanups.splice(0).map((cleanup) => cleanup()));
 });
 
-describe("browser computer-use skill", () => {
+describe("browser control skill", () => {
   it("is narrowly routed, opt-in, and declares its controlled tools", () => {
-    const skill = parseSkillMarkdown(bundledBrowserComputerUseSkill.content);
+    const skill = parseSkillMarkdown(bundledBrowserControlSkill.content);
     expect(skill.description).toContain("interact with web pages");
     expect(skill.description).toContain("Do not use for ordinary web research");
     expect(defaultEnabledBundledSkillNames.has(skill.name)).toBe(false);
@@ -70,7 +70,7 @@ describe("browser computer-use skill", () => {
       );
       await rm(root, { recursive: true, force: true });
     });
-    const skill = database.upsertSkill(bundledBrowserComputerUseSkill);
+    const skill = database.upsertSkill(bundledBrowserControlSkill);
     const coworker = database.createCoworker(
       {
         name: "Browser coworker",
