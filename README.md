@@ -51,10 +51,21 @@ To connect a real model, open **Settings → Providers**, add credentials, and v
 
 Scripts, tests, evals, and packaging: [Development](docs/development.md)
 
+## Terminal and headless mode
+
+Use the bundled CLI to start Coworker without a window, restart it, manage models, coworkers, skills, schedules and approvals, and inspect or export logs. Desktop and CLI share one running instance and its saved credentials within the same profile. See [terminal setup and commands](docs/cli.md).
+
+```sh
+coworker start
+coworker status
+coworker logs follow
+```
+
 ## Docs
 
 - [Screenshots](docs/screenshots.md)
 - [Features](docs/features.md)
+- [Terminal and headless mode](docs/cli.md)
 - [Development](docs/development.md)
 - [Data and security](docs/security.md)
 - [Releasing](docs/releasing.md)

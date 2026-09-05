@@ -20,3 +20,5 @@ eval-results/
 evals/recordings/
 
 tmp/
+
+*.jsonl

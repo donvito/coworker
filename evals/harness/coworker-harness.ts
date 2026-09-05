@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Worker } from "node:worker_threads";
 import { createHarness, toJsonValue, type JsonValue, type TranscriptEvent } from "vitest-evals";
+import { bundledSkills } from "@main/integrations/skills";
 import { CoworkerDatabase } from "@main/db/database";
 import { MemoryCredentialStore } from "@main/security/credential-store";
 import { CoworkerRuntimeManager } from "@main/runtime/runtime-manager";
@@ -36,6 +37,7 @@ export interface CoworkerEvalInput {
   name: string;
   prompt: string;
   enabledTools?: string[];
+  bundledSkillNames?: string[];
   policies?: Record<string, ToolPolicy>;
   approvalDecision?: "approve" | "reject" | "none";
   replayAfterCompletion?: boolean;
@@ -187,6 +189,11 @@ export const coworkerHarness = createHarness<CoworkerEvalInput, CoworkerEvalOutp
         credentialKey: null,
         fromAddress: "eval@example.test",
       });
+      const enabledSkillIds = (input.bundledSkillNames ?? []).map((name) => {
+        const skill = bundledSkills.find((candidate) => candidate.name === name);
+        if (!skill) throw new Error(`Unknown bundled evaluation skill: ${name}`);
+        return database.upsertSkill(skill).id;
+      });
       const coworker = database.createCoworker(
         {
           name: "Eval Coworker",
@@ -195,6 +202,7 @@ export const coworkerHarness = createHarness<CoworkerEvalInput, CoworkerEvalOutp
             "Complete the user's request accurately. Use controlled tools for files, email, and schedules.",
           modelProvider: selectedModel.provider,
           modelName: selectedModel.id,
+          enabledSkillIds,
           enabledTools:
             input.enabledTools ??
             [

@@ -276,7 +276,7 @@ export const settingsPatchSchema = z
     theme: z.enum(appThemes).optional(),
     showReasoning: z.boolean().optional(),
     globalOperatingInstructions: z.string().trim().max(50_000).optional(),
-    defaultModelProvider: z.enum(remoteModelProviders).nullable().optional(),
+    defaultModelProvider: remoteModelProviderSchema.nullable().optional(),
     defaultModelName: z.string().trim().min(1).max(160).nullable().optional(),
   })
   .refine((value) => Object.keys(value).length > 0, "At least one setting is required");

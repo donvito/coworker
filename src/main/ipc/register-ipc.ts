@@ -1,3 +1,4 @@
+import { createAdministration } from "@main/control/administration";
 import { copyFile } from "node:fs/promises";
 import { basename, extname, resolve } from "node:path";
 import {
@@ -12,33 +13,19 @@ import {
 import { ipcChannels } from "@shared/ipc";
 import type { AgentRunRequest } from "@shared/contracts";
 import {
-  addModelEndpointSchema,
   agentRunRequestSchema,
-  approvalDecisionSchema,
-  approvalStatusSchema,
   configureEmailSchema,
-  configureModelSchema,
   configureWebSearchSchema,
-  credentialKeySchema,
   conversationSearchSchema,
-  createCoworkerSchema,
-  createScheduleSchema,
   createTaskSchema,
   configureTelegramSchema,
   createConversationSchema,
   idSchema,
-  installSkillUrlSchema,
-  installSkillContentSchema,
-  installSkillPackageSchema,
   listLimitSchema,
   modelProviderSchema,
-  remoteModelProviderSchema,
-  settingsPatchSchema,
   sendConversationMessageSchema,
   sharedFolderPathSchema,
   updateConversationSchema,
-  updateCoworkerSchema,
-  updateScheduleSchema,
 } from "@shared/validation";
 import type { DesktopAppService } from "@main/app/app-service";
 import { createSupportBundle } from "@main/integrations/archives";
@@ -91,6 +78,7 @@ export function registerIpc(input: {
   getMainWindow: () => BrowserWindow | null;
   logger?: ApplicationLogger;
 }): () => void {
+  const administration = createAdministration(input);
   const channels: string[] = [];
   const handle = (
     channel: string,
@@ -101,7 +89,7 @@ export function registerIpc(input: {
       assertTrustedSender(event, input.getMainWindow());
       let finishMutation: (() => void) | null = null;
       try {
-        if (mutationChannels.has(channel)) {
+        if (mutationChannels.has(channel) && !administration.has(channel)) {
           finishMutation = input.service.beginDataMutation();
         }
         return await listener(event, ...args);
@@ -113,6 +101,10 @@ export function registerIpc(input: {
       }
     });
   };
+
+  for (const channel of administration.channels) {
+    handle(channel, (_event, ...args) => administration.invoke(channel, args));
+  }
 
   handle(ipcChannels.bootstrap, () => input.service.snapshot());
   handle(ipcChannels.openDataFolder, async () => {
@@ -150,24 +142,7 @@ export function registerIpc(input: {
     }
     clipboard.writeText(text);
   });
-  handle(ipcChannels.getSettings, () => input.service.database.getSettings());
-  handle(ipcChannels.updateSettings, (_event, patch) =>
-    input.service.updateSettings(settingsPatchSchema.parse(patch)),
-  );
 
-  handle(ipcChannels.coworkersList, () => input.service.database.listCoworkers());
-  handle(ipcChannels.coworkersCreate, (_event, value) =>
-    input.service.createCoworker(createCoworkerSchema.parse(value)),
-  );
-  handle(ipcChannels.coworkersUpdate, (_event, id, value) =>
-    input.service.updateCoworker(
-      idSchema.parse(id),
-      updateCoworkerSchema.parse(value),
-    ),
-  );
-  handle(ipcChannels.coworkersRemove, (_event, id) =>
-    input.service.removeCoworker(idSchema.parse(id)),
-  );
   handle(ipcChannels.browserClearProfile, (_event, id) =>
     input.service.clearCoworkerBrowserProfile(idSchema.parse(id)),
   );
@@ -205,9 +180,6 @@ export function registerIpc(input: {
       conversationSearchSchema.parse(query),
     ),
   );
-  handle(ipcChannels.conversationsCreate, (_event, value) =>
-    input.service.createConversation(createConversationSchema.parse(value)),
-  );
   handle(ipcChannels.conversationsUpdate, (_event, id, value) =>
     input.service.updateConversation(
       idSchema.parse(id),
@@ -222,9 +194,6 @@ export function registerIpc(input: {
   );
   handle(ipcChannels.conversationsRestore, (_event, id) =>
     input.service.restoreConversation(idSchema.parse(id)),
-  );
-  handle(ipcChannels.conversationsSend, (_event, value) =>
-    input.service.sendConversationMessage(sendConversationMessageSchema.parse(value)),
   );
   handle(ipcChannels.conversationsContinueDiscussion, (_event, id) =>
     input.service.continueDiscussion(idSchema.parse(id)),
@@ -257,14 +226,6 @@ export function registerIpc(input: {
     ),
   );
 
-  handle(ipcChannels.approvalsList, (_event, status) =>
-    input.service.listApprovals(
-      status === undefined ? undefined : approvalStatusSchema.parse(status),
-    ),
-  );
-  handle(ipcChannels.approvalsDecide, (_event, value) =>
-    input.service.decideApproval(approvalDecisionSchema.parse(value)),
-  );
   handle(ipcChannels.artifactsOpen, async (_event, id) => {
     const { artifact, path } = await resolveArtifactFile(
       input.service.database,
@@ -302,23 +263,6 @@ export function registerIpc(input: {
   );
   handle(ipcChannels.imageAttachmentsRead, (_event, id) =>
     input.service.readImageAttachment(idSchema.parse(id)),
-  );
-
-  handle(ipcChannels.schedulesList, () => input.service.database.listSchedules());
-  handle(ipcChannels.schedulesCreate, (_event, value) =>
-    input.service.createSchedule(createScheduleSchema.parse(value)),
-  );
-  handle(ipcChannels.schedulesUpdate, (_event, id, value) =>
-    input.service.updateSchedule(
-      idSchema.parse(id),
-      updateScheduleSchema.parse(value),
-    ),
-  );
-  handle(ipcChannels.schedulesRemove, (_event, id) => {
-    input.service.removeSchedule(idSchema.parse(id));
-  });
-  handle(ipcChannels.schedulesRunNow, (_event, id) =>
-    input.service.runScheduleNow(idSchema.parse(id)),
   );
 
   handle(ipcChannels.activityList, (_event, limit) =>
@@ -370,40 +314,14 @@ export function registerIpc(input: {
   handle(ipcChannels.integrationsConfigureEmail, (_event, value) =>
     input.service.configureEmail(configureEmailSchema.parse(value)),
   );
-  handle(ipcChannels.integrationsConfigureModel, (_event, value) =>
-    input.service.configureModel(configureModelSchema.parse(value)),
-  );
-  handle(ipcChannels.integrationsAddModelEndpoint, (_event, value) =>
-    input.service.addModelEndpoint(addModelEndpointSchema.parse(value)),
-  );
-  handle(ipcChannels.integrationsRemoveModelEndpoint, (_event, id) =>
-    input.service.removeModelEndpoint(remoteModelProviderSchema.parse(id)),
-  );
-  handle(ipcChannels.integrationsListModels, (_event, provider) =>
-    input.service.listModels(modelProviderSchema.parse(provider)),
-  );
+
   handle(ipcChannels.integrationsModelCapabilities, (_event, provider, modelId) =>
     input.service.modelCapabilities(
       modelProviderSchema.parse(provider),
       idSchema.parse(modelId),
     ),
   );
-  handle(ipcChannels.integrationsCredentialStatus, async (_event, key) => {
-    const credentialKey = credentialKeySchema.parse(key);
-    const status = input.credentials.status
-      ? await input.credentials.status(credentialKey)
-      : (await input.credentials.has(credentialKey))
-        ? "configured"
-        : "missing";
-    return {
-      key: credentialKey,
-      configured: status === "configured",
-      needsReentry: status === "unreadable",
-    };
-  });
-  handle(ipcChannels.integrationsRemoveCredential, async (_event, key) => {
-    await input.credentials.delete(credentialKeySchema.parse(key));
-  });
+
   handle(ipcChannels.integrationsConfigureWebSearch, (_event, value) =>
     input.service.configureWebSearch(configureWebSearchSchema.parse(value)),
   );
@@ -414,27 +332,6 @@ export function registerIpc(input: {
   handle(ipcChannels.integrationsUnpairTelegram, () => input.service.unpairTelegram());
   handle(ipcChannels.integrationsDisconnectTelegram, () =>
     input.service.disconnectTelegram(),
-  );
-
-  handle(ipcChannels.skillsList, () => input.service.database.listSkills());
-  handle(ipcChannels.skillsInstallFromUrl, (_event, value) => {
-    const parsed = installSkillUrlSchema.parse(value);
-    return input.service.installSkillFromUrl(parsed.url, parsed.coworkerId);
-  });
-  handle(ipcChannels.skillsInstallFromContent, (_event, value) => {
-    const parsed = installSkillContentSchema.parse(value);
-    return input.service.installSkillFromContent(parsed.content, parsed.coworkerId);
-  });
-  handle(ipcChannels.skillsInstallFromPackage, (_event, value) => {
-    const parsed = installSkillPackageSchema.parse(value);
-    return input.service.installSkillFromPackage(
-      parsed.fileName,
-      parsed.dataBase64,
-      parsed.coworkerId,
-    );
-  });
-  handle(ipcChannels.skillsRemove, (_event, id) =>
-    input.service.removeSkill(idSchema.parse(id)),
   );
 
   handle(ipcChannels.agentsRun, (_event, value) =>

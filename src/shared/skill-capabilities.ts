@@ -9,6 +9,7 @@ export const skillToolCapabilities = {
 } as const satisfies Record<string, readonly string[]>;
 
 export const defaultEnabledBundledSkillNames = new Set([
+  "coworker-administration",
   "web-search",
   "document-authoring",
   "team-channel-collaboration",
