@@ -1,6 +1,6 @@
 ---
 name: coworker-administration
-description: Help users operate the Coworker app from a terminal, including headless startup, restart, model configuration, installed skills, schedules, approvals, coworkers, and diagnostic logs. Use for administering Coworker itself, not for performing a coworker's assigned work or administering unrelated software.
+description: Help users operate the Coworker app from a terminal, including headless operation, automatic startup at user login, restart, model configuration, installed skills, schedules, approvals, coworkers, and diagnostic logs. Use for administering Coworker itself, not for performing a coworker's assigned work or administering unrelated software.
 ---
 
 # Coworker terminal administration
@@ -14,6 +14,8 @@ Use the installed `coworker` command, or `pnpm cli` from a built development che
 To test a coworker's configured model from the terminal, use `coworker chat Ava "Hello"` (a unique coworker name or ID). This submits real work through the normal conversation service and requires that coworker's model provider. By default it creates a new direct conversation; pass `--conversation ID` to continue one. Replies print when the task finishes. A timeout or Ctrl-C stops waiting, but accepted work continues. Use `coworker chat result TASK_ID` to retrieve the result later. Approval-gated work stays paused for the user's decision. Testing chat is not permission to change the coworker's model, approve actions, or send messages through another channel.
 
 Desktop and terminal control one application instance per data profile. `coworker start` starts a background headless instance; `coworker run --headless` stays in the foreground. Opening the desktop reveals the same instance. `status`, `stop`, and `restart` manage that instance. Restart interrupts active work using the app's existing recovery behavior; explain that consequence when relevant to the user's request.
+
+For automatic startup when the user signs in, use `coworker startup enable --headless`, `coworker startup status`, and `coworker startup disable`. These commands require the installed app to be running on macOS or Windows. Enabling defaults to headless; `--ui` chooses desktop startup. Startup preserves the owning app and selected profile, and does not start a second instance or change the current running mode. One profile can be registered per app identity: inspect status and disable the registered profile before switching profiles. The existing Launch at login checkbox controls the same registration and preserves its mode. If the OS reports approval is required or the entry is disabled, direct the user to their OS Login Items/Startup Apps settings. This is user-login startup, not boot-before-login service support. Only enable it when the user requests automatic startup; running a smoke test is not authorization to change real login settings.
 
 Credentials are shared only within the same OS user, app identity, and profile. Use `--data-path /absolute/path` or `COWORKER_DATA_PATH` for an explicit profile. Development builds use a separate profile. Do not copy encrypted credentials between app identities, expose credentials, or suggest plaintext storage. Model keys are entered with `--prompt-key` or `--key-stdin`, never command-line values.
 

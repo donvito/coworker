@@ -14,3 +14,26 @@ export function parseLaunchOptions(argv: string[]) {
     binDirectory: value("--bin-dir"),
   };
 }
+
+export function applyLoginStartup(
+  options: ReturnType<typeof parseLaunchOptions>,
+  configuration: { dataPath: string; mode: "headless" | "desktop" } | null,
+) {
+  if (!configuration || options.dataPath !== undefined || options.installCli) return options;
+  return { ...options, dataPath: configuration.dataPath, headless: options.headless || configuration.mode === "headless" };
+}
+
+export function loginRelaunchArguments(
+  options: ReturnType<typeof parseLaunchOptions>,
+  configuration: { dataPath: string; mode: "headless" | "desktop" } | null,
+): string[] | null {
+  const selected = applyLoginStartup(options, configuration);
+  if (selected === options) return null;
+  return ["--data-path", selected.dataPath!, ...(selected.headless ? ["--headless"] : [])];
+}
+
+export function shouldShowSecondInstance(argv: string[], additionalData: unknown): boolean {
+  const headless = additionalData !== null && typeof additionalData === "object" &&
+    "headless" in additionalData && additionalData.headless === true;
+  return !headless && !argv.includes("--headless");
+}

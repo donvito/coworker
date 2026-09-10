@@ -2,7 +2,8 @@ import { createAdministration } from "@main/control/administration";
 import { startControlServer, ControlError } from "@main/control/transport";
 import { exportLogs, readLogs, logQuerySchema } from "@main/control/logs";
 import { installCli } from "@main/control/launcher";
-import { parseLaunchOptions } from "@shared/launch-options";
+import { loginRelaunchArguments, parseLaunchOptions, shouldShowSecondInstance } from "@shared/launch-options";
+import { LoginStartup, readStartupConfiguration } from "@main/app/login-startup";
 import { z } from "zod";
 import { join } from "node:path";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -32,9 +33,12 @@ function ignoreBrokenPipe(stream: NodeJS.WriteStream): void {
 ignoreBrokenPipe(process.stdout);
 ignoreBrokenPipe(process.stderr);
 
+const defaultUserDataPath = app.getPath("userData");
+const defaultAppProfile = resolveAppProfile({ isPackaged: app.isPackaged,
+  appDataPath: app.getPath("appData"), defaultUserDataPath });
+const startupConfigurationPath = join(defaultAppProfile.dataPath, "startup.json");
 const launchOptions = parseLaunchOptions(process.argv);
 let headless = launchOptions.headless;
-const defaultUserDataPath = app.getPath("userData");
 const appProfile = resolveAppProfile({
   override: launchOptions.dataPath ?? process.env.COWORKER_DATA_PATH,
   isPackaged: app.isPackaged,
@@ -45,7 +49,10 @@ prepareAppProfile(appProfile);
 app.setPath("userData", appProfile.dataPath);
 app.setPath("sessionData", appProfile.sessionPath);
 
-const gotLock = !launchOptions.installCli && app.requestSingleInstanceLock();
+// Electron identifies macOS login launches at ready. Defer the lock until then
+// so an argv-less login launch can redirect to its saved profile first.
+const deferLoginSelection = app.isPackaged && process.platform === "darwin" && !launchOptions.dataPath;
+const gotLock = !launchOptions.installCli && (deferLoginSelection || app.requestSingleInstanceLock({ headless }));
 
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
@@ -259,6 +266,11 @@ async function start(): Promise<void> {
     platform: `${process.platform} ${process.arch}`,
   });
   const credentials = new SecureCredentialStore(join(dataPath, "credentials"));
+  const startup = new LoginStartup({
+    platform: process.platform, packaged: app.isPackaged, executable: process.execPath,
+    dataPath, defaultDataPath: defaultAppProfile.dataPath, configurationPath: startupConfigurationPath,
+    loginItems: { get: (options) => app.getLoginItemSettings(options), set: (settings) => app.setLoginItemSettings(settings) },
+  });
   service = new DesktopAppService({
     dataPath,
     appVersion: app.getVersion(),
@@ -266,15 +278,16 @@ async function start(): Promise<void> {
     credentials,
     onSettingsChanged: async (settings) => {
       runInBackground = settings.runInBackground;
-      if (
-        app.isPackaged &&
-        (process.platform === "darwin" || process.platform === "win32") &&
-        app.getLoginItemSettings().openAtLogin !== settings.launchAtLogin
-      ) {
-        app.setLoginItemSettings({ openAtLogin: settings.launchAtLogin });
-      }
     },
   });
+  // Reflect the OS registration without re-enabling entries the user disabled
+  // externally, or letting a different profile overwrite the login owner.
+  try {
+    const registered = startup.status();
+    service.database.updateSettings({ launchAtLogin: registered.registered && registered.selectedProfile });
+  } catch (error) {
+    await applicationLogger.error("app.startup-settings", error);
+  }
   await service.initialize();
   if (isQuitting) return;
   unregisterIpc = registerIpc({
@@ -282,12 +295,13 @@ async function start(): Promise<void> {
     credentials,
     getMainWindow: () => mainWindow,
     logger: applicationLogger,
+    startup,
   });
   if (process.platform === "darwin" && !app.isPackaged) {
     const icon = appIcon();
     if (icon) app.dock?.setIcon(icon);
   }
-  const administration = createAdministration({ service, credentials });
+  const administration = createAdministration({ service, credentials, startup });
   const activeService = service;
   const logger = applicationLogger;
   control = await startControlServer({
@@ -354,7 +368,22 @@ if (launchOptions.installCli) {
 } else if (!gotLock) {
   app.exit(2);
 } else {
-  app.whenReady().then(() => { startupPromise = start(); return startupPromise; }).catch(async (error) => {
+  app.whenReady().then(() => {
+    if (deferLoginSelection) {
+      const args = app.getLoginItemSettings().wasOpenedAtLogin
+        ? loginRelaunchArguments(launchOptions, readStartupConfiguration(startupConfigurationPath)) : null;
+      if (args) {
+        // Relaunch so Chromium receives the profile before initialization too.
+        // Explicit --data-path prevents another redirect on the replacement.
+        app.relaunch({ args });
+        app.exit(0);
+        return;
+      }
+      if (!app.requestSingleInstanceLock({ headless })) { app.exit(2); return; }
+    }
+    startupPromise = start();
+    return startupPromise;
+  }).catch(async (error) => {
     if (shutdownStarted) return;
     shutdownStarted = true;
     isQuitting = true;
@@ -367,8 +396,8 @@ if (launchOptions.installCli) {
   });
 }
 
-app.on("second-instance", (_event, argv) => {
-  if (!argv.includes("--headless")) showDesktop();
+app.on("second-instance", (_event, argv, _workingDirectory, additionalData) => {
+  if (shouldShowSecondInstance(argv, additionalData)) showDesktop();
 });
 
 app.on("activate", () => {

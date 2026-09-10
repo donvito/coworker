@@ -31,6 +31,19 @@ const providers = {
 };
 
 describe("terminal output", () => {
+  it("shows login-startup state, profile, mode, and OS approval instructions", () => {
+    const status = { supported: true, registered: true, enabled: false, state: "requires-approval",
+      scope: "user-login", mode: "headless", dataPath: "/other-profile", selectedProfile: false,
+      executable: "/Applications/Coworker", message: "Allow Coworker in Login Items." };
+    for (const command of ["startup status", "startup enable", "startup disable"]) {
+      const output = humanOutput(command, status);
+      for (const value of ["requires-approval", "headless", "/other-profile", "/Applications/Coworker", "another profile", status.message]) {
+        expect(output).toContain(value);
+      }
+      expect(JSON.parse(formatOutput(command, status, true))).toEqual(status);
+    }
+  });
+
   it("shows the complete action and payload needed to inspect an approval", () => {
     const output = humanOutput("approvals show", approval);
     for (const text of [approval.id, approval.status, approval.summary, approval.actionType,

@@ -7,6 +7,7 @@ import { DesktopAppService } from "@main/app/app-service";
 import { MemoryCredentialStore } from "@main/security/credential-store";
 import { ipcChannels as ipc } from "@shared/ipc";
 import { formatModelSelectableSkills } from "@shared/pi-skill-prompt";
+import type { StartupStatus } from "@shared/startup";
 
 const cleanups: Array<() => Promise<unknown>> = [];
 afterEach(async () => { vi.restoreAllMocks(); for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
@@ -22,6 +23,45 @@ async function fixture() {
 }
 
 describe("shared desktop and terminal administration", () => {
+  it("shares login registration between CLI and desktop and leaves unrelated settings independent", async () => {
+    const { service, credentials, root } = await fixture();
+    let state: StartupStatus = { supported: true, scope: "user-login", registered: false, enabled: false,
+      state: "disabled", mode: "desktop", dataPath: root, executable: process.execPath, selectedProfile: true };
+    const startup = {
+      status: vi.fn(() => state),
+      enable: vi.fn(async (mode?: "headless" | "desktop") => {
+        state = { ...state, mode: mode ?? state.mode, registered: true, enabled: true, state: "enabled" };
+        return state;
+      }),
+      disable: vi.fn(async () => {
+        state = { ...state, registered: false, enabled: false, state: "disabled" };
+        return state;
+      }),
+    };
+    const admin = createAdministration({ service, credentials, startup });
+    await expect(admin.invoke("startup.enable", [{}])).resolves.toMatchObject({ mode: "headless", enabled: true });
+    expect(service.database.getSettings().launchAtLogin).toBe(true);
+    await admin.invoke(ipc.updateSettings, [{ launchAtLogin: false }]);
+    expect(service.database.getSettings().launchAtLogin).toBe(false);
+    await admin.invoke(ipc.updateSettings, [{ launchAtLogin: true }]);
+    expect(startup.enable).toHaveBeenLastCalledWith();
+    expect(state.mode).toBe("headless");
+    startup.enable.mockClear();
+    startup.disable.mockClear();
+    await admin.invoke(ipc.updateSettings, [{ runInBackground: true }]);
+    expect(startup.enable).not.toHaveBeenCalled();
+    expect(startup.disable).not.toHaveBeenCalled();
+    await expect(admin.invoke("startup.enable", [{ mode: "invalid" }])).rejects.toThrow();
+    expect(startup.enable).not.toHaveBeenCalled();
+    startup.disable.mockRejectedValueOnce(new Error("OS refused"));
+    await expect(admin.invoke("startup.disable", [])).rejects.toThrow("OS refused");
+    expect(service.database.getSettings().launchAtLogin).toBe(true);
+    vi.spyOn(service, "beginDataMutation").mockImplementation(() => { throw new Error("read-only"); });
+    await expect(admin.invoke("startup.enable", [{}])).rejects.toThrow("read-only");
+    expect(startup.enable).not.toHaveBeenCalled();
+    await expect(admin.invoke("startup.status", [])).resolves.toMatchObject({ mode: "headless" });
+  });
+
   it("validates activity limits at the boundary and defaults to 50", async () => {
     const { service, admin } = await fixture();
     const list = vi.spyOn(service.database, "listActivity");

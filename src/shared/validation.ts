@@ -268,6 +268,10 @@ export const agentRunRequestSchema = z.object({
     .passthrough(),
 });
 
+export const startupEnableSchema = z.object({
+  mode: z.enum(["headless", "desktop"]).default("headless"),
+}).strict();
+
 export const settingsPatchSchema = z
   .object({
     runInBackground: z.boolean().optional(),

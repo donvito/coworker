@@ -19,6 +19,9 @@ const definitions: Record<string, { args: [number, number]; flags: string[]; usa
   stop: { args: [0, 0], flags: [], usage: "stop" },
   restart: { args: [0, 0], flags: [], usage: "restart" },
   status: { args: [0, 0], flags: [], usage: "status" },
+  "startup enable": { args: [0, 0], flags: ["headless", "ui"], usage: "startup enable [--headless|--ui] (installed macOS/Windows app)" },
+  "startup status": { args: [0, 0], flags: [], usage: "startup status" },
+  "startup disable": { args: [0, 0], flags: [], usage: "startup disable" },
   "telegram status": { args: [0, 0], flags: [], usage: "telegram status" },
   "telegram configure": { args: [1, 1], flags: ["token-stdin", "prompt-token"], usage: "telegram configure COWORKER_ID [--prompt-token | --token-stdin]" },
   "telegram unpair": { args: [0, 0], flags: [], usage: "telegram unpair" },
@@ -65,6 +68,7 @@ export function cliHelp(prefix = ""): string {
     "", "Global: --data-path /absolute/profile, --json, --help",
     "Configuration requires an explicitly started app. Existing logs are available offline.",
     "Secrets: --prompt-key (hidden input) or --key-stdin. Never pass an API key in argv.",
+    "Startup: user login, one profile per installed app; enable defaults to headless and requires a running app.",
     "Coworker/schedule --file accepts existing application JSON fields; flags override file fields.",
     "Exit codes: 0 success, 1 operation failure, 2 usage, 3 stopped, 4 timeout, 5 authentication/version.",
   ].join("\n");
@@ -135,6 +139,7 @@ export async function remoteCommand(command: CliCommand, apiKey?: string): Promi
   const simple: Record<string, string> = {
     "models providers": "models.providers", "models list": ipc.integrationsListModels,
     "telegram status": "telegram.status", "telegram unpair": "telegram.unpair", "telegram disconnect": "telegram.disconnect",
+    "startup status": "startup.status", "startup disable": "startup.disable",
     "models endpoints remove": ipc.integrationsRemoveModelEndpoint,
     "coworkers list": ipc.coworkersList, "coworkers show": "coworkers.show", "coworkers remove": ipc.coworkersRemove,
     "skills list": ipc.skillsList, "skills show": "skills.show", "skills remove": ipc.skillsRemove,
@@ -142,6 +147,7 @@ export async function remoteCommand(command: CliCommand, apiKey?: string): Promi
     "schedules run": ipc.schedulesRunNow, "approvals show": "approvals.show",
   };
   if (simple[name]) return request(simple[name], ...args);
+  if (name === "startup enable") return request("startup.enable", { mode: values.ui ? "desktop" : "headless" });
   if (name === "activity list") return values.limit === undefined
     ? request("activity.list") : request("activity.list", Number(values.limit));
   if (name === "models configure" || name === "models endpoints add") return request(

@@ -1,4 +1,4 @@
-# Terminal administration
+# Terminal and headless guide
 
 Coworker includes a CLI for headless operation and administration. It uses the Electron runtime bundled with the desktop app; no separate Node installation is needed for an installed app. Headless mode creates no window or tray, but still runs workers, schedules, and configured Telegram connections. This release requires a desktop environment and access to the user's OS credential storage; it is not a display-free Linux server distribution.
 
@@ -62,6 +62,22 @@ coworker --data-path /absolute/path/to/profile status
 
 `--data-path` takes precedence over `COWORKER_DATA_PATH`. Existing symlink ancestors resolve to the same profile. A relative path or filesystem root is rejected. Secure-storage errors require restoring OS credential access or re-entering credentials under the correct app identity; there is no plaintext fallback added by the CLI.
 
+## Start automatically at user login
+
+With the installed macOS or Windows app running:
+
+```sh
+coworker startup enable --headless
+coworker startup status
+coworker startup disable
+```
+
+`startup enable` defaults to headless. Use `startup enable --ui` to open the desktop when you sign in. Enabling saves the running owner's executable, selected data profile, and startup mode; it does not change the current running mode. These commands require a running app, like other configuration commands. Development checkouts and Linux startup registration are not supported in this version.
+
+This starts Coworker when you sign in, not before login. The existing **Launch at login** checkbox controls the same OS registration and preserves the selected mode. One profile can be registered per installed app identity. Use `--data-path` to select a custom profile; disable startup from the registered profile before enabling it for another one. Repeated login launches use the profile's existing instance lock.
+
+`startup status` reports the OS registration, whether it is enabled, the saved mode, and the owning profile. If macOS requires approval or Windows has disabled the entry, follow the reported Login Items/Startup Apps instructions. Unrelated settings changes never re-enable startup. `startup disable` removes the registration while remembering the mode. After moving or reinstalling the app, run `startup enable` from the new installation to refresh its registration.
+
 ## Models and coworkers
 
 Run `pnpm cli start --ui` to open the desktop window, including for an existing headless instance. No restart is needed.
@@ -113,8 +129,6 @@ Create a coworker with `coworker coworkers create --file coworker.json`:
 
 `coworkers update ID --file patch.json` accepts the same patch fields as desktop settings, including `enabledSkillIds`, `policies`, and `sharedFolderPaths`. Explicit flags override file fields. Inspect the current object before replacing list fields. `coworkers remove ID` uses the desktop's removal behavior.
 
-## Skills, schedules, and approvals
-
 ## Telegram
 
 Configure the bot without exposing its token in shell history:
@@ -130,6 +144,8 @@ coworker telegram disconnect
 The token is entered through hidden terminal input or stdin and is stored using the same OS-backed credential store as the desktop. After configuring, send the pairing link/code to the bot and confirm `Pairing: paired` before sending work. `unpair` keeps the bot configured but requires pairing again; `disconnect` removes the Telegram connection.
 
 `telegram configure`, `telegram unpair`, and `telegram status` print the pairing link while waiting for pairing. Once paired, they show the chat ID instead. The main `status` command distinguishes an unconfigured Telegram integration from connected, disconnected, and error states.
+
+## Skills, schedules, and approvals
 
 ```sh
 coworker skills list
@@ -208,4 +224,18 @@ COWORKER_SMOKE_EXECUTABLE=/absolute/path/to/Coworker pnpm test:cli:smoke
 
 No live model-provider account is used by the smoke test. It needs a desktop session and available OS secure storage.
 
+Startup registration tests mock the OS and cover mode/profile persistence, conflicting profiles, OS approval and disabled states, rollback, and the shared desktop toggle. The macOS development smoke test also simulates the login signal through the real app entry point, verifying profile redirection before instance ownership. Smoke tests never enable or disable real login items. Actual sign-out/sign-in behavior still needs verification on installed macOS and Windows builds.
+
 The model-routing evaluation `evals/administration-skill.eval.ts` checks matching and excluded requests with a real evaluation model or a saved recording. Like other behavior evaluations, it skips when neither is configured; deterministic discovery tests do not substitute for that model check.
+
+### Manual login-startup test
+
+Use an installed build: development checkouts intentionally reject `startup enable`. On macOS, run `pnpm package`, quit existing Coworker instances, and install the generated `Coworker.app` from `release/` into `/Applications`. Install the CLI using the instructions above if needed. On Windows, install the build under test and use its CLI.
+
+1. Run `coworker start`, then `coworker startup enable --headless` and `coworker startup status`. Expect `enabled`, mode `headless`, and the intended profile path. Allow the login item in OS settings if approval is required.
+2. Run `coworker stop`, then sign out and back in. Run only `coworker status`: it should report a running headless instance with no window or tray. Running `start` first would hide a failed login launch.
+3. Run `coworker start --ui`, then `coworker status`. The desktop should open with the same PID, using the existing instance.
+4. To test desktop startup, run `coworker startup enable --ui`, stop the app, and sign out and back in. Expect the desktop window to open automatically.
+5. Clean up with `coworker startup disable`, verify `startup status` reports `disabled`, and run `coworker stop`. Sign out and back in once more to confirm Coworker stays stopped.
+
+For a custom profile, pass the same `--data-path /absolute/profile` to every command. On macOS, turn off reopening windows for this test so session restoration does not obscure the login-startup result.

@@ -13,6 +13,21 @@ async function temporary() { const root = await mkdtemp(join(tmpdir(), "cw-cli-"
 afterEach(async () => { for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
 
 describe("terminal command contracts", () => {
+  it("maps login-startup controls with headless as the default", async () => {
+    for (const flags of [[], ["--headless"]]) {
+      await expect(remoteCommand(parseCommand(["startup", "enable", ...flags])))
+        .resolves.toEqual({ method: "startup.enable", args: [{ mode: "headless" }] });
+    }
+    await expect(remoteCommand(parseCommand(["startup", "enable", "--ui"])))
+      .resolves.toEqual({ method: "startup.enable", args: [{ mode: "desktop" }] });
+    for (const operation of ["status", "disable"]) {
+      await expect(remoteCommand(parseCommand(["startup", operation])))
+        .resolves.toEqual({ method: `startup.${operation}`, args: [] });
+    }
+    expect(() => parseCommand(["startup", "enable", "--ui", "--headless"])).toThrow("Choose");
+    expect(() => parseCommand(["startup", "disable", "--headless"])).toThrow("not valid");
+  });
+
   it("passes activity limits and leaves the default to the service", async () => {
     await expect(remoteCommand(parseCommand(["activity", "list"]))).resolves.toEqual({ method: "activity.list", args: [] });
     for (const limit of [1, 50, 1000]) {

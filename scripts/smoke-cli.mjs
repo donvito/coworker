@@ -2,12 +2,12 @@
 // Set COWORKER_SMOKE_EXECUTABLE to exercise an unpacked desktop distribution.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { _electron } from "playwright";
 
@@ -92,12 +92,52 @@ async function ready() {
   throw new Error("App did not become ready");
 }
 try {
+  if (!packaged && process.platform === "darwin") {
+    // Exercise the real main entry with a simulated OS login signal. All OS
+    // registration and relaunch calls are intercepted; paths stay in this fixture.
+    const loginRoot = join(root, "login-bootstrap");
+    const selected = join(root, "Login Profile");
+    await mkdir(loginRoot);
+    await writeFile(join(loginRoot, "startup.json"), JSON.stringify({
+      version: 1, dataPath: selected, executable, mode: "headless",
+    }));
+    const bootstrap = join(root, "login-bootstrap.cjs");
+    const redirected = join(root, "login-redirect.json");
+    await writeFile(bootstrap, `
+      const { app } = require('electron');
+      const { writeFileSync } = require('node:fs');
+      Object.defineProperty(app, 'isPackaged', { value: true });
+      const getPath = app.getPath.bind(app);
+      app.getPath = name => ['userData', 'appData'].includes(name) ? ${JSON.stringify(loginRoot)} : getPath(name);
+      app.getLoginItemSettings = () => {
+        if (!app.isReady()) throw new Error('Login state queried before ready');
+        return { openAtLogin: true, wasOpenedAtLogin: true };
+      };
+      app.setLoginItemSettings = () => { throw new Error('Unexpected OS mutation'); };
+      app.requestSingleInstanceLock = () => { throw new Error('Lock acquired before login redirect'); };
+      app.relaunch = options => writeFileSync(${JSON.stringify(redirected)}, JSON.stringify(options));
+      import(${JSON.stringify(pathToFileURL(join(repo, "out/main/index.js")).href)}).catch(error => { console.error(error); app.exit(1); });
+    `);
+    const result = await execute(executable, [bootstrap]);
+    assert.equal(result.code, 0, result.stderr);
+    assert.deepEqual(JSON.parse(await readFile(redirected, "utf8")), { args: ["--data-path", selected, "--headless"] });
+  }
   app = await _electron.launch({ executablePath: executable, args: [...(packaged ? [] : [repo]), "--headless", "--data-path", root], cwd: repo, env });
   const appPath = await app.evaluate(({ app }) => app.getAppPath());
   configuration = { executable, appPath, packaged, entry: join(appPath, "out/main/cli/index.js"), appDataPath: root, defaultUserDataPath: root };
   const initial = await ready();
   assert.equal(initial.mode, "headless");
   assert.equal(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length), 0);
+  const startup = await cli(["startup", "status"]);
+  assert.equal(startup.scope, "user-login");
+  assert.match(await human(["startup", "status"]), /Login startup:/);
+  // Registration is global to the installed app, so never mutate real login items.
+  if (!packaged) {
+    assert.equal(startup.state, "unsupported");
+    const rejected = await cliRaw(["startup", "enable", "--headless", "--json"]);
+    assert.equal(rejected.code, 1);
+    assert.match(rejected.stderr, /installed Coworker app/);
+  }
   const concurrent = await Promise.all([cli(["start"]), cli(["start"])]);
   assert.ok(concurrent.every((value) => value.pid === initial.pid));
   assert.match(await human(["status"]), /Telegram: not configured/);
@@ -189,6 +229,7 @@ try {
   assert.ok(!JSON.stringify(records).includes(key));
   await cli(["logs", "export", "--output", join(root, "offline.zip")]);
   await cli(["coworkers", "list"], "", 3);
+  await cli(["startup", "status"], "", 3);
   const offlineInvalidLimit = await cliRaw(["activity", "list", "--limit", "1001", "--json"]);
   assert.equal(offlineInvalidLimit.code, 2);
   assert.equal(JSON.parse(offlineInvalidLimit.stderr).error.code, "USAGE");

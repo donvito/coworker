@@ -3,10 +3,19 @@ import { ipcChannels } from "@shared/ipc";
 import type { DesktopAppService } from "@main/app/app-service";
 import type { CredentialStore } from "@main/security/credential-store";
 import { modelProviderDefinitions } from "@shared/model-providers";
+import type { LoginStartup } from "@main/app/login-startup";
 
 const { addModelEndpointSchema, approvalDecisionSchema, approvalStatusSchema, configureModelSchema, createCoworkerSchema, createScheduleSchema, credentialKeySchema, idSchema, installSkillContentSchema, installSkillPackageSchema, installSkillUrlSchema, modelProviderSchema, remoteModelProviderSchema, settingsPatchSchema, updateCoworkerSchema, updateScheduleSchema } = validation;
 
-export function createAdministration(input: { service: DesktopAppService; credentials: CredentialStore }) {
+export function createAdministration(input: {
+  service: DesktopAppService;
+  credentials: CredentialStore;
+  startup?: Pick<LoginStartup, "status" | "enable" | "disable">;
+}) {
+  const startup = () => {
+    if (!input.startup) throw new Error("Login startup is not available in this runtime");
+    return input.startup;
+  };
   const handlers = new Map<string, (...args: unknown[]) => unknown>([
     [ipcChannels.conversationsCreate, (value) => input.service.createConversation(validation.createConversationSchema.parse(value))],
     [ipcChannels.conversationsSend, (value) => input.service.sendConversationMessage(validation.sendConversationMessageSchema.parse(value))],
@@ -18,8 +27,26 @@ export function createAdministration(input: { service: DesktopAppService; creden
         approvals: input.service.listApprovals("PENDING").filter((item) => item.taskId === task.id) };
     }],
     [ipcChannels.getSettings, () => input.service.database.getSettings()],
-    [ipcChannels.updateSettings, (patch) =>
-    input.service.updateSettings(settingsPatchSchema.parse(patch))],
+    [ipcChannels.updateSettings, async (patch) => {
+      const parsed = settingsPatchSchema.parse(patch);
+      if (parsed.launchAtLogin !== undefined && input.startup) {
+        const result = await (parsed.launchAtLogin ? startup().enable() : startup().disable());
+        parsed.launchAtLogin = result.registered && result.selectedProfile;
+      }
+      return input.service.updateSettings(parsed);
+    }],
+    ["startup.status", () => startup().status()],
+    ["startup.enable", async (value) => {
+      const parsed = validation.startupEnableSchema.parse(value ?? {});
+      const result = await startup().enable(parsed.mode);
+      await input.service.updateSettings({ launchAtLogin: result.registered && result.selectedProfile });
+      return result;
+    }],
+    ["startup.disable", async () => {
+      const result = await startup().disable();
+      await input.service.updateSettings({ launchAtLogin: result.registered && result.selectedProfile });
+      return result;
+    }],
     [ipcChannels.coworkersList, () => input.service.database.listCoworkers()],
     [ipcChannels.coworkersCreate, (value) =>
     input.service.createCoworker(createCoworkerSchema.parse(value))],
@@ -124,7 +151,7 @@ export function createAdministration(input: { service: DesktopAppService; creden
     ipcChannels.schedulesList, ipcChannels.integrationsListModels,
     ipcChannels.integrationsCredentialStatus, ipcChannels.skillsList,
     "models.providers", "coworkers.show", "skills.show", "schedules.show", "approvals.show",
-    "conversations.show", "tasks.show",
+    "conversations.show", "tasks.show", "startup.status",
   ]);
   return {
     channels: [...handlers.keys()].filter((name) => name.startsWith("coworker:")),

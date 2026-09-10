@@ -32,6 +32,7 @@ import { createSupportBundle } from "@main/integrations/archives";
 import { resolveArtifactFile } from "@main/integrations/artifact-files";
 import type { ApplicationLogger } from "@main/runtime/application-logger";
 import type { CredentialStore } from "@main/security/credential-store";
+import type { LoginStartup } from "@main/app/login-startup";
 
 const mutationChannels = new Set<string>([
   ipcChannels.updateSettings,
@@ -77,6 +78,7 @@ export function registerIpc(input: {
   credentials: CredentialStore;
   getMainWindow: () => BrowserWindow | null;
   logger?: ApplicationLogger;
+  startup?: Pick<LoginStartup, "status" | "enable" | "disable">;
 }): () => void {
   const administration = createAdministration(input);
   const channels: string[] = [];

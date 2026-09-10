@@ -2,6 +2,7 @@ import type { AppSettings, Approval, ConfigureModelResult, ModelEndpoint, Telegr
 import type { ModelProviderDefinition } from "@shared/model-providers";
 import type { CredentialReadStatus } from "@main/security/credential-store";
 import type { LogRecord } from "@main/control/logs";
+import type { StartupStatus } from "@shared/startup";
 
 function cell(value: unknown): string {
   if (value === null || value === undefined || value === "") return "—";
@@ -75,6 +76,12 @@ function formatLogRecord(record: LogRecord): string {
 
 export function humanOutput(command: string, value: unknown): string {
   if (value === null || value === undefined) return "Done.";
+  if (command.startsWith("startup ")) {
+    const result = value as StartupStatus;
+    return [`Login startup: ${result.state}`, `Mode: ${result.mode}`, `Data: ${result.dataPath}`,
+      `App: ${result.executable}`, ...(result.selectedProfile ? [] : ["This registration belongs to another profile."]),
+      ...(result.message ? [result.message] : [])].join("\n");
+  }
   if (command === "status") {
     const status = value as Record<string, unknown>;
     if (status.running !== true) return `Coworker is stopped.\nProfile: ${cell(status.profile)}\nData: ${cell(status.dataPath)}`;

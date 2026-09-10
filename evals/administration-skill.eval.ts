@@ -4,6 +4,10 @@ import { coworkerHarness, type CoworkerEvalInput } from "./harness/coworker-harn
 import { hasRecording, liveModel, recordingPath } from "./harness/model-transcript";
 
 const scenarios = [
+  { name: "loads Coworker administration for headless startup at login",
+    prompt: "How can I make Coworker start headlessly whenever I sign in to my computer? Explain the commands without executing them.", shouldLoad: true },
+  { name: "does not load Coworker administration for another application's startup",
+    prompt: "Explain what starting Redis at login means. Do not configure anything or discuss Coworker.", shouldLoad: false },
   { name: "loads Coworker administration guidance for terminal setup",
     prompt: "Explain how I can start Coworker headlessly from my terminal and check its logs. Do not execute anything.", shouldLoad: true },
   { name: "does not load Coworker administration for an unrelated summary",
