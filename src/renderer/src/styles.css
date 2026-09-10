@@ -7513,6 +7513,51 @@ button.floor-activity-row:hover {
   gap: 10px;
 }
 
+.workspace-text-approval {
+  display: flex;
+  width: min(560px, 100%);
+  min-width: 0;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.workspace-text-approval-item {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.workspace-text-approval-item pre {
+  max-height: 320px;
+  margin: 0;
+  padding: 10px 12px;
+  overflow: auto;
+  color: var(--ink);
+  font: inherit;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--cloud);
+  border-radius: 8px;
+}
+
+.workspace-text-approval-item textarea {
+  width: 100%;
+  min-height: 110px;
+  resize: vertical;
+}
+
+.workspace-text-approval > small,
+.workspace-text-approval-item > small {
+  color: var(--ink-soft);
+  font-size: 11px;
+}
+
+.workspace-text-approval .workroom-approval-actions { flex-wrap: wrap; }
+
+.approval-list > .workspace-text-approval { width: 100%; max-width: 100%; }
+
 .workroom-approval > header > span:last-child {
   display: flex;
   min-width: 0;

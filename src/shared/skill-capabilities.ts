@@ -1,4 +1,5 @@
 export const skillToolCapabilities = {
+  "coworker-memory": ["files.read", "files.edit", "files.write"],
   "web-search": ["web.search"],
   "browser-control": [
     "browser.start_session",
@@ -9,6 +10,7 @@ export const skillToolCapabilities = {
 } as const satisfies Record<string, readonly string[]>;
 
 export const defaultEnabledBundledSkillNames = new Set([
+  "coworker-memory",
   "coworker-administration",
   "web-search",
   "document-authoring",

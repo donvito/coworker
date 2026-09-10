@@ -21,4 +21,7 @@ evals/recordings/
 
 tmp/
 
+# Local video projects, including media assets, captures, and rendered exports.
+/videos/
+
 *.jsonl

@@ -17,7 +17,9 @@ import type { CoworkerDatabase } from "@main/db/database";
 import type { CredentialStore } from "@main/security/credential-store";
 import { maxAttachedImageBytes } from "@main/integrations/image-attachments";
 import { getModelCapabilities } from "@main/integrations/model-catalog";
+import { editedWorkspaceTextPayload, workspaceTextApproval } from "@shared/workspace-text-approval";
 import { resolveWorkspacePath } from "@main/tools/workspace-path";
+import { resolveWorkspaceOutputPath } from "@main/tools/workspace-text";
 import {
   markdownToTelegramChunks,
   plainTextChunks,
@@ -42,7 +44,7 @@ export interface TelegramBridgeHost {
     input: SendConversationMessageInput,
   ): Promise<ConversationDispatchReceipt>;
   createConversation(input: CreateConversationInput): Conversation;
-  decideApproval(input: ApprovalDecisionInput): Approval;
+  decideApproval(input: ApprovalDecisionInput): Promise<Approval>;
   cancelTask(id: string): Promise<Task>;
   subscribe(listener: (event: DesktopEvent) => void): () => void;
   beginDataMutation(): () => void;
@@ -410,6 +412,8 @@ export class TelegramBridgeService {
         return;
       }
 
+      if (await this.handleApprovalEditReply(message)) return;
+
       if (message.forum_topic_created && message.message_thread_id !== undefined) {
         // The topic's first real message follows in the same batch; remember
         // the name so its new conversation gets a meaningful title.
@@ -747,9 +751,7 @@ export class TelegramBridgeService {
       const bytes = await this.api.downloadFile(file.file_path);
       const fileName = safeInboxFileName(document.file_name, `file-${updateId}`);
       const relativePath = posix.join("telegram-inbox", `${updateId}-${fileName}`);
-      const absolutePath = await resolveWorkspacePath(coworker.workspacePath, relativePath, {
-        createParent: true,
-      });
+      const absolutePath = await resolveWorkspaceOutputPath(coworker.workspacePath, relativePath);
       await writeFile(absolutePath, bytes, { mode: 0o600 });
       return `(File received via Telegram and saved in the workspace at ${relativePath})`;
     } catch (error) {
@@ -767,7 +769,7 @@ export class TelegramBridgeService {
 
   /**
    * Announces pending approvals for the linked coworker in Telegram with
-   * Approve / Reject / Always-allow buttons, and retires notices for
+   * Approve / Reject and eligible Edit or Always-allow buttons, and retires notices for
    * approvals that were decided elsewhere (for example on the desktop).
    */
   private async syncApprovals(): Promise<void> {
@@ -778,7 +780,6 @@ export class TelegramBridgeService {
       if (approval.coworkerId !== config.coworkerId) continue;
       pendingIds.add(approval.id);
       if (this.notifiedApprovals.has(approval.id)) continue;
-      this.notifiedApprovals.add(approval.id);
       let threadId: number | undefined;
       try {
         const task = this.options.database.getTask(approval.taskId);
@@ -789,14 +790,26 @@ export class TelegramBridgeService {
         continue;
       }
       try {
+        const proposal = workspaceTextApproval(approval);
+        const content = [
+          `${this.linkedCoworkerName()} needs your approval:`,
+          approval.summary,
+          ...(proposal ? [
+            "",
+            ...(proposal.oldText ? [proposal.text ? "Current text:" : "Text to remove:", proposal.oldText, ""] : []),
+            ...(proposal.text ? ["Proposed text:", proposal.text, ""] : []),
+            ...(proposal.oldText === null ? ["This replaces the entire saved file."] : []),
+            "Nothing is saved until you approve.",
+          ] : []),
+          "",
+          "Other messages wait until you decide. You can also decide in the desktop app.",
+        ].join("\n");
+        // All of the proposed text is delivered before exposing its buttons.
+        const chunks = plainTextChunks(content);
+        for (const chunk of chunks.slice(0, -1)) await this.api.sendMessage({ chatId: config.chatId, text: chunk, messageThreadId: threadId });
         const notice = await this.api.sendMessage({
           chatId: config.chatId,
-          text: [
-            `${this.linkedCoworkerName()} needs your approval:`,
-            approval.summary,
-            "",
-            "Other messages wait until you decide. You can also decide in the desktop app.",
-          ].join("\n"),
+          text: chunks.at(-1)!,
           messageThreadId: threadId,
           replyMarkup: {
             inline_keyboard: [
@@ -804,10 +817,12 @@ export class TelegramBridgeService {
                 { text: "Approve", callback_data: `apr:${approval.id}:approve` },
                 { text: "Reject", callback_data: `apr:${approval.id}:reject` },
               ],
-              [{ text: "Always allow", callback_data: `apr:${approval.id}:always` }],
+              ...(proposal ? [[{ text: "Edit & approve", callback_data: `apr:${approval.id}:edit` }]] : []),
+              ...(!proposal?.requiresApproval ? [[{ text: "Always allow", callback_data: `apr:${approval.id}:always` }]] : []),
             ],
           },
         });
+        this.notifiedApprovals.add(approval.id);
         this.approvalNotices.set(approval.id, { messageId: notice.message_id });
       } catch (error) {
         this.options.onError?.("telegram.approval", error);
@@ -839,11 +854,11 @@ export class TelegramBridgeService {
         this.options.onError?.("telegram.approval", error);
       }
     };
-    if (config.chatId === null || query.message?.chat.id !== config.chatId) {
+    if (config.chatId === null || query.message?.chat.id !== config.chatId || query.message.chat.type !== "private" || query.from.id !== config.chatId || query.from.is_bot) {
       await answer("This chat isn't paired with Coworker.");
       return;
     }
-    const match = query.data?.match(/^apr:([\w-]+):(approve|reject|always)$/);
+    const match = query.data?.match(/^apr:([\w-]+):(approve|reject|always|edit)$/);
     if (!match) {
       await answer("This action isn't supported.");
       return;
@@ -855,18 +870,35 @@ export class TelegramBridgeService {
       return;
     }
     try {
+      const pending = this.pendingTelegramApproval(approvalId);
+      const proposal = workspaceTextApproval(pending);
+      if (action === "edit") {
+        if (!proposal) throw new Error("This approval does not support text editing.");
+        const prompt = await this.api.sendMessage({
+          chatId: config.chatId,
+          text: `Edit & approve: ${pending.summary}\n\nReply to this message with the replacement text. Sending your reply approves that exact text. Reply /cancel to keep the original proposal pending. For longer text, use the desktop editor.`,
+          messageThreadId: query.message?.message_thread_id,
+          replyMarkup: { force_reply: true, input_field_placeholder: "Replacement text to approve", selective: true },
+        });
+        this.saveConfig({ approvalEdits: {
+          ...Object.fromEntries(Object.entries(this.config?.approvalEdits ?? {}).slice(-255)),
+          [prompt.message_id]: { approvalId, noticeMessageId: query.message!.message_id, threadId: query.message?.message_thread_id },
+        } }, { notify: false });
+        await answer("Reply with the text you want to approve.");
+        return;
+      }
       if (action === "always") {
+        if (proposal?.requiresApproval) throw new Error("This change requires approval every time.");
         // Flip the policy first so future calls run without asking; the
         // pending approval itself still executes through the normal path.
-        const approval = this.options.database.getApproval(approvalId);
-        const coworker = this.options.database.getCoworker(approval.coworkerId);
+        const coworker = this.options.database.getCoworker(pending.coworkerId);
         this.options.database.updateCoworker(coworker.id, {
-          policies: { ...coworker.policies, [approval.actionType]: "automatic" },
+          policies: { ...coworker.policies, [pending.actionType]: "automatic" },
         });
         this.options.emit({ type: "entity.changed", entity: "coworkers", id: coworker.id });
       }
       const decision = action === "reject" ? "reject" : "approve";
-      const approval = this.options.host.decideApproval({ approvalId, decision });
+      const approval = await this.options.host.decideApproval({ approvalId, decision });
       this.approvalNotices.delete(approvalId);
       await answer(decision === "approve" ? "Approved" : "Rejected");
       if (query.message) {
@@ -896,6 +928,53 @@ export class TelegramBridgeService {
     } finally {
       release();
     }
+  }
+
+  private pendingTelegramApproval(id: string): Approval {
+    const approval = this.options.database.getApproval(id);
+    if (approval.coworkerId !== this.config?.coworkerId) throw new Error("This approval belongs to another coworker.");
+    if (approval.status !== "PENDING") throw new Error("This approval has already been decided.");
+    return approval;
+  }
+
+  /** A reply to a recorded edit prompt is an explicit edited approval, never a model message. */
+  private async handleApprovalEditReply(message: TelegramMessage): Promise<boolean> {
+    const config = this.config;
+    const promptId = message.reply_to_message?.message_id;
+    const request = promptId === undefined ? undefined : config?.approvalEdits[String(promptId)];
+    if (!config || !request || !this.api) return false;
+    if (message.from?.id !== config.chatId || message.message_thread_id !== request.threadId) {
+      await this.sendPlain(message.chat.id, "Reply to the edit prompt in its original chat and topic.", message.message_thread_id);
+      return true;
+    }
+    if (request.cancelled) {
+      await this.sendPlain(message.chat.id, "This edit was cancelled. Tap Edit & approve again to change the proposal.", message.message_thread_id);
+      return true;
+    }
+    const release = this.tryBeginMutation();
+    if (!release) {
+      await this.sendPlain(message.chat.id, "The app is briefly busy creating a backup. Please resend this reply in a moment.", message.message_thread_id);
+      return true;
+    }
+    try {
+      const pending = this.pendingTelegramApproval(request.approvalId);
+      if (message.text?.trim() === "/cancel") {
+        this.saveConfig({ approvalEdits: { ...config.approvalEdits, [String(promptId)]: { ...request, cancelled: true } } }, { notify: false });
+        await this.sendPlain(message.chat.id, "Edit cancelled. The original proposal is still waiting for approval.", message.message_thread_id);
+        return true;
+      }
+      if (!message.text?.trim() || message.document || message.photo) throw new Error("Reply with replacement text only, or /cancel. Nothing has been approved.");
+      const payload = editedWorkspaceTextPayload(pending, message.text);
+      const approved = await this.options.host.decideApproval({ approvalId: pending.id, decision: "edit", payload });
+      this.approvalNotices.delete(approved.id);
+      try {
+        await this.api.editMessageText({ chatId: message.chat.id, messageId: request.noticeMessageId, text: `${approved.summary}\n\nEdited and approved. The reviewed text is in your reply.` });
+      } catch (error) { this.options.onError?.("telegram.approval", error); }
+      await this.sendPlain(message.chat.id, "Edited text approved. The coworker will now apply the change.", message.message_thread_id);
+    } catch (error) {
+      await this.sendPlain(message.chat.id, error instanceof Error ? error.message : "The edited approval could not be applied.", message.message_thread_id);
+    } finally { release(); }
+    return true;
   }
 
   // --------------------------------------------------------------- outbound

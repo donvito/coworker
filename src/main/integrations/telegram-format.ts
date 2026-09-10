@@ -310,26 +310,20 @@ export function markdownToTelegramHtml(markdown: string): string {
 
 /** Splits already-plain text into chunks within the Telegram message limit. */
 export function plainTextChunks(text: string, limit = telegramMessageLimit): string[] {
+  if (!Number.isInteger(limit) || limit < 2) throw new Error("Text chunk limit must be an integer of at least 2.");
   if (text.length <= limit) return text ? [text] : [];
   const chunks: string[] = [];
-  let current = "";
-  for (const line of text.split("\n")) {
-    const candidate = current ? `${current}\n${line}` : line;
-    if (candidate.length > limit && current) {
-      chunks.push(current);
-      current = "";
-    }
-    if (line.length > limit) {
-      for (let start = 0; start < line.length; start += limit) {
-        chunks.push(line.slice(start, start + limit));
-      }
-      current = "";
-    } else if (!current) {
-      current = line;
-    } else {
-      current = `${current}\n${line}`;
-    }
+  let remaining = text;
+  while (remaining.length > limit) {
+    const newline = remaining.lastIndexOf("\n", limit - 1);
+    let end = newline > 0 ? newline + 1 : limit;
+    // Do not corrupt emoji or other supplementary characters at a boundary.
+    const last = remaining.charCodeAt(end - 1);
+    const next = remaining.charCodeAt(end);
+    if (last >= 0xd800 && last <= 0xdbff && next >= 0xdc00 && next <= 0xdfff) end -= 1;
+    chunks.push(remaining.slice(0, end));
+    remaining = remaining.slice(end);
   }
-  if (current) chunks.push(current);
+  if (remaining) chunks.push(remaining);
   return chunks;
 }

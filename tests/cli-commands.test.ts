@@ -7,12 +7,44 @@ import { parseCommand, remoteCommand } from "../src/cli/commands";
 import { installCli, shellQuote } from "@main/control/launcher";
 import { ipcChannels } from "@shared/ipc";
 import { configureModelSchema, createScheduleSchema, settingsPatchSchema } from "@shared/validation";
+import { humanOutput } from "../src/cli/output";
 
 const roots: string[] = [];
 async function temporary() { const root = await mkdtemp(join(tmpdir(), "cw-cli-")); roots.push(root); return root; }
 afterEach(async () => { for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
 
 describe("terminal command contracts", () => {
+  it("reads, replaces, and clears Markdown memory with revision preconditions", async () => {
+    const root = await temporary();
+    const file = join(root, "notes.md");
+    const content = "# Memory\n- SGD, 中文, 🐈\n";
+    await writeFile(file, content);
+    const revision = "a".repeat(64);
+    await expect(remoteCommand(parseCommand(["memory", "show", "ava"])))
+      .resolves.toEqual({ method: ipcChannels.memoryRead, args: ["ava"] });
+    const update = { method: ipcChannels.memoryUpdate, args: ["ava", { content, expectedRevision: revision }] };
+    await expect(remoteCommand(parseCommand(["memory", "set", "ava", "--file", file]), undefined, revision)).resolves.toEqual(update);
+    await expect(remoteCommand(parseCommand(["memory", "set", "ava", "--file", file, "--revision", revision]), undefined, "b".repeat(64))).resolves.toEqual(update);
+    await expect(remoteCommand(parseCommand(["memory", "clear", "ava"]), undefined, revision))
+      .resolves.toEqual({ method: ipcChannels.memoryUpdate, args: ["ava", { content: "", expectedRevision: revision }] });
+    expect(humanOutput("memory show", { content, revision, path: "MEMORY.md" })).toBe(content);
+    expect(humanOutput("memory set", { content, revision })).toContain("next turn");
+  });
+
+  it("rejects invalid memory commands and files before updating the app", async () => {
+    const root = await temporary();
+    const file = join(root, "invalid.md");
+    for (const args of [["memory", "set", "ava"], ["memory", "clear"], ["memory", "show", "ava", "--file", file], ["memory", "set", "ava", "--file", file, "--revision", "bad"]]) {
+      expect(() => parseCommand(args)).toThrow();
+    }
+    const command = parseCommand(["memory", "set", "ava", "--file", file]);
+    for (const content of [Buffer.from("x".repeat(8001)), Buffer.alloc(32001, 120), Buffer.from([0xff])]) {
+      await writeFile(file, content);
+      await expect(remoteCommand(command, undefined, "a".repeat(64))).rejects.toThrow();
+    }
+    await writeFile(file, "Valid");
+    await expect(remoteCommand(command)).rejects.toThrow();
+  });
   it("maps login-startup controls with headless as the default", async () => {
     for (const flags of [[], ["--headless"]]) {
       await expect(remoteCommand(parseCommand(["startup", "enable", ...flags])))

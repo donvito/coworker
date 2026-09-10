@@ -4,6 +4,7 @@ import { Icon } from "./Icon";
 import { ModalPortal } from "./ModalPortal";
 import { ModelSelector } from "./ModelSelector";
 import { ProviderSelect } from "./ProviderSelect";
+import { CoworkerMemoryEditor } from "./CoworkerMemoryEditor";
 
 function folderDisplayName(path: string): string {
   const segments = path.replace(/[\\/]+$/, "").split(/[\\/]/);
@@ -34,6 +35,7 @@ export function CoworkerSettingsModal({
   onOpenModelSettings?: () => void;
 }) {
   const [working, setWorking] = useState(false);
+  const [memoryDirty, setMemoryDirty] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [provider, setProvider] = useState<RemoteModelProvider | "">(
     coworker.modelProvider === "demo" ? "" : coworker.modelProvider,
@@ -88,6 +90,10 @@ export function CoworkerSettingsModal({
 
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (memoryDirty) {
+      setError("Save or reload memory before saving other settings.");
+      return;
+    }
     const data = new FormData(event.currentTarget);
     setWorking(true);
     setError(null);
@@ -181,6 +187,7 @@ export function CoworkerSettingsModal({
               </label>
             ))}
           </fieldset>
+          <CoworkerMemoryEditor key={coworker.id} coworkerId={coworker.id} name={coworker.name} disabled={working} onDirtyChange={setMemoryDirty} />
           {skills.some(
             (skill) =>
               skill.name === "browser-control" && enabledSkillIds.includes(skill.id),
@@ -314,6 +321,7 @@ export function CoworkerSettingsModal({
             </select>
           </label>
           {error ? <div className="inline-error">{error}</div> : null}
+          {memoryDirty ? <small>Save or reload memory before saving other settings.</small> : null}
           <div className="modal-actions split-actions">
             <button className="ghost-button danger" disabled={working} onClick={() => void remove()} type="button">
               Remove coworker
@@ -322,7 +330,7 @@ export function CoworkerSettingsModal({
               <button className="secondary-button" disabled={working} onClick={onClose} type="button">
                 Cancel
               </button>
-              <button className="primary-button" disabled={working}>
+              <button className="primary-button" disabled={working || memoryDirty}>
                 {working ? "Saving…" : "Save changes"}
               </button>
             </span>

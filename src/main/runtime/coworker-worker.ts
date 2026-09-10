@@ -18,6 +18,7 @@ import { isoWithLocalOffset, shiftTimestampsDeep } from "@shared/time";
 import { formatGrantedFolders } from "@shared/folder-access-prompt";
 import { formatModelSelectableSkills } from "@shared/pi-skill-prompt";
 import { toolNamesForSkills } from "@shared/skill-capabilities";
+import { formatWorkspaceContext } from "@shared/workspace-context";
 import {
   documentFormatClarification,
   documentFormatInstruction,
@@ -230,6 +231,13 @@ const parameterSchemas: Record<string, ReturnType<typeof Type.Object>> = {
   "files.write": Type.Object({
     path: Type.String({ description: "Relative destination path inside the coworker workspace" }),
     content: Type.String({ description: "UTF-8 file contents" }),
+    expectedRevision: Type.Optional(Type.String({ description: "Revision from files.read; rejects intervening edits. Required for managed context files." })),
+  }),
+  "files.edit": Type.Object({
+    path: Type.String({ description: "Relative path inside the coworker's workspace." }),
+    oldText: Type.String({ description: "Exact, unique existing text to replace. An empty string appends newText." }),
+    newText: Type.String({ description: "Replacement or appended text. Empty removes the matched text." }),
+    expectedRevision: Type.String({ description: "Revision returned by files.read; rejects intervening changes." }),
   }),
   "folders.list": Type.Object({
     folder: Type.Optional(
@@ -591,6 +599,7 @@ async function initialize(workerConfig: WorkerCoworkerConfig): Promise<void> {
     toolExecution: "sequential",
   });
   agent.subscribe(handleAgentEvent);
+  baseSystemPrompt = agent.state.systemPrompt;
   post({ type: "ready", coworkerId: workerConfig.coworker.id });
 }
 
@@ -1006,6 +1015,8 @@ function handleAgentEvent(event: Parameters<Agent["subscribe"]>[0] extends (
   }
 }
 
+let baseSystemPrompt = "";
+
 async function runTask(message: Extract<MainToWorkerMessage, { type: "run" }>): Promise<void> {
   if (!config || !agent) throw new Error("Worker has not been initialized");
   if (activeRun) throw new Error("This coworker already has an active task");
@@ -1021,6 +1032,7 @@ async function runTask(message: Extract<MainToWorkerMessage, { type: "run" }>): 
     approval: null,
   };
   try {
+    agent.state.systemPrompt = [baseSystemPrompt, formatWorkspaceContext(message.workspaceContext ?? [])].filter(Boolean).join("\n\n");
     if (message.checkpoint?.length) {
       agent.state.messages = restoreMessages(message.checkpoint);
     } else {

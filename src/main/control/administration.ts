@@ -17,6 +17,8 @@ export function createAdministration(input: {
     return input.startup;
   };
   const handlers = new Map<string, (...args: unknown[]) => unknown>([
+    [ipcChannels.memoryRead, (id) => input.service.readMemory(idSchema.parse(id))],
+    [ipcChannels.memoryUpdate, (id, value) => input.service.updateMemory(idSchema.parse(id), validation.updateMemorySchema.parse(value))],
     [ipcChannels.conversationsCreate, (value) => input.service.createConversation(validation.createConversationSchema.parse(value))],
     [ipcChannels.conversationsSend, (value) => input.service.sendConversationMessage(validation.sendConversationMessageSchema.parse(value))],
     ["conversations.show", (id) => input.service.database.getConversation(validation.idSchema.parse(id))],
@@ -147,6 +149,7 @@ export function createAdministration(input: {
     }],
   ]);
   const reads = new Set<string>([
+    ipcChannels.memoryRead,
     ipcChannels.getSettings, ipcChannels.coworkersList, ipcChannels.approvalsList,
     ipcChannels.schedulesList, ipcChannels.integrationsListModels,
     ipcChannels.integrationsCredentialStatus, ipcChannels.skillsList,

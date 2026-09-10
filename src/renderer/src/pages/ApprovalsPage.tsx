@@ -2,6 +2,8 @@ import { useEffect, useState, type FormEvent } from "react";
 import type { Approval, Coworker } from "@shared/contracts";
 import { Icon } from "../components/Icon";
 import { ModalPortal } from "../components/ModalPortal";
+import { WorkspaceTextApprovalCard } from "../components/WorkspaceTextApprovalCard";
+import { workspaceTextApproval } from "@shared/workspace-text-approval";
 import {
   CoworkerAvatar,
   EmptyState,
@@ -94,6 +96,7 @@ export function ApprovalsPage({
         <div className="approval-list">
           {pending.map((approval) => {
             const coworker = coworkers.find((item) => item.id === approval.coworkerId);
+            if (workspaceTextApproval(approval)) return <WorkspaceTextApprovalCard key={approval.id} approval={approval} coworkerName={coworker?.name ?? "Coworker"} onChanged={onChanged} />;
             const payload = emailPayload(approval.proposedPayload);
             return (
               <article className="approval-card" key={approval.id}>
@@ -207,7 +210,7 @@ export function ApprovalsPage({
         </section>
       ) : null}
 
-      {selected?.status === "PENDING" ? (
+      {selected?.status === "PENDING" && !workspaceTextApproval(selected) ? (
         <ApprovalEditor
           approval={selected}
           working={working}

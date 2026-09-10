@@ -1,4 +1,5 @@
 import type { BaseEvent, RunAgentInput } from "@ag-ui/core";
+import type { UpdateMemoryInput, WorkspaceTextDocument } from "./workspace-context";
 
 export const taskStatuses = [
   "QUEUED",
@@ -526,6 +527,10 @@ export interface ConfigureModelResult extends CredentialStatus {
 }
 
 export interface DesktopApi {
+  memory: {
+    read(coworkerId: string): Promise<WorkspaceTextDocument>;
+    update(coworkerId: string, input: UpdateMemoryInput): Promise<WorkspaceTextDocument>;
+  };
   /** The operating system platform, as reported by Node's process.platform. */
   platform: string;
   app: {

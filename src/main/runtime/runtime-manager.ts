@@ -13,6 +13,7 @@ import type {
   WorkerToMainMessage,
 } from "./protocol";
 import type { ProviderErrorSink } from "./provider-error-logger";
+import { loadWorkspaceContext } from "@main/tools/workspace-text";
 
 interface RuntimeRecord {
   worker: Worker;
@@ -308,6 +309,7 @@ export class CoworkerRuntimeManager {
         runId: task.runId,
         threadId: task.threadId,
         input: task.input,
+        workspaceContext: await loadWorkspaceContext(coworker.workspacePath),
         images,
         threadMessages,
         checkpoint: checkpoint?.messages,

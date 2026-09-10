@@ -4,6 +4,7 @@ import { basename, join } from "node:path";
 import type { Integration } from "@shared/contracts";
 import type { CredentialStore } from "@main/security/credential-store";
 import { resolveWorkspacePath } from "@main/tools/workspace-path";
+import { resolveWorkspaceOutputPath } from "@main/tools/workspace-text";
 
 export interface EmailPayload {
   to: string[];
@@ -100,13 +101,9 @@ export async function createEmailDraft(input: {
   fromAddress: string;
   draftId: string;
 }): Promise<{ filePath: string }> {
-  const directory = await resolveWorkspacePath(input.workspacePath, "drafts", {
-    createParent: true,
-  });
-  await mkdir(directory, { recursive: true });
   const draftKey = createHash("sha256").update(input.draftId).digest("hex").slice(0, 16);
   const filename = `${draftKey}-${slug(input.payload.subject) || "draft"}.eml`;
-  const filePath = join(directory, filename);
+  const filePath = await resolveWorkspaceOutputPath(input.workspacePath, `drafts/${filename}`);
   const content = await buildEml(
     input.fromAddress,
     input.payload,

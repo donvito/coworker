@@ -1,4 +1,10 @@
 import { z } from "zod";
+import { memoryFile } from "./workspace-context";
+
+export const updateMemorySchema = z.object({
+  content: z.string().max(memoryFile.maxCharacters),
+  expectedRevision: z.string().regex(/^[a-f0-9]{64}$/),
+}).strict();
 import {
   appThemes,
   approvalStatuses,

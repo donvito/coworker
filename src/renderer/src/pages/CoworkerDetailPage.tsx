@@ -41,6 +41,8 @@ import {
 } from "../components/ArtifactActions";
 import { ComposerTools } from "../components/ComposerTools";
 import { CoworkerSettingsModal } from "../components/CoworkerSettingsModal";
+import { WorkspaceTextApprovalCard } from "../components/WorkspaceTextApprovalCard";
+import { workspaceTextApproval } from "@shared/workspace-text-approval";
 import { ChatMarkdown } from "../components/ChatMarkdown";
 import { ModalPortal } from "../components/ModalPortal";
 import { QuickModelSwitcher } from "../components/QuickModelSwitcher";
@@ -2326,7 +2328,9 @@ function CoworkerSurface({
             <span>{messageDayLabel(divider)}</span>
           </div>
         ) : null}
-        {approval.status === "PENDING" ? (
+        {workspaceTextApproval(approval) ? (
+          <WorkspaceTextApprovalCard approval={approval} coworkerName={coworker.name} onChanged={onChanged} />
+        ) : approval.status === "PENDING" ? (
           <div className="workroom-approval">
             <header>
               <span className="workroom-approval-icon">
@@ -3514,6 +3518,8 @@ function formatActionType(actionType: string): string {
 }
 
 export function approvalPreviewRows(approval: Approval): Array<[string, string]> {
+  const text = workspaceTextApproval(approval);
+  if (text) return [["Change", text.title], [text.text ? "Proposed text" : "Text to remove", text.text || text.oldText || ""]];
   const payload = approval.proposedPayload;
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
     return [

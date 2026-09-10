@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { LoginStartup, readStartupConfiguration, type LoginItems, type LoginStartupOptions } from "@main/app/login-startup";
-import { applyLoginStartup, loginRelaunchArguments, parseLaunchOptions, shouldShowSecondInstance } from "@shared/launch-options";
+import { applyLoginStartup, loginRelaunchArguments, parseLaunchOptions, retinaSafeRelaunchArguments, shouldShowSecondInstance } from "@shared/launch-options";
 
 const roots: string[] = [];
 afterEach(async () => { for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
@@ -75,10 +75,10 @@ describe("user-login startup", () => {
     await expect(startup.enable("headless")).resolves.toMatchObject({ enabled: true });
     expect(loginItems.set).toHaveBeenLastCalledWith({
       openAtLogin: true, enabled: true, path: options.executable,
-      args: ["--data-path", `"${options.dataPath}"`, "--headless"],
+      args: ["--data-path", `"${options.dataPath}"`, "--coworker-headless"],
     });
     expect(loginItems.get).toHaveBeenLastCalledWith({
-      path: options.executable, args: ["--data-path", `"${options.dataPath}"`, "--headless"],
+      path: options.executable, args: ["--data-path", `"${options.dataPath}"`, "--coworker-headless"],
     });
     state.approved = false;
     expect(startup.status()).toMatchObject({ registered: true, enabled: false, state: "disabled" });
@@ -181,10 +181,19 @@ describe("user-login startup", () => {
 });
 
 describe("login launch selection", () => {
+  it("migrates old executable flags once without changing the requested profile or mode", () => {
+    const legacy = ["/app/main.js", "--data-path", "/Profile With Spaces", "--headless"];
+    const safe = retinaSafeRelaunchArguments(legacy)!;
+    expect(safe).toEqual(["/app/main.js", "--data-path", "/Profile With Spaces", "--coworker-headless"]);
+    expect(parseLaunchOptions(safe)).toEqual(parseLaunchOptions(legacy));
+    expect(retinaSafeRelaunchArguments(safe)).toBeNull();
+    expect(retinaSafeRelaunchArguments(["/app/main.js", "--data-path", "/headless-profile"])).toBeNull();
+  });
+
   it("redirects an argv-less macOS login launch once using explicit profile arguments", () => {
     const saved = { dataPath: "/Profile With Spaces", mode: "headless" as const };
     const args = loginRelaunchArguments(parseLaunchOptions([]), saved)!;
-    expect(args).toEqual(["--data-path", saved.dataPath, "--headless"]);
+    expect(args).toEqual(["--data-path", saved.dataPath, "--coworker-headless"]);
     expect(loginRelaunchArguments(parseLaunchOptions(args), saved)).toBeNull();
     expect(loginRelaunchArguments(parseLaunchOptions([]), null)).toBeNull();
     expect(loginRelaunchArguments(parseLaunchOptions(["--install-cli"]), saved)).toBeNull();
@@ -207,6 +216,7 @@ describe("login launch selection", () => {
 
   it("keeps a headless login attachment hidden while normal desktop launches reveal the owner", () => {
     expect(shouldShowSecondInstance([], { headless: true })).toBe(false);
+    expect(shouldShowSecondInstance(["--coworker-headless"], undefined)).toBe(false);
     expect(shouldShowSecondInstance(["--headless"], undefined)).toBe(false);
     expect(shouldShowSecondInstance([], { headless: false })).toBe(true);
     expect(shouldShowSecondInstance([], undefined)).toBe(true);

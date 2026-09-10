@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout } from "node:timers/promises";
 import { ControlError, requestControl } from "@main/control/transport";
+import { backgroundLaunchSwitch } from "@shared/launch-options";
 
 export interface LaunchConfiguration {
   executable: string;
@@ -64,7 +65,7 @@ export async function launch(config: LaunchConfiguration, dataPath: string, opti
   const args = [
     ...(config.packaged ? [] : [config.appPath]),
     "--data-path", dataPath,
-    ...(options.mode === "desktop" ? [] : ["--headless"]),
+    ...(options.mode === "desktop" ? [] : [backgroundLaunchSwitch]),
   ];
   const child = spawn(config.executable, args, {
     env, cwd: config.packaged ? undefined : config.appPath,

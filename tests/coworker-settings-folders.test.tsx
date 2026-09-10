@@ -37,6 +37,7 @@ function mockDesktopApi() {
     configurable: true,
     value: {
       platform: "darwin",
+      memory: { read: vi.fn().mockResolvedValue({ path: "MEMORY.md", content: "", revision: "0".repeat(64) }) },
       coworkers: { update },
       folders: { pick, reveal },
       integrations: {
@@ -52,6 +53,23 @@ function mockDesktopApi() {
 }
 
 describe("coworker folder access settings", () => {
+  it("does not close settings and discard an unsaved memory draft", async () => {
+    const { update } = mockDesktopApi();
+    const onClose = vi.fn();
+    render(<CoworkerSettingsModal coworker={{ ...coworker, modelProvider: "demo", modelName: "faux-1" }} onChanged={vi.fn().mockResolvedValue(undefined)} onClose={onClose} onRemoved={vi.fn()} skills={[]} />);
+    const editor = screen.getByRole("textbox", { name: "Saved memory (Markdown)" }) as HTMLTextAreaElement;
+    await waitFor(() => expect(editor.disabled).toBe(false));
+    fireEvent.change(editor, { target: { value: "A memory I have not saved yet" } });
+    const save = screen.getByRole("button", { name: "Save changes" }) as HTMLButtonElement;
+    expect(save.disabled).toBe(true);
+    fireEvent.click(save);
+    expect(update).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(editor.value).toBe("A memory I have not saved yet");
+    fireEvent.click(screen.getByRole("button", { name: "Reload memory" }));
+    await waitFor(() => expect(save.disabled).toBe(false));
+  });
+
   it("labels the reveal action per platform", () => {
     expect(revealFolderLabel("darwin")).toBe("Reveal in Finder");
     expect(revealFolderLabel("win32")).toBe("Show in Explorer");
