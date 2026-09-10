@@ -699,7 +699,7 @@ export function SettingsPage({
                 <label className="settings-row">
                   <span>
                     <strong>Launch at login</strong>
-                    <small>Start the local scheduler when you sign in to this computer.</small>
+                    <small>Start this profile when you sign in (installed macOS/Windows app). The CLI can select headless startup; this switch preserves that mode.</small>
                   </span>
                   <span className="toggle">
                     <input

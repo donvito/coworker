@@ -1,0 +1,4 @@
+interface:
+  display_name: "Export Pi Session"
+  short_description: "Export Coworker checkpoints as Pi session JSONL"
+  default_prompt: "Export a Coworker task checkpoint to Pi session JSONL."

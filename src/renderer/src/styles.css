@@ -93,7 +93,10 @@ body {
   font-family: var(--body);
   font-size: 14px;
   line-height: 1.45;
-  -webkit-font-smoothing: antialiased;
+  /* Keep the platform's native text rasterization. Forcing grayscale
+     antialiasing makes text look soft on Retina and scaled displays. */
+  -webkit-font-smoothing: auto;
+  -moz-osx-font-smoothing: auto;
 }
 
 button,

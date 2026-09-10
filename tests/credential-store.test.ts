@@ -29,6 +29,15 @@ afterEach(async () => {
 });
 
 describe("secure credential storage", () => {
+  it("rejects credential writes when secure OS storage is unavailable", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "coworker-no-keychain-"));
+    temporaryPaths.push(directory);
+    safeStorage.isEncryptionAvailable.mockReturnValue(false);
+    const store = new SecureCredentialStore(directory);
+    await expect(store.set("model:openai", "never-write-plaintext")).rejects.toThrow("Secure credential storage is not available");
+    await expect(store.get("model:openai")).resolves.toBeNull();
+  });
+
   it("reports identity-mismatched ciphertext without breaking status checks", async () => {
     const directory = await mkdtemp(join(tmpdir(), "coworker-credentials-"));
     temporaryPaths.push(directory);

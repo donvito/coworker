@@ -1,5 +1,5 @@
-import { mkdirSync } from "node:fs";
-import { isAbsolute, join, parse, resolve } from "node:path";
+import { existsSync, mkdirSync, realpathSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, parse, resolve } from "node:path";
 
 export interface AppProfile {
   dataPath: string;
@@ -30,6 +30,16 @@ export function resolveAppProfile(input: {
     dataPath = resolve(input.defaultUserDataPath);
     label = "Production";
   }
+
+  // Resolve existing ancestors too: a new profile beneath a symlink must share
+  // the same single-instance lock and control endpoint as its canonical path.
+  let ancestor = dataPath;
+  const suffix: string[] = [];
+  while (!existsSync(ancestor) && dirname(ancestor) !== ancestor) {
+    suffix.unshift(basename(ancestor));
+    ancestor = dirname(ancestor);
+  }
+  dataPath = join(realpathSync(ancestor), ...suffix);
 
   if (dataPath === parse(dataPath).root) {
     throw new Error("Coworker data cannot be stored at the filesystem root");

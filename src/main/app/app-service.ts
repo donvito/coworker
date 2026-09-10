@@ -208,6 +208,13 @@ export class DesktopAppService {
     await this.seedCoworkers();
     await this.seedLegacyModelEndpoint();
     this.enableBundledSkills();
+    if (this.database.getMetadata("coworker-administration-skill-v1") !== "true") {
+      const skill = this.database.getSkillByName("coworker-administration");
+      if (skill) for (const coworker of this.database.listCoworkers()) {
+        this.database.setCoworkerSkills(coworker.id, [...new Set([...coworker.enabledSkillIds, skill.id])]);
+      }
+      this.database.setMetadata("coworker-administration-skill-v1", "true");
+    }
     this.enableDocumentExports();
     this.enableScheduleCreation();
     await this.options.onSettingsChanged?.(this.database.getSettings());

@@ -300,6 +300,7 @@ export const bundledBrowserControlSkill = loadBundledSkill(
 );
 
 export const bundledSkills = [
+  loadBundledSkill("coworker-administration", "bundled:coworker-administration"),
   bundledWebSearchSkill,
   bundledDocumentAuthoringSkill,
   bundledTeamChannelSkill,

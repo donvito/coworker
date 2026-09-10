@@ -51,10 +51,23 @@ To connect a real model, open **Settings → Providers**, add credentials, and v
 
 Scripts, tests, evals, and packaging: [Development](docs/development.md)
 
+## Terminal and headless mode
+
+Run Coworker without a window or tray while workers, schedules, and Telegram stay active. The CLI shares the desktop's profile and credentials, and installed macOS/Windows apps can start automatically at user login.
+
+```sh
+coworker start
+coworker status
+coworker startup enable --headless
+```
+
+See the [terminal and headless guide](docs/cli.md) for CLI installation, commands, login startup, and testing.
+
 ## Docs
 
 - [Screenshots](docs/screenshots.md)
 - [Features](docs/features.md)
+- [Terminal and headless mode](docs/cli.md)
 - [Development](docs/development.md)
 - [Data and security](docs/security.md)
 - [Releasing](docs/releasing.md)
