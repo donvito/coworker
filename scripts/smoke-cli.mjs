@@ -37,16 +37,52 @@ function execute(executablePath, args, childEnv = env, input = "") {
     child.stdout.on("data", (value) => { stdout += value; });
     child.stderr.on("data", (value) => { stderr += value; });
     child.once("error", reject);
-    child.once("exit", (code, signal) => done({ code, signal, stdout, stderr }));
+    child.once("close", (code, signal) => done({ code, signal, stdout, stderr }));
     child.stdin.end(input);
   });
 }
-async function cli(args, input = "", expected = 0) {
-  const result = await execute(executable, [configuration.entry, ...args, "--data-path", root, "--json"], {
+function cliEnvironment() {
+  return {
     ...env, ELECTRON_RUN_AS_NODE: "1", COWORKER_LAUNCH_CONFIG: Buffer.from(JSON.stringify(configuration)).toString("base64"),
-  }, input);
+  };
+}
+function cliRaw(args, input = "") {
+  return execute(executable, [configuration.entry, ...args, "--data-path", root], cliEnvironment(), input);
+}
+async function cli(args, input = "", expected = 0) {
+  const result = await cliRaw([...args, "--json"], input);
   assert.equal(result.code, expected, `${args.join(" ")}: ${result.stderr}`);
   return result.stdout.trim() ? JSON.parse(result.stdout) : null;
+}
+async function human(args, input = "") {
+  const result = await cliRaw(args, input);
+  assert.equal(result.code, 0, `${args.join(" ")}: ${result.stderr}`);
+  return result.stdout;
+}
+async function checkHumanLogFollow() {
+  return new Promise((done, reject) => {
+    const child = spawn(executable, [configuration.entry, "logs", "follow", "--source", "app", "--limit", "1", "--data-path", root], {
+      env: cliEnvironment(), cwd: repo, stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = ""; let stderr = ""; let interrupted = false; let timedOut = false;
+    const timeout = setTimeout(() => { timedOut = true; child.kill("SIGKILL"); }, 10_000);
+    child.stdout.on("data", (value) => {
+      stdout += value;
+      if (!interrupted && stdout.includes("\n")) { interrupted = true; child.kill("SIGINT"); }
+    });
+    child.stderr.on("data", (value) => { stderr += value; });
+    child.once("error", (error) => { clearTimeout(timeout); reject(error); });
+    child.once("close", (code) => {
+      clearTimeout(timeout);
+      try {
+        assert.equal(timedOut, false, `Log follow timed out: ${stderr}`);
+        assert.equal(code, 0, stderr);
+        assert.match(stdout, /\d{4}-\d{2}-\d{2}T.*INFO\s+app\s+/);
+        assert.ok(!stdout.includes("No matching log entries."));
+        done();
+      } catch (error) { reject(error); }
+    });
+  });
 }
 async function ready() {
   for (let attempt = 0; attempt < 100; attempt++) {
@@ -64,8 +100,16 @@ try {
   assert.equal(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length), 0);
   const concurrent = await Promise.all([cli(["start"]), cli(["start"])]);
   assert.ok(concurrent.every((value) => value.pid === initial.pid));
+  assert.match(await human(["status"]), /Telegram: not configured/);
+  assert.match(await human(["telegram", "status"]), /Telegram is not configured/);
+  assert.match(await human(["models", "default"]), /Default provider: not set\nDefault model: not set/);
+  await checkHumanLogFollow();
 
   const coworkers = await cli(["coworkers", "list"]);
+  const invalidLimit = await cliRaw(["activity", "list", "--limit", "0", "--json"]);
+  assert.equal(invalidLimit.code, 2);
+  assert.equal(JSON.parse(invalidLimit.stderr).error.code, "USAGE");
+  assert.equal((await cli(["activity", "list", "--limit", "1"])).length, 1);
   await cli(["coworkers", "update", coworkers[0].id, "--name", "CLI Smoke"]);
   const chat = await cli(["chat", "CLI Smoke", "Say hello briefly."]);
   assert.equal(chat.status, "COMPLETED");
@@ -89,6 +133,18 @@ try {
   assert.equal(endpoint.configured, true);
   assert.ok(requestsWithCredential > 0);
   await cli(["models", "list", endpoint.provider]);
+  const providerList = await human(["models", "providers"]);
+  assert.ok(providerList.includes(endpoint.provider));
+  assert.ok(providerList.includes("Local smoke"));
+  assert.ok(providerList.includes(`http://127.0.0.1:${provider.address().port}/v1`));
+  const modelDefault = await human(["models", "default"]);
+  assert.ok(modelDefault.includes(`Default provider: ${endpoint.provider}`));
+  assert.ok(modelDefault.includes("Default model: smoke-model"));
+  assert.match(await human(["models", "default", endpoint.provider, "smoke-model"]), /Default model updated/);
+  const addedEndpoint = await human(["models", "endpoints", "add", "--name", "Human output smoke", "--base-url", `http://127.0.0.1:${provider.address().port}/v1`]);
+  const addedProviderId = addedEndpoint.match(/Provider ID: (openai-compatible:[a-z0-9]+)/)?.[1];
+  assert.ok(addedProviderId, addedEndpoint);
+  await cli(["models", "endpoints", "remove", addedProviderId]);
 
   // A normal desktop launch must attach to the headless owner, not start new services.
   const second = await cli(["start", "--ui"]);
@@ -133,6 +189,9 @@ try {
   assert.ok(!JSON.stringify(records).includes(key));
   await cli(["logs", "export", "--output", join(root, "offline.zip")]);
   await cli(["coworkers", "list"], "", 3);
+  const offlineInvalidLimit = await cliRaw(["activity", "list", "--limit", "1001", "--json"]);
+  assert.equal(offlineInvalidLimit.code, 2);
+  assert.equal(JSON.parse(offlineInvalidLimit.stderr).error.code, "USAGE");
 
   const installed = await execute(executable, [...(packaged ? [] : [repo]), "--install-cli", "--bin-dir", join(root, "bin")]);
   assert.equal(installed.code, 0, installed.stderr);

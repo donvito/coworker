@@ -40,16 +40,19 @@ export async function runChat(command: CliCommand, dataPath: string, options: {
   const request = options.request ?? ((method, args) => requestControl(dataPath, method, args));
   const timeout = command.values.timeout === undefined ? 120 : Number(command.values.timeout);
   if (!Number.isInteger(timeout) || timeout < 1 || timeout > 3600) throw new Error("--timeout must be 1 to 3600 seconds");
+  options.signal?.throwIfAborted();
   let taskId = command.args[0]!;
   if (command.name === "chat") {
     const message = command.args[1]!.trim();
     if (!message || message.length > 100_000) throw new Error("Chat message must contain 1 to 100000 characters");
     const coworkers = await request(ipcChannels.coworkersList, []) as Coworker[];
+    options.signal?.throwIfAborted();
     const coworker = resolveChatCoworker(coworkers, command.args[0]!);
     if (coworker.status !== "active") throw new Error(`${coworker.name} is paused`);
     const conversation = command.values.conversation
       ? await request("conversations.show", [command.values.conversation]) as Conversation
       : await request(ipcChannels.conversationsCreate, [{ coworkerId: coworker.id, title: "Terminal chat" }]) as Conversation;
+    options.signal?.throwIfAborted();
     if (conversation.kind !== "direct" || conversation.memberIds.length !== 1 || conversation.memberIds[0] !== coworker.id) {
       throw new Error("Choose a direct conversation belonging to this coworker");
     }

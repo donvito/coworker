@@ -16,6 +16,45 @@ function fixture(status = "COMPLETED") {
 }
 
 describe("terminal chat", () => {
+  it("does not make requests when already interrupted", async () => {
+    const abort = new AbortController();
+    abort.abort();
+    const request = fixture();
+    await expect(runChat(parseCommand(["chat", "Ava", "Hi"]), "/unused", { request, signal: abort.signal }))
+      .rejects.toMatchObject({ name: "AbortError" });
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  it.each([ipc.coworkersList, ipc.conversationsCreate, "conversations.show"])("does not send after interruption during %s", async (interruptAt) => {
+    const abort = new AbortController();
+    const respond = fixture();
+    const request = vi.fn(async (method: string, args: unknown[]) => {
+      if (method === interruptAt) abort.abort();
+      return respond(method, args);
+    });
+    const args = ["chat", "Ava", "Hi", ...(interruptAt === "conversations.show" ? ["--conversation", "conversation-1"] : [])];
+    await expect(runChat(parseCommand(args), "/unused", { request, signal: abort.signal }))
+      .rejects.toMatchObject({ name: "AbortError" });
+    expect(request.mock.calls.map(([method]) => method)).toEqual(interruptAt === ipc.coworkersList
+      ? [ipc.coworkersList] : [ipc.coworkersList, interruptAt]);
+  });
+
+  it("reports accepted work without polling or cancelling if interrupted during submission", async () => {
+    const abort = new AbortController();
+    const respond = fixture();
+    const request = vi.fn(async (method: string, args: unknown[]) => {
+      if (method === ipc.conversationsSend) abort.abort();
+      return respond(method, args);
+    });
+    const onQueued = vi.fn();
+    await expect(runChat(parseCommand(["chat", "Ava", "Hi"]), "/unused", { request, signal: abort.signal, onQueued }))
+      .rejects.toMatchObject({ name: "AbortError" });
+    expect(onQueued).toHaveBeenCalledExactlyOnceWith("task-1", "conversation-1");
+    expect(request.mock.calls.map(([method]) => method)).toEqual([
+      ipc.coworkersList, ipc.conversationsCreate, ipc.conversationsSend,
+    ]);
+  });
+
   it("reports tool state changes once, including fast calls in the final poll", async () => {
     let poll = 0;
     const request = vi.fn(async () => {

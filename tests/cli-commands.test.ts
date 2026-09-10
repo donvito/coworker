@@ -13,6 +13,20 @@ async function temporary() { const root = await mkdtemp(join(tmpdir(), "cw-cli-"
 afterEach(async () => { for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
 
 describe("terminal command contracts", () => {
+  it("passes activity limits and leaves the default to the service", async () => {
+    await expect(remoteCommand(parseCommand(["activity", "list"]))).resolves.toEqual({ method: "activity.list", args: [] });
+    for (const limit of [1, 50, 1000]) {
+      await expect(remoteCommand(parseCommand(["activity", "list", "--limit", String(limit)])))
+        .resolves.toEqual({ method: "activity.list", args: [limit] });
+    }
+  });
+
+  it("rejects invalid activity limits during parsing, before contacting the app", () => {
+    for (const limit of ["0", "-1", "1.5", "many", "1001", "Infinity", ""]) {
+      expect(() => parseCommand(["activity", "list", `--limit=${limit}`])).toThrow("--limit must be an integer from 1 to 1000");
+    }
+  });
+
   it("rejects unknown and irrelevant flags, incomplete arguments, and secrets in argv", () => {
     for (const args of [
       ["start", "--file", "x"], ["models", "default", "openai"], ["run"],

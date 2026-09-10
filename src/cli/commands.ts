@@ -2,6 +2,7 @@ import { readFile, stat } from "node:fs/promises";
 import { basename, extname, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { ipcChannels as ipc } from "@shared/ipc";
+import { listLimitSchema } from "@shared/validation";
 import type { LogQuery } from "@main/control/logs";
 
 const booleanOptions = ["json", "help", "headless", "ui", "overwrite", "key-stdin", "prompt-key", "token-stdin", "prompt-token"];
@@ -92,6 +93,9 @@ export function parseCommand(argv: string[]): CliCommand {
   if (values.cron && values["run-at"]) throw new Error("Choose --cron or --run-at");
   if (values.ui && values.headless) throw new Error("Choose --ui or --headless");
   if (commandName === "run" && !values.headless) throw new Error("Usage: coworker run --headless");
+  if (commandName === "activity list" && values.limit !== undefined && !listLimitSchema.safeParse(Number(values.limit)).success) {
+    throw new Error("--limit must be an integer from 1 to 1000");
+  }
   return { name: commandName, args, values };
 }
 
@@ -130,7 +134,7 @@ export async function remoteCommand(command: CliCommand, apiKey?: string): Promi
   const request = (method: string, ...parameters: unknown[]) => ({ method, args: parameters });
   const simple: Record<string, string> = {
     "models providers": "models.providers", "models list": ipc.integrationsListModels,
-    "telegram status": "telegram.status", "telegram unpair": "telegram.unpair", "telegram disconnect": "telegram.disconnect", "activity list": "activity.list",
+    "telegram status": "telegram.status", "telegram unpair": "telegram.unpair", "telegram disconnect": "telegram.disconnect",
     "models endpoints remove": ipc.integrationsRemoveModelEndpoint,
     "coworkers list": ipc.coworkersList, "coworkers show": "coworkers.show", "coworkers remove": ipc.coworkersRemove,
     "skills list": ipc.skillsList, "skills show": "skills.show", "skills remove": ipc.skillsRemove,
@@ -138,7 +142,8 @@ export async function remoteCommand(command: CliCommand, apiKey?: string): Promi
     "schedules run": ipc.schedulesRunNow, "approvals show": "approvals.show",
   };
   if (simple[name]) return request(simple[name], ...args);
-  if (name === "activity list") return request("activity.list", values.limit === undefined ? undefined : Number(values.limit));
+  if (name === "activity list") return values.limit === undefined
+    ? request("activity.list") : request("activity.list", Number(values.limit));
   if (name === "models configure" || name === "models endpoints add") return request(
     name === "models configure" ? ipc.integrationsConfigureModel : ipc.integrationsAddModelEndpoint,
     { provider: args[0], name: values.name, baseUrl: values["base-url"], defaultModelName: values.model, endpointName: values["endpoint-name"], apiKey });

@@ -105,7 +105,7 @@ export function createAdministration(input: { service: DesktopAppService; creden
     ["telegram.configure", (value) => input.service.configureTelegram(validation.configureTelegramSchema.parse(value))],
     ["telegram.unpair", () => input.service.unpairTelegram()],
     ["telegram.disconnect", () => input.service.disconnectTelegram()],
-    ["activity.list", (limit) => input.service.database.listActivity(limit === undefined ? 50 : Number(limit))],
+    ["activity.list", (limit) => input.service.database.listActivity(limit === undefined ? 50 : validation.listLimitSchema.parse(limit))],
     ["coworkers.show", (id) => input.service.database.getCoworker(validation.idSchema.parse(id))],
     ["skills.show", (id) => input.service.database.getSkill(validation.idSchema.parse(id))],
     ["schedules.show", (id) => input.service.database.getSchedule(validation.idSchema.parse(id))],

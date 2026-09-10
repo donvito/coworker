@@ -22,6 +22,22 @@ async function fixture() {
 }
 
 describe("shared desktop and terminal administration", () => {
+  it("validates activity limits at the boundary and defaults to 50", async () => {
+    const { service, admin } = await fixture();
+    const list = vi.spyOn(service.database, "listActivity");
+    await admin.invoke("activity.list", []);
+    expect(list).toHaveBeenLastCalledWith(50);
+    for (const limit of [1, 1000]) {
+      await admin.invoke("activity.list", [limit]);
+      expect(list).toHaveBeenLastCalledWith(limit);
+    }
+    list.mockClear();
+    for (const limit of [0, -1, 1.5, 1001, "1", "many", null, NaN, Infinity]) {
+      await expect(admin.invoke("activity.list", [limit])).rejects.toThrow();
+    }
+    expect(list).not.toHaveBeenCalled();
+  });
+
   it("makes changes visible through the same service and enforces its mutation guard", async () => {
     const { service, admin } = await fixture();
     const coworker = service.database.listCoworkers()[0]!;

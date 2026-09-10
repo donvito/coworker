@@ -78,6 +78,8 @@ pnpm cli chat result TASK_ID
 
 Installed users replace `pnpm cli` with `coworker`. A new chat creates a direct conversation visible in the desktop. The command prints the reply when complete, plus conversation and task IDs. `--timeout 120` controls how long to wait (1–3600 seconds); `--json` returns a structured result. Timeout or Ctrl-C stops waiting without cancelling accepted work. Pending approvals are displayed for manual review using the approval commands; after deciding, run `chat result TASK_ID` to wait for the reply. Chat uses the coworker's existing model and tools.
 
+If interrupted before message submission, the CLI does not send the message. An interrupt during conversation creation may leave an empty conversation; if submission is already in flight, any returned task/conversation IDs are still reported in normal terminal output.
+
 ```sh
 coworker models providers
 coworker models configure openai --prompt-key
@@ -127,6 +129,8 @@ coworker telegram disconnect
 
 The token is entered through hidden terminal input or stdin and is stored using the same OS-backed credential store as the desktop. After configuring, send the pairing link/code to the bot and confirm `Pairing: paired` before sending work. `unpair` keeps the bot configured but requires pairing again; `disconnect` removes the Telegram connection.
 
+`telegram configure`, `telegram unpair`, and `telegram status` print the pairing link while waiting for pairing. Once paired, they show the chat ID instead. The main `status` command distinguishes an unconfigured Telegram integration from connected, disconnected, and error states.
+
 ```sh
 coworker skills list
 coworker skills show SKILL_ID
@@ -159,6 +163,8 @@ For one-time work, use `--run-at '2030-01-01T09:00:00+08:00'` instead of `--cron
 
 Approval listing defaults to `PENDING`. Decisions use the existing validation, durable state, and worker-resumption path. Headless operation does not bypass approvals or broaden a coworker's tools.
 
+`approvals show ID` displays the action, risk, coworker/task IDs, timestamps, and complete proposed payload as indented JSON. Resolved approvals also show their decided payload when present, so you can inspect the exact action before deciding.
+
 ## Diagnostics and scripting
 
 ```sh
@@ -174,6 +180,10 @@ Log sources are `all`, `app`, and `provider`. Output is chronological and defaul
 `--json` emits one JSON value for normal commands and one JSON object per record for `logs follow`. Errors go to stderr. Do not automatically retry timed-out mutations: they may already have succeeded; inspect the resulting state first.
 
 Without `--json`, commands print concise summaries and tables intended for people. For example, `coworker status` prints the running mode, PID, profile, and service state; list commands print aligned columns; and log commands print one readable line per record. Use `--json` when another program will consume the output.
+
+`models providers` includes built-in provider IDs and credential states, plus custom endpoint IDs, names, and base URLs. Creating an endpoint prints its provider ID for subsequent commands. `models default` shows the selected provider/model, or explicitly reports that they are not set.
+
+`coworker activity list --limit 20` displays recent activity. The limit must be an integer from 1 to 1,000 and defaults to 50. Invalid limits return usage exit code 2 even when the app is stopped.
 
 | Exit code | Meaning |
 | --- | --- |

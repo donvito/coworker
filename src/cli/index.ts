@@ -11,6 +11,7 @@ import { redactProviderDiagnostic } from "@main/runtime/provider-error-logger";
 import { cliHelp, logQuery, parseCommand, remoteCommand } from "./commands";
 import { launch, restart, status, stop, type LaunchConfiguration } from "./lifecycle";
 import { runChat, formatChatResult, formatToolProgress } from "./chat";
+import { formatOutput } from "./output";
 
 function configuration(): LaunchConfiguration {
   if (process.env.COWORKER_LAUNCH_CONFIG) return z.object({
@@ -61,72 +62,8 @@ async function promptSecret(label = "API key"): Promise<string> {
   } finally { readline.close(); process.stderr.write("\n"); }
 }
 
-function cell(value: unknown): string {
-  if (value === null || value === undefined || value === "") return "—";
-  if (typeof value === "boolean") return value ? "yes" : "no";
-  return String(value).replaceAll("\n", " ");
-}
-
-function table(rows: Array<Record<string, unknown>>, columns: string[]): string {
-  if (!rows.length) return "No results.";
-  const widths = columns.map((column) => Math.max(column.length, ...rows.map((row) => cell(row[column]).length)));
-  const line = (row: Record<string, unknown>) => columns.map((column, index) => cell(row[column]).padEnd(widths[index]!)).join("  ").trimEnd();
-  return [line(Object.fromEntries(columns.map((column) => [column, column]))),
-    columns.map((column, index) => "─".repeat(widths[index]!)).join("  "), ...rows.map(line)].join("\n");
-}
-
-export function humanOutput(command: string, value: unknown): string {
-  if (value === null || value === undefined) return "Done.";
-  if (command === "status") {
-    const status = value as Record<string, unknown>;
-    if (status.running !== true) return `Coworker is stopped.\nProfile: ${cell(status.profile)}\nData: ${cell(status.dataPath)}`;
-    const services = status.services as Record<string, unknown> | undefined;
-    return ["Coworker is running.", `Mode: ${cell(status.mode)}  PID: ${cell(status.pid)}  Uptime: ${cell(status.uptimeSeconds)}s`,
-      `Profile: ${cell(status.profile)}\nData: ${cell(status.dataPath)}`,
-      `Scheduler: ${cell(services?.scheduler)}  Telegram: ${services?.telegram ? "configured" : "not configured"}`].join("\n");
-  }
-  if (["start", "restart"].includes(command)) return `Coworker started (${cell((value as Record<string, unknown>).mode)} mode, PID ${cell((value as Record<string, unknown>).pid)}).`;
-  if (command === "stop") return "Coworker stopped.";
-  if (command === "models providers") {
-    const result = value as Record<string, unknown>;
-    return table((result.providers as Array<Record<string, unknown>>).map((provider) => ({ Provider: provider.label ?? provider.id, Status: provider.credentialStatus === "configured" ? "configured" : "not configured" })), ["Provider", "Status"]);
-  }
-  if (command === "models list") return table((value as Array<Record<string, unknown>>).map((model) => ({ Model: model.id, Name: model.name ?? "" })), ["Model", "Name"]);
-  if (command === "telegram status") {
-    const result = value as Record<string, unknown>;
-    const integration = result.integration as Record<string, unknown> | null | undefined;
-    if (!integration || integration.status !== "connected") return "Telegram is not connected.";
-    const config = integration.config as Record<string, unknown> | undefined;
-    const paired = config?.chatId !== null && config?.chatId !== undefined;
-    return `Telegram is connected.\nBot: ${cell(config?.botUsername)}\nPairing: ${paired ? "paired" : "waiting for pairing"}${paired ? `\nChat ID: ${cell(config?.chatId)}` : ""}`;
-  }
-  if (command === "activity list") {
-    const rows = value as Array<Record<string, unknown>>;
-    return table(rows.map((row) => ({ Time: row.createdAt, Event: row.type, Summary: row.summary })), ["Time", "Event", "Summary"]);
-  }
-  if (["coworkers list", "skills list", "schedules list", "approvals list"].includes(command)) {
-    const rows = value as Array<Record<string, unknown>>;
-    if (command === "coworkers list") return table(rows.map((row) => ({ Name: row.name, Role: row.role, Status: row.status, ID: row.id })), ["Name", "Role", "Status", "ID"]);
-    if (command === "skills list") return table(rows.map((row) => ({ Name: row.name, Bundled: row.bundled, Description: row.description, ID: row.id })), ["Name", "Bundled", "Description", "ID"]);
-    if (command === "schedules list") return table(rows.map((row) => ({ Name: row.name, Type: row.scheduleType, Enabled: row.enabled, Next: row.nextRunAt, ID: row.id })), ["Name", "Type", "Enabled", "Next", "ID"]);
-    return table(rows.map((row) => ({ Status: row.status, Action: row.actionType, Summary: row.summary, ID: row.id })), ["Status", "Action", "Summary", "ID"]);
-  }
-  if (command.startsWith("logs ")) {
-    const rows = value as Array<Record<string, unknown>>;
-    if (command === "logs export") return `Support bundle exported to ${cell((value as Record<string, unknown>).path)}.`;
-    return rows.length ? rows.map((row) => `${cell(row.timestamp)}  ${cell(row.level).toUpperCase().padEnd(7)}  ${cell(row.source)}  ${cell(row.category)}  ${cell(row.message)}`).join("\n") : "No matching log entries.";
-  }
-  if (typeof value === "object" && !Array.isArray(value)) {
-    const object = value as Record<string, unknown>;
-    const preferred = ["id", "name", "description", "status", "modelProvider", "modelName", "enabled", "nextRunAt", "createdAt"];
-    return preferred.filter((key) => key in object).map((key) => `${key}: ${cell(object[key])}`).join("\n") || "Done.";
-  }
-  if (Array.isArray(value)) return value.length ? value.map((item) => typeof item === "object" ? Object.values(item as object).map(cell).join("  ") : cell(item)).join("\n") : "No results.";
-  return String(value);
-}
-
 function print(command: string, value: unknown, json: boolean) {
-  process.stdout.write(`${json ? JSON.stringify(value) : humanOutput(command, value)}\n`);
+  process.stdout.write(`${formatOutput(command, value, json)}\n`);
 }
 
 export async function main(argv = process.argv.slice(2)): Promise<void> {
