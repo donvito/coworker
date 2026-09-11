@@ -25,3 +25,6 @@ tmp/
 /videos/
 
 *.jsonl
+
+.agents/
+.codex/
