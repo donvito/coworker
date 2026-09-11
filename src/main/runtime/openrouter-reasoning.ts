@@ -1,8 +1,10 @@
-import type { ThinkingLevelMap } from "@earendil-works/pi-ai";
+import type { OpenAICompletionsCompat, ThinkingLevelMap } from "@earendil-works/pi-ai";
 
 export interface ReasoningCapableModel {
+  id?: string;
   reasoning: boolean;
   thinkingLevelMap?: ThinkingLevelMap;
+  compat?: object;
 }
 
 /**
@@ -15,10 +17,31 @@ export interface ReasoningCapableModel {
  * This app never asks to disable reasoning, so mark "off" as unsupported on
  * every OpenRouter reasoning model. Pi then omits the reasoning parameter
  * entirely and the route's own default applies.
+ *
+ * Gemini tool signatures also cannot be replayed across Google's Vertex and
+ * AI Studio routes: a live reproduction returned 400 for the unchanged
+ * signature on AI Studio and succeeded with the same history on Vertex.
+ * Keep all requests on Vertex, including the first request and approval
+ * resumes. Ordinary transient failures still use the bounded provider retry.
  */
 export function withOpenRouterReasoningCompat<M extends ReasoningCapableModel>(model: M): M {
-  if (!model.reasoning || model.thinkingLevelMap?.off === null) return model;
-  return { ...model, thinkingLevelMap: { ...model.thinkingLevelMap, off: null } };
+  if (!model.reasoning) return model;
+  const compatible = model.thinkingLevelMap?.off === null
+    ? model
+    : { ...model, thinkingLevelMap: { ...model.thinkingLevelMap, off: null } };
+  if (!model.id?.startsWith("google/gemini-")) return compatible;
+  const compat = model.compat as OpenAICompletionsCompat | undefined;
+  return {
+    ...compatible,
+    compat: {
+      ...compat,
+      openRouterRouting: {
+        ...compat?.openRouterRouting,
+        only: ["google-vertex"],
+        allow_fallbacks: false,
+      },
+    },
+  };
 }
 
 /**

@@ -149,8 +149,18 @@ describe("markdown → Telegram HTML", () => {
 
   it("chunks plain text within the limit", () => {
     const chunks = plainTextChunks(`${"a".repeat(120)}\n${"b".repeat(120)}`, 130);
-    expect(chunks).toEqual(["a".repeat(120), "b".repeat(120)]);
+    expect(chunks).toEqual([`${"a".repeat(120)}\n`, "b".repeat(120)]);
     expect(plainTextChunks("short")).toEqual(["short"]);
+  });
+
+  it("preserves all proposed text and Unicode across plain-text chunks", () => {
+    const text = `\n\n${"a".repeat(7)}😀${"🧠".repeat(12)}\n\n- Keep blank lines.\n`;
+    const chunks = plainTextChunks(text, 8);
+    expect(chunks.join("")).toBe(text);
+    for (const chunk of chunks) {
+      expect(chunk.length).toBeLessThanOrEqual(8);
+      expect(Buffer.from(chunk, "utf8").toString("utf8")).toBe(chunk);
+    }
   });
 
   it("escapes quotes for attribute safety", () => {

@@ -12,6 +12,8 @@ import { cliHelp, logQuery, parseCommand, remoteCommand } from "./commands";
 import { launch, restart, status, stop, type LaunchConfiguration } from "./lifecycle";
 import { runChat, formatChatResult, formatToolProgress } from "./chat";
 import { formatOutput } from "./output";
+import { ipcChannels } from "@shared/ipc";
+import type { WorkspaceTextDocument } from "@shared/workspace-context";
 
 function configuration(): LaunchConfiguration {
   if (process.env.COWORKER_LAUNCH_CONFIG) return z.object({
@@ -63,7 +65,8 @@ async function promptSecret(label = "API key"): Promise<string> {
 }
 
 function print(command: string, value: unknown, json: boolean) {
-  process.stdout.write(`${formatOutput(command, value, json)}\n`);
+  const suffix = command === "memory show" && !json ? "" : "\n";
+  process.stdout.write(`${formatOutput(command, value, json)}${suffix}`);
 }
 
 export async function main(argv = process.argv.slice(2)): Promise<void> {
@@ -148,7 +151,10 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
           ? await secretFromStdin()
           : command.values["prompt-key"] ? await promptSecret()
             : command.values["prompt-token"] ? await promptSecret("Telegram bot token") : undefined;
-        const request = await remoteCommand(command, key);
+        const memoryRevision = ["memory set", "memory clear"].includes(command.name) && !command.values.revision
+          ? (await requestControl(dataPath, ipcChannels.memoryRead, [command.args[0]]) as WorkspaceTextDocument).revision
+          : undefined;
+        const request = await remoteCommand(command, key, memoryRevision);
         print(command.name, await requestControl(dataPath, request.method, request.args), json);
       }
     }

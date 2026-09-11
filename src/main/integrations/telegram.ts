@@ -55,6 +55,7 @@ export interface TelegramMessage {
   document?: TelegramDocument;
   forum_topic_created?: { name: string };
   forum_topic_edited?: { name?: string };
+  reply_to_message?: TelegramMessage;
 }
 
 export interface TelegramCallbackQuery {
@@ -79,6 +80,19 @@ export interface TelegramMessageGenerationStopped {
 
 export interface TelegramInlineKeyboard {
   inline_keyboard: Array<Array<{ text: string; callback_data: string }>>;
+}
+
+export interface TelegramForceReply {
+  force_reply: true;
+  input_field_placeholder?: string;
+  selective?: boolean;
+}
+
+export interface TelegramApprovalEditRequest {
+  approvalId: string;
+  noticeMessageId: number;
+  threadId?: number;
+  cancelled?: boolean;
 }
 
 export interface TelegramFile {
@@ -115,6 +129,8 @@ export interface TelegramIntegrationConfig {
   lastUpdateId: number | null;
   /** Snapshot of getMe.has_topics_enabled from the latest poll session. */
   threadsEnabled: boolean;
+  /** Reply prompt message IDs; no proposed or edited text is stored here. */
+  approvalEdits: Record<string, TelegramApprovalEditRequest>;
 }
 
 export function parseTelegramConfig(integration: Integration): TelegramIntegrationConfig {
@@ -137,6 +153,11 @@ export function parseTelegramConfig(integration: Integration): TelegramIntegrati
         : {},
     lastUpdateId: typeof config.lastUpdateId === "number" ? config.lastUpdateId : null,
     threadsEnabled: config.threadsEnabled === true,
+    approvalEdits: Object.fromEntries(Object.entries(config.approvalEdits ?? {}).filter(([id, value]) =>
+      /^\d+$/.test(id) && value && typeof value === "object" &&
+      typeof value.approvalId === "string" && Number.isSafeInteger(value.noticeMessageId) &&
+      (value.threadId === undefined || Number.isSafeInteger(value.threadId))
+    )),
   };
 }
 
@@ -279,7 +300,7 @@ export class TelegramBotApi {
     text: string;
     parseMode?: "HTML";
     messageThreadId?: number;
-    replyMarkup?: TelegramInlineKeyboard;
+    replyMarkup?: TelegramInlineKeyboard | TelegramForceReply;
   }): Promise<TelegramMessage> {
     return this.call<TelegramMessage>("sendMessage", {
       chat_id: input.chatId,

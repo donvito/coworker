@@ -2,7 +2,7 @@ import { createAdministration } from "@main/control/administration";
 import { startControlServer, ControlError } from "@main/control/transport";
 import { exportLogs, readLogs, logQuerySchema } from "@main/control/logs";
 import { installCli } from "@main/control/launcher";
-import { loginRelaunchArguments, parseLaunchOptions, shouldShowSecondInstance } from "@shared/launch-options";
+import { loginRelaunchArguments, parseLaunchOptions, retinaSafeRelaunchArguments, shouldShowSecondInstance } from "@shared/launch-options";
 import { LoginStartup, readStartupConfiguration } from "@main/app/login-startup";
 import { z } from "zod";
 import { join } from "node:path";
@@ -32,6 +32,15 @@ function ignoreBrokenPipe(stream: NodeJS.WriteStream): void {
 
 ignoreBrokenPipe(process.stdout);
 ignoreBrokenPipe(process.stderr);
+
+// Chromium consumes --headless before the main script runs. Removing the switch
+// here cannot restore a native Retina display; old direct launches need one
+// clean relaunch with our application-specific background flag instead.
+const retinaSafeArguments = retinaSafeRelaunchArguments(process.argv.slice(1));
+if (retinaSafeArguments) {
+  app.relaunch({ args: retinaSafeArguments });
+  app.exit(0);
+}
 
 const defaultUserDataPath = app.getPath("userData");
 const defaultAppProfile = resolveAppProfile({ isPackaged: app.isPackaged,

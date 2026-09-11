@@ -1,6 +1,6 @@
 {
   "name": "coworker",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "A local-first desktop app for independent AI coworkers.",
   "type": "module",
   "productName": "Coworker",
@@ -27,6 +27,7 @@
     "eval": "pnpm build && vitest run --config vitest.evals.config.ts",
     "eval:contract": "pnpm build && vitest run --config vitest.evals.config.ts evals/tool-safety.eval.ts evals/multimodal.eval.ts",
     "eval:behavior": "pnpm build && vitest run --config vitest.evals.config.ts evals/coworker-behavior.eval.ts",
+    "eval:memory": "pnpm build && vitest run --config vitest.evals.config.ts evals/memory.eval.ts",
     "eval:record": "pnpm build && vitest run --config vitest.evals.config.ts evals/coworker-behavior.eval.ts",
     "eval:report": "node -e \"require('node:fs').mkdirSync('eval-results',{recursive:true})\" && pnpm build && vitest run --config vitest.evals.config.ts --reporter=vitest-evals/reporter --reporter=json --outputFile.json=eval-results/latest.json",
     "eval:report:contract": "node -e \"require('node:fs').mkdirSync('eval-results',{recursive:true})\" && pnpm build && vitest run --config vitest.evals.config.ts evals/tool-safety.eval.ts evals/multimodal.eval.ts --reporter=vitest-evals/reporter --reporter=json --outputFile.json=eval-results/latest.json",

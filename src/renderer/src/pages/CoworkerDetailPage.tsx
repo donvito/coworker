@@ -41,12 +41,18 @@ import {
 } from "../components/ArtifactActions";
 import { ComposerTools } from "../components/ComposerTools";
 import { CoworkerSettingsModal } from "../components/CoworkerSettingsModal";
+import { WorkspaceTextApprovalCard } from "../components/WorkspaceTextApprovalCard";
+import { workspaceTextApproval } from "@shared/workspace-text-approval";
 import { ChatMarkdown } from "../components/ChatMarkdown";
 import { ModalPortal } from "../components/ModalPortal";
 import { QuickModelSwitcher } from "../components/QuickModelSwitcher";
 import { ScheduleEditorModal } from "../components/ScheduleEditorModal";
 import { Icon } from "../components/Icon";
 import { describeCronExpression, describeSchedule } from "@shared/schedule-frequency";
+import {
+  findRecoveredToolCallIds,
+  parseToolResultStatus,
+} from "@shared/tool-result-status";
 import {
   filterConversations,
   type LiveResponse,
@@ -95,7 +101,7 @@ const documentExportSchema = z.object({
   sourcePath: z.string().optional(),
   name: z.string().optional(),
   content: z.string().optional(),
-  formats: z.array(z.enum(["pdf", "docx", "xlsx", "csv"])),
+  formats: z.array(z.string().toLowerCase().pipe(z.enum(["pdf", "docx", "xlsx", "csv", "pptx"]))),
 });
 
 const officeFormatLabel = {
@@ -103,6 +109,7 @@ const officeFormatLabel = {
   docx: "Word",
   xlsx: "Excel",
   csv: "CSV",
+  pptx: "PowerPoint",
 } as const;
 const scheduleCreateSchema = z.object({
   name: z.string(),
@@ -1737,6 +1744,10 @@ function CoworkerSurface({
     () => new Map(storedMessages.map((message) => [message.id, message])),
     [storedMessages],
   );
+  const recoveredToolCallIds = findRecoveredToolCallIds(
+    agent.messages,
+    (result) => artifactTargetsFromResult(result).length > 0,
+  );
   const imageAttachmentsByTask = useMemo(() => {
     const grouped = new Map<string, TaskImageAttachmentSummary[]>();
     for (const attachment of imageAttachments) {
@@ -1997,6 +2008,7 @@ function CoworkerSurface({
     render: ({ status, parameters, result }) => {
       const lineItems = parameters.lineItems ?? [];
       const artifactTarget = artifactTargetsFromResult(result)[0];
+      const artifactConfirmed = status === "complete" && artifactTarget !== undefined;
       const total = lineItems.reduce(
         (sum, lineItem) => sum + (lineItem.quantity ?? 0) * (lineItem.rate ?? 0),
         0,
@@ -2010,8 +2022,10 @@ function CoworkerSurface({
               <strong>{parameters.client || "New invoice"}</strong>
             </span>
             <span className="invoice-state">
-              {status === "complete"
+              {artifactConfirmed
                 ? `${(parameters.format || "file").toUpperCase()} ready`
+                : status === "complete"
+                  ? "No saved file confirmed"
                 : "Preparing"}
             </span>
           </div>
@@ -2051,8 +2065,14 @@ function CoworkerSurface({
           </div>
           <div className="invoice-document-foot">
             <Icon name="file" />
-            <span>{result ? "Saved to the local workspace" : "Creating local invoice file…"}</span>
-            {artifactTarget ? <ArtifactActions target={artifactTarget} /> : null}
+            <span>
+              {artifactConfirmed
+                ? "Saved to the local workspace"
+                : status === "complete"
+                  ? "No saved file confirmed"
+                  : "Creating local invoice file…"}
+            </span>
+            {artifactConfirmed && artifactTarget ? <ArtifactActions target={artifactTarget} /> : null}
           </div>
         </div>
       );
@@ -2081,15 +2101,22 @@ function CoworkerSurface({
     parameters: fileSchema,
     render: ({ status, parameters, result }) => {
       const artifactTarget = artifactTargetsFromResult(result)[0];
+      const artifactConfirmed = status === "complete" && artifactTarget !== undefined;
       return (
         <div className="tool-card conversation-tool-card">
           <span className="tool-card-icon">
             <Icon name="file" />
           </span>
           <span>
-            <small>{status === "complete" ? "File created" : "Writing file"}</small>
+            <small>
+              {artifactConfirmed
+                ? "File created"
+                : status === "complete"
+                  ? "No saved file confirmed"
+                  : "Writing file"}
+            </small>
             <strong>{parameters.path || "Workspace file"}</strong>
-            {artifactTarget ? <ArtifactActions target={artifactTarget} /> : null}
+            {artifactConfirmed && artifactTarget ? <ArtifactActions target={artifactTarget} /> : null}
           </span>
         </div>
       );
@@ -2100,20 +2127,27 @@ function CoworkerSurface({
     parameters: documentExportSchema,
     render: ({ status, parameters, result }) => {
       const artifactTargets = artifactTargetsFromResult(result);
+      const artifactConfirmed = status === "complete" && artifactTargets.length > 0;
       return (
         <div className="tool-card conversation-tool-card">
           <span className="tool-card-icon">
             <Icon name="file" />
           </span>
           <span>
-            <small>{status === "complete" ? "Document exported" : "Exporting document"}</small>
+            <small>
+              {artifactConfirmed
+                ? "Document exported"
+                : status === "complete"
+                  ? "No saved file confirmed"
+                  : "Exporting document"}
+            </small>
             <strong>
               {(parameters.formats ?? [])
-                .map((format) => officeFormatLabel[format])
+                .map((format) => officeFormatLabel[format.toLowerCase() as keyof typeof officeFormatLabel] ?? format)
                 .join(" + ") || "Document"}
             </strong>
             <span>{parameters.sourcePath || parameters.name || "Workspace document"}</span>
-            {artifactTargets.length > 0 ? (
+            {artifactConfirmed ? (
               <span className="chat-exported-files">
                 {artifactTargets.map((target) => (
                   <span className="chat-exported-file" key={target.id}>
@@ -2326,7 +2360,9 @@ function CoworkerSurface({
             <span>{messageDayLabel(divider)}</span>
           </div>
         ) : null}
-        {approval.status === "PENDING" ? (
+        {workspaceTextApproval(approval) ? (
+          <WorkspaceTextApprovalCard approval={approval} coworkerName={coworker.name} onChanged={onChanged} />
+        ) : approval.status === "PENDING" ? (
           <div className="workroom-approval">
             <header>
               <span className="workroom-approval-icon">
@@ -2857,15 +2893,42 @@ function CoworkerSurface({
                         (candidate): candidate is ToolMessage =>
                           candidate.role === "tool" && candidate.toolCallId === toolCall.id,
                       );
+                      const resultStatus = toolMessage
+                        ? parseToolResultStatus(toolMessage.content)
+                        : null;
                       return (
                         <div className="workroom-tool" key={toolCall.id}>
-                          {renderToolCall({ toolCall, toolMessage }) ?? (
+                          {resultStatus?.isError ? recoveredToolCallIds.has(toolCall.id) ? (
+                            <details className="tool-card conversation-tool-card">
+                              <summary>
+                                <span className="tool-card-icon">
+                                  <Icon name="check" />
+                                </span>
+                                <span>
+                                  <small>Succeeded after retry</small>
+                                  <strong>{toolCall.function.name}</strong>
+                                </span>
+                              </summary>
+                              <span>Previous error: {resultStatus.error}</span>
+                            </details>
+                          ) : (
+                            <div className="tool-card conversation-tool-card">
+                              <span className="tool-card-icon">
+                                <Icon name="tool" />
+                              </span>
+                              <span>
+                                <small>Tool failed</small>
+                                <strong>{toolCall.function.name}</strong>
+                                <span>{resultStatus.error}</span>
+                              </span>
+                            </div>
+                          ) : renderToolCall({ toolCall, toolMessage }) ?? (
                             <div className="tool-card conversation-tool-card">
                               <span className="tool-card-icon">
                                 <Icon name="settings" />
                               </span>
                               <span>
-                                <small>{toolMessage ? "Tool complete" : "Using controlled tool"}</small>
+                                <small>{toolMessage ? "Tool result received" : "Using controlled tool"}</small>
                                 <strong>{toolCall.function.name}</strong>
                               </span>
                             </div>
@@ -3514,6 +3577,8 @@ function formatActionType(actionType: string): string {
 }
 
 export function approvalPreviewRows(approval: Approval): Array<[string, string]> {
+  const text = workspaceTextApproval(approval);
+  if (text) return [["Change", text.title], [text.text ? "Proposed text" : "Text to remove", text.text || text.oldText || ""]];
   const payload = approval.proposedPayload;
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
     return [

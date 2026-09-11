@@ -120,9 +120,9 @@ try {
     `);
     const result = await execute(executable, [bootstrap]);
     assert.equal(result.code, 0, result.stderr);
-    assert.deepEqual(JSON.parse(await readFile(redirected, "utf8")), { args: ["--data-path", selected, "--headless"] });
+    assert.deepEqual(JSON.parse(await readFile(redirected, "utf8")), { args: ["--data-path", selected, "--coworker-headless"] });
   }
-  app = await _electron.launch({ executablePath: executable, args: [...(packaged ? [] : [repo]), "--headless", "--data-path", root], cwd: repo, env });
+  app = await _electron.launch({ executablePath: executable, args: [...(packaged ? [] : [repo]), "--coworker-headless", "--data-path", root], cwd: repo, env });
   const appPath = await app.evaluate(({ app }) => app.getAppPath());
   configuration = { executable, appPath, packaged, entry: join(appPath, "out/main/cli/index.js"), appDataPath: root, defaultUserDataPath: root };
   const initial = await ready();
@@ -146,6 +146,23 @@ try {
   await checkHumanLogFollow();
 
   const coworkers = await cli(["coworkers", "list"]);
+  const emptyMemory = await cli(["memory", "show", coworkers[0].id]);
+  assert.equal(emptyMemory.content, "");
+  const memoryPath = join(root, "memory-input.md");
+  await writeFile(memoryPath, "- Prefer concise replies.\n- Reporting currency: SGD.\n");
+  const cliMemory = await cli(["memory", "set", coworkers[0].id, "--file", memoryPath]);
+  assert.match(await human(["memory", "show", coworkers[0].id]), /Reporting currency: SGD/);
+  assert.equal((await cli(["memory", "show", coworkers[1].id])).content, "");
+  await cli(["memory", "set", coworkers[0].id, "--file", memoryPath, "--revision", emptyMemory.revision], "", 1);
+  for (const content of ["", "x".repeat(8_000), cliMemory.content]) {
+    await writeFile(memoryPath, content);
+    await cli(["memory", "set", coworkers[0].id, "--file", memoryPath]);
+    const exported = await human(["memory", "show", coworkers[0].id]);
+    assert.equal(exported.length, content.length, "Memory stdout must preserve the file's exact length");
+    assert.equal(exported, content);
+    await writeFile(memoryPath, exported);
+    assert.equal((await cli(["memory", "set", coworkers[0].id, "--file", memoryPath])).content, content);
+  }
   const invalidLimit = await cliRaw(["activity", "list", "--limit", "0", "--json"]);
   assert.equal(invalidLimit.code, 2);
   assert.equal(JSON.parse(invalidLimit.stderr).error.code, "USAGE");
@@ -197,6 +214,14 @@ try {
   assert.equal(attached.mode, "desktop");
   const window = app.windows()[0];
   await window.waitForLoadState("domcontentloaded");
+  // The attached desktop renderer must match its display's pixel density.
+  // The Retina launch probe separately checks native versus Chromium headless displays.
+  const rendererScale = await window.evaluate(() => window.devicePixelRatio);
+  const desktopScale = await app.evaluate(({ BrowserWindow, screen }) => {
+    const active = BrowserWindow.getAllWindows()[0];
+    return screen.getDisplayMatching(active.getBounds()).scaleFactor * active.webContents.getZoomFactor();
+  });
+  assert.ok(Math.abs(rendererScale - desktopScale) < 0.01, `Renderer DPR ${rendererScale} does not match desktop ${desktopScale}`);
   // The renderer's trusted IPC sees the exact same persisted state and credential status.
   const rendererState = await window.evaluate(async ({ providerId, coworkerId }) => ({
     credential: await window.coworker.integrations.credentialStatus(`model:${providerId}`),
@@ -204,6 +229,10 @@ try {
   }), { providerId: endpoint.provider, coworkerId: coworkers[0].id });
   assert.equal(rendererState.credential.configured, true);
   assert.equal(rendererState.coworker.name, "CLI Smoke");
+  const desktopMemory = await window.evaluate(async (id) => window.coworker.memory.read(id), coworkers[0].id);
+  assert.equal(desktopMemory.content, cliMemory.content);
+  await window.evaluate(async ({ id, revision }) => window.coworker.memory.update(id, { content: "- Memory edited from desktop.\n", expectedRevision: revision }), { id: coworkers[0].id, revision: desktopMemory.revision });
+  assert.equal((await cli(["memory", "show", coworkers[0].id])).content, "- Memory edited from desktop.\n");
   // Configure through desktop IPC, then use that saved credential from the terminal.
   await window.evaluate(async (providerId) => window.coworker.integrations.configureModel({ provider: providerId, defaultModelName: "smoke-model" }), endpoint.provider);
   await cli(["models", "configure", endpoint.provider, "--model", "smoke-model"]);
@@ -221,6 +250,9 @@ try {
   assert.notEqual(restarted.pid, initial.pid);
   assert.equal(restarted.mode, "desktop");
   assert.equal((await cli(["coworkers", "show", coworkers[0].id])).name, "CLI Smoke");
+  assert.equal((await cli(["memory", "show", coworkers[0].id])).content, "- Memory edited from desktop.\n");
+  await cli(["memory", "clear", coworkers[0].id]);
+  assert.equal((await cli(["memory", "show", coworkers[0].id])).content, "");
   await cli(["models", "configure", endpoint.provider, "--model", "smoke-model"]);
   await cli(["stop"]);
   await cli(["status"], "", 3);

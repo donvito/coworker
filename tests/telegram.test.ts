@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { DesktopAppService } from "@main/app/app-service";
 import { CoworkerDatabase } from "@main/db/database";
 import { modelSupportsImageInput } from "@main/integrations/model-catalog";
-import { telegramCredentialKey } from "@main/integrations/telegram";
+import { parseTelegramConfig, telegramCredentialKey } from "@main/integrations/telegram";
 import type { DesktopEvent } from "@shared/contracts";
 
 const temporaryPaths: string[] = [];
@@ -59,6 +59,8 @@ interface FakeMessageInput {
   photo?: Array<{ file_id: string; file_size: number }>;
   document?: { file_id: string; file_name?: string; file_size?: number };
   forumTopicCreated?: { name: string };
+  replyToMessageId?: number;
+  fromId?: number;
 }
 
 /** In-memory Bot API double; the bridge talks to it through fetchImpl. */
@@ -173,7 +175,7 @@ function fakeTelegram(options: { threadsEnabled?: boolean } = {}) {
           message_id: (messageSeq += 1),
           message_thread_id: input.threadId,
           is_topic_message: input.threadId !== undefined ? true : undefined,
-          from: { id: input.chatId, is_bot: false, first_name: "Melvin" },
+          from: { id: input.fromId ?? input.chatId, is_bot: false, first_name: "Melvin" },
           chat: { id: input.chatId, type: input.chatType ?? "private" },
           date: Math.floor(Date.now() / 1000),
           text: input.text,
@@ -181,19 +183,21 @@ function fakeTelegram(options: { threadsEnabled?: boolean } = {}) {
           photo: input.photo,
           document: input.document,
           forum_topic_created: input.forumTopicCreated,
+          reply_to_message: input.replyToMessageId === undefined ? undefined : { message_id: input.replyToMessageId, chat: { id: input.chatId, type: "private" }, date: 0 },
         },
       });
       return updateId;
     },
-    pushCallback(input: { chatId: number; data: string; messageId?: number }): number {
+    pushCallback(input: { chatId: number; data: string; messageId?: number; threadId?: number; fromId?: number }): number {
       const updateId = (updateSeq += 1);
       updates.push({
         update_id: updateId,
         callback_query: {
           id: `cb-${updateId}`,
-          from: { id: input.chatId, is_bot: false, first_name: "Melvin" },
+          from: { id: input.fromId ?? input.chatId, is_bot: false, first_name: "Melvin" },
           message: {
             message_id: input.messageId ?? 1,
+            message_thread_id: input.threadId,
             chat: { id: input.chatId, type: "private" },
             date: Math.floor(Date.now() / 1000),
           },
@@ -265,7 +269,109 @@ async function connectAndPair(context: Awaited<ReturnType<typeof setup>>) {
   return status;
 }
 
+async function proposeMemory(context: Awaited<ReturnType<typeof setup>>, newText = "- Reporting currency: SGD.\n") {
+  const coworker = context.database.getCoworker(context.ava.id);
+  const enabled = context.database.updateCoworker(coworker.id, { enabledTools: [...new Set([...coworker.enabledTools, "files.edit"])] });
+  const before = await context.service.readMemory(coworker.id);
+  const task = context.database.createTask({ coworkerId: coworker.id, title: "Remember a preference", input: "Remember my currency", threadId: `coworker:${coworker.id}` });
+  const result = await context.service.tools.request({ task, coworker: enabled, toolName: "files.edit", toolCallId: `memory-${task.id}`, arguments: { path: "MEMORY.md", oldText: "", newText, expectedRevision: before.revision } });
+  if (result.kind !== "approval") throw new Error("Memory approval missing");
+  context.emit({ type: "entity.changed", entity: "approvals", id: result.approval.id });
+  return result.approval;
+}
+
 describe("telegram bridge", () => {
+  it("previews memory and requires a separate approval for every change", async () => {
+    const context = await setup();
+    await connectAndPair(context);
+    const approval = await proposeMemory(context);
+    await waitFor(() => context.fake.sent("sendMessage").some(body => String(body.text).includes("Reporting currency: SGD")), "the proposed memory preview");
+    const notice = context.fake.sent("sendMessage").find(body => String(body.text).includes("Reporting currency: SGD"))!;
+    expect(notice.text).toContain("Nothing is saved until you approve");
+    expect(JSON.stringify(notice.reply_markup)).toContain(`apr:${approval.id}:approve`);
+    expect(JSON.stringify(notice.reply_markup)).toContain(`apr:${approval.id}:edit`);
+    expect(JSON.stringify(notice.reply_markup)).not.toContain(":always");
+    expect((await context.service.readMemory(context.ava.id)).content).toBe("");
+    context.fake.pushCallback({ chatId: 777, data: `apr:${approval.id}:always` });
+    await waitFor(() => context.fake.sent("answerCallbackQuery").some(body => String(body.text).includes("requires approval every time")), "the permanent-approval refusal");
+    expect(context.database.getApproval(approval.id).status).toBe("PENDING");
+    context.fake.pushCallback({ chatId: 777, data: `apr:${approval.id}:approve` });
+    await waitFor(() => context.database.getApproval(approval.id).status === "APPROVED", "the memory approval");
+    await context.service.tools.executeApproval(context.database.getApproval(approval.id), context.database.getCoworker(context.ava.id));
+    expect((await context.service.readMemory(context.ava.id)).content).toBe("- Reporting currency: SGD.\n");
+    const second = await proposeMemory(context, "- Do not save this.\n");
+    context.fake.pushCallback({ chatId: 777, data: `apr:${second.id}:reject` });
+    await waitFor(() => context.database.getApproval(second.id).status === "REJECTED", "the rejected memory");
+    await context.service.tools.executeApproval(context.database.getApproval(second.id), context.database.getCoworker(context.ava.id));
+    expect((await context.service.readMemory(context.ava.id)).content).not.toContain("Do not save");
+  });
+
+  it("edits and approves a memory item by reply, including after a bridge restart", async () => {
+    const context = await setup();
+    await connectAndPair(context);
+    const initial = await context.service.readMemory(context.ava.id);
+    await context.service.updateMemory(context.ava.id, { content: "- Keep this existing fact.\n", expectedRevision: initial.revision });
+    const approval = await proposeMemory(context);
+    context.fake.pushCallback({ chatId: 777, data: `apr:${approval.id}:edit`, messageId: 20 });
+    const edits = () => parseTelegramConfig(context.database.getTelegramIntegration()!).approvalEdits;
+    await waitFor(() => Object.values(edits()).some(item => item.approvalId === approval.id), "the persisted edit request");
+    const promptId = Number(Object.keys(edits())[0]);
+    expect(context.fake.sent("sendMessage").some(body => (body.reply_markup as { force_reply?: boolean })?.force_reply === true)).toBe(true);
+    const inbound = vi.spyOn(context.service, "sendConversationMessage");
+    await context.service.telegram.stop();
+    await context.service.telegram.start();
+    context.fake.push({ chatId: 777, threadId: 999, replyToMessageId: promptId, text: "Wrong topic" });
+    await waitFor(() => context.fake.sent("sendMessage").some(body => String(body.text).includes("original chat and topic")), "the topic guard");
+    expect(context.database.getApproval(approval.id).status).toBe("PENDING");
+    context.fake.push({ chatId: 777, replyToMessageId: promptId, text: "- Reporting currency: EUR.\n" });
+    await waitFor(() => context.database.getApproval(approval.id).status === "EDITED", "the edited memory approval");
+    const edited = context.database.getApproval(approval.id);
+    expect(edited.decidedPayload).toEqual({ ...approval.proposedPayload as object, newText: "- Reporting currency: EUR.\n" });
+    await context.service.tools.executeApproval(edited, context.database.getCoworker(context.ava.id));
+    expect((await context.service.readMemory(context.ava.id)).content).toBe("- Keep this existing fact.\n- Reporting currency: EUR.\n");
+    expect(inbound).not.toHaveBeenCalled();
+    context.fake.push({ chatId: 777, replyToMessageId: promptId, text: "Duplicate decision" });
+    await waitFor(() => context.fake.sent("sendMessage").some(body => String(body.text).includes("already been decided")), "duplicate reply rejection");
+    expect(inbound).not.toHaveBeenCalled();
+  });
+
+  it("cancels an edit without approving and refuses stale or foreign memory decisions", async () => {
+    const context = await setup();
+    await connectAndPair(context);
+    const approval = await proposeMemory(context);
+    context.fake.pushCallback({ chatId: 777, fromId: 888, data: `apr:${approval.id}:approve` });
+    await waitFor(() => context.fake.sent("answerCallbackQuery").some(body => String(body.text).includes("isn't paired")), "the sender guard");
+    expect(context.database.getApproval(approval.id).status).toBe("PENDING");
+    context.fake.pushCallback({ chatId: 777, data: `apr:${approval.id}:edit`, messageId: 20 });
+    const edits = () => parseTelegramConfig(context.database.getTelegramIntegration()!).approvalEdits;
+    await waitFor(() => Object.keys(edits()).length === 1, "the edit request");
+    const promptId = Number(Object.keys(edits())[0]);
+    context.fake.push({ chatId: 777, replyToMessageId: promptId, text: "/cancel" });
+    await waitFor(() => Object.values(edits()).some(item => item.cancelled), "cancelled edit state");
+    expect(context.database.getApproval(approval.id).status).toBe("PENDING");
+    const current = await context.service.readMemory(context.ava.id);
+    await context.service.updateMemory(context.ava.id, { content: "A newer desktop edit", expectedRevision: current.revision });
+    context.fake.pushCallback({ chatId: 777, data: `apr:${approval.id}:approve` });
+    await waitFor(() => context.fake.sent("answerCallbackQuery").some(body => String(body.text).includes("changed since")), "the stale revision refusal");
+    expect(context.database.getApproval(approval.id).status).toBe("PENDING");
+    expect((await context.service.readMemory(context.ava.id)).content).toBe("A newer desktop edit");
+  });
+
+  it("sends the full long memory preview before exposing approval buttons", async () => {
+    const context = await setup();
+    await connectAndPair(context);
+    const start = context.fake.sent("sendMessage").length;
+    const text = "x".repeat(5_000) + "\nEND_OF_PROPOSAL";
+    const approval = await proposeMemory(context, text);
+    await waitFor(() => context.fake.sent("sendMessage").some(body => JSON.stringify(body.reply_markup ?? {}).includes(`apr:${approval.id}:approve`)), "the final approval buttons");
+    const notices = context.fake.sent("sendMessage").slice(start);
+    expect(notices.length).toBeGreaterThan(1);
+    expect(notices.every(body => String(body.text).length <= 4096)).toBe(true);
+    expect(notices.slice(0, -1).every(body => !body.reply_markup)).toBe(true);
+    expect(notices.map(body => body.text).join("\n")).toContain("END_OF_PROPOSAL");
+    expect(notices.map(body => String(body.text).match(/x/g)?.length ?? 0).reduce((a, b) => a + b, 0)).toBeGreaterThanOrEqual(5_000);
+  });
+
   it("connects, refuses wrong codes, and pairs the chat with the right code", async () => {
     const context = await setup();
     const status = await context.service.configureTelegram({
@@ -1284,7 +1390,7 @@ describe("telegram bridge", () => {
           .filter((body) => String(body.text).includes("needs your approval")).length >= 2,
       "the second approval notice",
     );
-    context.service.decideApproval({ approvalId: second.id, decision: "reject" });
+    await context.service.decideApproval({ approvalId: second.id, decision: "reject" });
     await waitFor(
       () =>
         context.fake

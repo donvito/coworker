@@ -83,6 +83,9 @@ import { TelegramBridgeService } from "@main/integrations/telegram-bridge";
 import { DISCUSSION_PASS_MARKER, isDiscussionPass } from "@shared/discussion";
 import { defaultEnabledBundledSkillNames } from "@shared/skill-capabilities";
 import { BrowserAutomationService } from "@main/integrations/browser-automation";
+import { memoryFile, type UpdateMemoryInput } from "@shared/workspace-context";
+import { updateMemorySchema } from "@shared/validation";
+import { readWorkspaceText, writeWorkspaceText } from "@main/tools/workspace-text";
 
 export interface DesktopAppServiceOptions {
   dataPath: string;
@@ -208,6 +211,13 @@ export class DesktopAppService {
     await this.seedCoworkers();
     await this.seedLegacyModelEndpoint();
     this.enableBundledSkills();
+    if (this.database.getMetadata("coworker-memory-skill-v1") !== "true") {
+      const skill = this.database.getSkillByName("coworker-memory");
+      if (skill) for (const coworker of this.database.listCoworkers()) {
+        this.database.setCoworkerSkills(coworker.id, [...new Set([...coworker.enabledSkillIds, skill.id])]);
+      }
+      this.database.setMetadata("coworker-memory-skill-v1", "true");
+    }
     if (this.database.getMetadata("coworker-administration-skill-v1") !== "true") {
       const skill = this.database.getSkillByName("coworker-administration");
       if (skill) for (const coworker of this.database.listCoworkers()) {
@@ -230,6 +240,7 @@ export class DesktopAppService {
   }
 
   async shutdown(): Promise<void> {
+    this.runtime.pauseDispatch();
     this.scheduler.stop();
     await this.telegram.stop();
     await this.runtime.stopAll();
@@ -298,7 +309,7 @@ export class DesktopAppService {
     const provisionalPath = join(
       this.options.dataPath,
       "workspaces",
-      `${safeDirectoryName(input.name)}-${Date.now().toString(36)}`,
+      `${safeDirectoryName(input.name)}-${randomUUID()}`,
     );
     await mkdir(provisionalPath, { recursive: true });
     const coworker = this.database.createCoworker(
@@ -335,6 +346,27 @@ export class DesktopAppService {
     this.emit({ type: "entity.changed", entity: "coworkers", id });
     this.emit({ type: "entity.changed", entity: "activity" });
     return coworker;
+  }
+
+  async readMemory(id: string) {
+    const coworker = this.database.getCoworker(id);
+    return readWorkspaceText(coworker.workspacePath, memoryFile.path);
+  }
+
+  async updateMemory(id: string, input: UpdateMemoryInput) {
+    const parsed = updateMemorySchema.parse(input);
+    const coworker = this.database.getCoworker(id);
+    const { path, content, revision } = await writeWorkspaceText(
+      coworker.workspacePath, memoryFile.path, parsed.content, parsed.expectedRevision,
+    );
+    this.database.addActivity({
+      coworkerId: id,
+      type: "memory.updated",
+      summary: `Updated ${coworker.name}’s memory`,
+      metadata: { characters: content.length },
+    });
+    this.emit({ type: "entity.changed", entity: "activity" });
+    return { path, content, revision };
   }
 
   async removeCoworker(id: string): Promise<void> {
@@ -955,13 +987,19 @@ export class DesktopAppService {
     this.emit({ type: "entity.changed", entity: "activity" });
   }
 
-  decideApproval(input: ApprovalDecisionInput): Approval {
+  async decideApproval(input: ApprovalDecisionInput): Promise<Approval> {
     const pending = this.database.getApproval(input.approvalId);
+    if (pending.status !== "PENDING") throw new Error("This approval has already been decided");
+    const needsValidation = input.decision === "edit" ||
+      (input.decision === "approve" && ["files.write", "files.edit"].includes(pending.actionType));
+    const payload = needsValidation ? await this.tools.validateApprovalPayload(
+      pending, input.decision === "edit" ? input.payload : pending.proposedPayload,
+    ) : undefined;
     const decision =
       input.decision === "edit"
         ? {
             ...input,
-            payload: this.tools.validateArguments(pending.actionType, input.payload),
+            payload,
           }
         : input;
     const approval = this.database.decideApproval(decision);
@@ -1132,6 +1170,7 @@ export class DesktopAppService {
       lastThreads: sameBot && sameCoworker ? previous?.lastThreads ?? {} : {},
       lastUpdateId: sameBot ? previous?.lastUpdateId ?? null : null,
       threadsEnabled: me.has_topics_enabled === true,
+      approvalEdits: sameBot && sameCoworker ? previous?.approvalEdits ?? {} : {},
     };
     const integration = this.database.upsertTelegramIntegration({
       name: `@${me.username}`,

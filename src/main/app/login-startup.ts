@@ -3,6 +3,7 @@ import { lstatSync, readFileSync } from "node:fs";
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute } from "node:path";
 import { z } from "zod";
+import { backgroundLaunchSwitch } from "@shared/launch-options";
 import type { StartupMode, StartupStatus } from "@shared/startup";
 
 const absolutePath = z.string().min(1).max(4096).refine((path) => isAbsolute(path) && !path.includes("\0"), "Expected an absolute path");
@@ -68,7 +69,7 @@ export class LoginStartup {
   }
 
   private arguments(configuration: StartupConfiguration): string[] {
-    return ["--data-path", configuration.dataPath, ...(configuration.mode === "headless" ? ["--headless"] : [])];
+    return ["--data-path", configuration.dataPath, ...(configuration.mode === "headless" ? [backgroundLaunchSwitch] : [])];
   }
 
   status(): StartupStatus {

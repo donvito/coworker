@@ -2,6 +2,44 @@
 
 Coworker includes a CLI for headless operation and administration. It uses the Electron runtime bundled with the desktop app; no separate Node installation is needed for an installed app. Headless mode creates no window or tray, but still runs workers, schedules, and configured Telegram connections. This release requires a desktop environment and access to the user's OS credential storage; it is not a display-free Linux server distribution.
 
+## Coworker memory
+
+Each coworker keeps one `MEMORY.md` in its own workspace, shared across its conversations. Memory is loaded at the start of each turn, including scheduled work. Find the coworker's ID, then read, replace, or clear its memory:
+
+```sh
+coworker coworkers list
+coworker memory show COWORKER_ID
+coworker memory show COWORKER_ID > notes.md
+# Edit notes.md before replacing the saved memory.
+coworker memory set COWORKER_ID --file notes.md
+coworker memory clear COWORKER_ID
+```
+
+These commands take a coworker ID, not its display name. The app must be running in the selected profile; use `coworker start` if needed and the same global `--data-path` option as the desktop when using a custom profile. Direct memory commands do not require a model or API key.
+
+`show` prints the exact saved text without adding a newline, so it can be redirected to a UTF-8 file and imported again. `set` replaces the whole file; preserve existing entries in the file you submit. Memory is limited to 8,000 characters. `clear` saves empty memory, while previous chats, tool history, and existing backups remain.
+
+For edits that must detect changes since you began editing, obtain both `content` and `revision` from `memory show COWORKER_ID --json`. Edit that content in a local file and supply the same revision:
+
+```sh
+coworker memory show COWORKER_ID --json
+coworker memory set COWORKER_ID --file notes.md --revision REVISION
+# The same check is available when clearing memory.
+coworker memory clear COWORKER_ID --revision REVISION
+```
+
+Replace `REVISION` with the value returned by `show --json`. A conflicting write fails; keep your draft, fetch the latest content and revision, then merge and retry. Without `--revision`, the CLI reads the current revision immediately before writing. This catches a competing app write during the command, but does not detect changes made while you were editing the local file. Revision checks coordinate app writers; direct edits in an external editor do not participate in the app's write lock.
+
+With a configured model and the memory skill enabled, you can also ask in chat:
+
+```sh
+coworker chat Ava "Remember that I prefer invoice totals in SGD."
+```
+
+Chat-based memory changes pause for approval, including an explicit remember request. Review the proposed item in the desktop chat or paired Telegram conversation, or use the CLI's `approvals` commands. Direct `memory set` and `memory clear` commands are user-operated edits and save without an extra approval.
+
+The same saved memory is editable in coworker settings under **Saved memory (Markdown)**. See the [memory guide](memory.md) for inline editing, Telegram approval, desktop steps, skill enablement, limits, and data handling.
+
 ## Install the command
 
 After installing the desktop app, run its executable with `--install-cli`. Installation is explicit and never replaces an existing `coworker` command.
@@ -127,6 +165,8 @@ Create a coworker with `coworker coworkers create --file coworker.json`:
 }
 ```
 
+The example explicitly disables all skills with `enabledSkillIds: []`. Omit that field to enable the default skills, including `coworker-memory`.
+
 `coworkers update ID --file patch.json` accepts the same patch fields as desktop settings, including `enabledSkillIds`, `policies`, and `sharedFolderPaths`. Explicit flags override file fields. Inspect the current object before replacing list fields. `coworkers remove ID` uses the desktop's removal behavior.
 
 ## Telegram
@@ -195,7 +235,7 @@ Log sources are `all`, `app`, and `provider`. Output is chronological and defaul
 
 `--json` emits one JSON value for normal commands and one JSON object per record for `logs follow`. Errors go to stderr. Do not automatically retry timed-out mutations: they may already have succeeded; inspect the resulting state first.
 
-Without `--json`, commands print concise summaries and tables intended for people. For example, `coworker status` prints the running mode, PID, profile, and service state; list commands print aligned columns; and log commands print one readable line per record. Use `--json` when another program will consume the output.
+Without `--json`, commands print concise summaries and tables intended for people. For example, `coworker status` prints the running mode, PID, profile, and service state; list commands print aligned columns; and log commands print one readable line per record. Use `--json` when another program will consume structured output. `memory show` is an exception: its normal output is the exact Markdown, suitable for file export.
 
 `models providers` includes built-in provider IDs and credential states, plus custom endpoint IDs, names, and base URLs. Creating an endpoint prints its provider ID for subsequent commands. `models default` shows the selected provider/model, or explicitly reports that they are not set.
 
@@ -214,7 +254,7 @@ The local control interface is versioned and authenticated. Unix sockets and des
 
 ## Verification
 
-`pnpm test` includes CLI parsing, service operations, transport authentication/isolation, log handling, and profile tests. `pnpm test:cli:smoke` runs a real Electron test with a temporary profile and a localhost fake provider: headless startup, concurrent starts, desktop attachment, credential sharing, restart, foreground signals, launcher installation, and offline diagnostics.
+`pnpm test` includes CLI parsing, service operations, transport authentication/isolation, log handling, profile tests, and memory editing. `pnpm test:cli:smoke` runs a real Electron test with a temporary profile and a localhost fake provider: headless startup, concurrent starts, desktop attachment, credential sharing, restart, foreground signals, launcher installation, and offline diagnostics. Memory checks cover read/replace/clear, coworker isolation, stale revisions, desktop/CLI shared state, exact text export/import including the size limit, and persistence after restart.
 
 To test an unpacked desktop distribution on each supported OS:
 

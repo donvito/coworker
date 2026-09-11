@@ -8,6 +8,7 @@ import {
   type Page,
 } from "playwright";
 import { resolveWorkspacePath } from "@main/tools/workspace-path";
+import { resolveWorkspaceOutputPath } from "@main/tools/workspace-text";
 
 export type BrowserLocatorInput =
   | { by: "role"; role: string; name?: string; exact?: boolean }
@@ -259,9 +260,7 @@ export class BrowserAutomationService {
           ]);
           const name = `${Date.now().toString(36)}-${safeDownloadName(download.suggestedFilename())}`;
           const relativePath = `downloads/${name}`;
-          const destination = await resolveWorkspacePath(input.workspacePath, relativePath, {
-            createParent: true,
-          });
+          const destination = await resolveWorkspaceOutputPath(input.workspacePath, relativePath);
           await download.saveAs(destination);
           const size = (await stat(destination)).size;
           if (size > maximumDownloadBytes) {

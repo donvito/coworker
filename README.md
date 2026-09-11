@@ -20,10 +20,11 @@ Coworker is a local-first desktop app for independent AI coworkers. There is **n
 ## Why Coworker
 
 - **No subscription** — free to download and use. Pay a model provider only if you choose one.
-- **Runs on your computer** — macOS, Windows, and Linux. Conversations, files, and app data stay on the machine.
+- **Runs on your computer** — macOS, Windows, and Linux. Conversations, files, and app data are stored locally.
 - **Local models** — point it at [Ollama](https://ollama.com) or [LM Studio](https://lmstudio.ai) and inference never leaves your machine.
 - **Bring your own keys** — Anthropic, OpenAI, Google, OpenRouter, or any OpenAI-compatible endpoint. Credentials stay in OS-backed storage.
 - **Skills** — coworkers learn new capabilities from Agent Skills. Upload a `SKILL.md`, add an HTTPS URL, or paste a skill link into chat.
+- **Memory** — coworkers can propose useful facts and preferences to remember across conversations. Approve, edit, or reject each proposal in chat or Telegram; manage saved Markdown in the desktop app or CLI.
 - **Scheduler** — persistent cron and one-time jobs, in plain language, with crash recovery.
 - **Approvals** — consequential actions pause until you approve or reject them, in the app or from Telegram.
 - **Telegram** — pair a private chat and message a coworker from your phone. Replies, files, and approval buttons stay in sync with the desktop.
@@ -63,10 +64,28 @@ coworker startup enable --headless
 
 See the [terminal and headless guide](docs/cli.md) for CLI installation, commands, login startup, and testing.
 
+## Memory
+
+Tell a coworker, “Remember that I prefer invoice totals in SGD.” Its saved facts live in a separate `MEMORY.md` in its workspace and load on every new turn, across conversations and scheduled work. You can ask it to correct or forget an entry, too.
+
+The memory skill also lets the model suggest durable preferences you share naturally. Every proposed change requires your approval. The chat card shows the item with **Approve**, **Edit**, and **Reject** controls. Telegram shows the same text and supports approval buttons or editing by reply. Nothing is saved while a proposal is pending.
+
+To edit saved memory directly, right-click the coworker in the chat sidebar, open its settings, edit **Saved memory (Markdown)**, and click **Save memory**. These user-operated edits save directly, as do the terminal commands:
+
+```sh
+coworker coworkers list
+coworker memory show COWORKER_ID
+coworker memory set COWORKER_ID --file notes.md
+coworker memory clear COWORKER_ID
+```
+
+Memory is limited to 8,000 characters per coworker. `set` replaces the whole file. Saved memory is included in context sent to your selected model, including a cloud provider if you use one. See the [memory guide](docs/memory.md) for editing, revision checks, and data handling.
+
 ## Docs
 
 - [Screenshots](docs/screenshots.md)
 - [Features](docs/features.md)
+- [Memory](docs/memory.md)
 - [Terminal and headless mode](docs/cli.md)
 - [Development](docs/development.md)
 - [Data and security](docs/security.md)

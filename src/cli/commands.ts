@@ -4,11 +4,13 @@ import { parseArgs } from "node:util";
 import { ipcChannels as ipc } from "@shared/ipc";
 import { listLimitSchema } from "@shared/validation";
 import type { LogQuery } from "@main/control/logs";
+import { memoryFile } from "@shared/workspace-context";
+import { updateMemorySchema } from "@shared/validation";
 
 const booleanOptions = ["json", "help", "headless", "ui", "overwrite", "key-stdin", "prompt-key", "token-stdin", "prompt-token"];
 const stringOptions = ["data-path", "file", "base-url", "model", "endpoint-name", "name", "coworker",
   "provider", "role", "description", "system-prompt", "status", "cron", "run-at", "timezone", "title", "input",
-  "output", "source", "level", "since", "until", "limit", "conversation", "timeout"];
+  "output", "source", "level", "since", "until", "limit", "conversation", "timeout", "revision"];
 type Values = Record<string, string | boolean | undefined>;
 export interface CliCommand { name: string; args: string[]; values: Values }
 const definitions: Record<string, { args: [number, number]; flags: string[]; usage: string }> = {
@@ -39,6 +41,9 @@ const definitions: Record<string, { args: [number, number]; flags: string[]; usa
   "coworkers create": { args: [0, 0], flags: ["file", "name", "role", "description", "system-prompt", "provider", "model"], usage: "coworkers create --file coworker.json [field flags]" },
   "coworkers update": { args: [1, 1], flags: ["file", "name", "role", "description", "system-prompt", "provider", "model", "status"], usage: "coworkers update ID [--file patch.json] [--provider PROVIDER --model MODEL] [--status active|paused]" },
   "coworkers remove": { args: [1, 1], flags: [], usage: "coworkers remove ID" },
+  "memory show": { args: [1, 1], flags: [], usage: "memory show COWORKER_ID [--json]" },
+  "memory set": { args: [1, 1], flags: ["file", "revision"], usage: "memory set COWORKER_ID --file notes.md [--revision REVISION]" },
+  "memory clear": { args: [1, 1], flags: ["revision"], usage: "memory clear COWORKER_ID [--revision REVISION]" },
   "skills list": { args: [0, 0], flags: [], usage: "skills list" },
   "skills show": { args: [1, 1], flags: [], usage: "skills show ID" },
   "skills install": { args: [1, 1], flags: ["coworker"], usage: "skills install SOURCE [--coworker ID] (HTTPS, SKILL.md, .skill or .zip)" },
@@ -97,6 +102,8 @@ export function parseCommand(argv: string[]): CliCommand {
   if (values.cron && values["run-at"]) throw new Error("Choose --cron or --run-at");
   if (values.ui && values.headless) throw new Error("Choose --ui or --headless");
   if (commandName === "run" && !values.headless) throw new Error("Usage: coworker run --headless");
+  if (commandName === "memory set" && !values.file) throw new Error("--file notes.md is required");
+  if (values.revision !== undefined && !/^[a-f0-9]{64}$/.test(String(values.revision))) throw new Error("--revision must be the revision from memory show --json");
   if (commandName === "activity list" && values.limit !== undefined && !listLimitSchema.safeParse(Number(values.limit)).success) {
     throw new Error("--limit must be an integer from 1 to 1000");
   }
@@ -133,7 +140,7 @@ async function inputObject(command: CliCommand): Promise<Record<string, unknown>
   return result;
 }
 
-export async function remoteCommand(command: CliCommand, apiKey?: string): Promise<{ method: string; args: unknown[] }> {
+export async function remoteCommand(command: CliCommand, apiKey?: string, currentRevision?: string): Promise<{ method: string; args: unknown[] }> {
   const { name, args, values } = command;
   const request = (method: string, ...parameters: unknown[]) => ({ method, args: parameters });
   const simple: Record<string, string> = {
@@ -142,11 +149,23 @@ export async function remoteCommand(command: CliCommand, apiKey?: string): Promi
     "startup status": "startup.status", "startup disable": "startup.disable",
     "models endpoints remove": ipc.integrationsRemoveModelEndpoint,
     "coworkers list": ipc.coworkersList, "coworkers show": "coworkers.show", "coworkers remove": ipc.coworkersRemove,
+    "memory show": ipc.memoryRead,
     "skills list": ipc.skillsList, "skills show": "skills.show", "skills remove": ipc.skillsRemove,
     "schedules list": ipc.schedulesList, "schedules show": "schedules.show", "schedules remove": ipc.schedulesRemove,
     "schedules run": ipc.schedulesRunNow, "approvals show": "approvals.show",
   };
   if (simple[name]) return request(simple[name], ...args);
+  if (name === "memory set" || name === "memory clear") {
+    let content = "";
+    if (name === "memory set") {
+      const path = String(values.file);
+      const info = await stat(path);
+      if (!info.isFile() || info.size > memoryFile.maxCharacters * 4) throw new Error(`Memory must be a UTF-8 file of at most ${memoryFile.maxCharacters} characters`);
+      content = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(await readFile(path));
+    }
+    const input = updateMemorySchema.parse({ content, expectedRevision: values.revision ?? currentRevision });
+    return request(ipc.memoryUpdate, args[0], input);
+  }
   if (name === "startup enable") return request("startup.enable", { mode: values.ui ? "desktop" : "headless" });
   if (name === "activity list") return values.limit === undefined
     ? request("activity.list") : request("activity.list", Number(values.limit));

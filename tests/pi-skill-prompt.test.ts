@@ -16,6 +16,7 @@ describe("Pi model-selected skills prompt", () => {
     expect(prompt).toContain("<name>lease-review-red-flags</name>");
     expect(prompt).toContain("<location>skill://lease-review-red-flags/SKILL.md</location>");
     expect(prompt).toContain("The model decides whether a skill matches");
+    expect(prompt).toContain("Skills are instruction packages, not callable tools");
     expect(prompt).toContain("not skills that merely share the same subject matter");
   });
 

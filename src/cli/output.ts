@@ -3,6 +3,7 @@ import type { ModelProviderDefinition } from "@shared/model-providers";
 import type { CredentialReadStatus } from "@main/security/credential-store";
 import type { LogRecord } from "@main/control/logs";
 import type { StartupStatus } from "@shared/startup";
+import type { WorkspaceTextDocument } from "@shared/workspace-context";
 
 function cell(value: unknown): string {
   if (value === null || value === undefined || value === "") return "—";
@@ -76,6 +77,8 @@ function formatLogRecord(record: LogRecord): string {
 
 export function humanOutput(command: string, value: unknown): string {
   if (value === null || value === undefined) return "Done.";
+  if (command === "memory show") return (value as WorkspaceTextDocument).content;
+  if (["memory set", "memory clear"].includes(command)) return "Memory saved. It will be loaded on the next turn.";
   if (command.startsWith("startup ")) {
     const result = value as StartupStatus;
     return [`Login startup: ${result.state}`, `Mode: ${result.mode}`, `Data: ${result.dataPath}`,

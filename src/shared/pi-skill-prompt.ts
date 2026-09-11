@@ -19,6 +19,6 @@ export function formatModelSelectableSkills(skills: ModelSelectableSkill[]): str
   if (!nativePrompt) return "";
   return [
     nativePrompt,
-    "In this app, load a skill:// location by calling skills.read with the skill name; do not use files.read for skill locations. The model decides whether a skill matches the current request from its description. Load only skills needed for the requested action, not skills that merely share the same subject matter. Use the optional path argument only for a packaged resource referenced by the loaded SKILL.md. Never claim to have used a skill unless skills.read succeeded during this request.",
+    "In this app, load a skill:// location by calling skills.read with the skill name; do not use files.read for skill locations. Skills are instruction packages, not callable tools: never call a skill name as a tool. Use only the registered tool names and their declared argument schemas. The model decides whether a skill matches the current request from its description. Read a matching skill before acting, even for a simple request; a low-level tool does not replace the skill's instructions. Load only skills needed for the requested action, not skills that merely share the same subject matter. Use the optional path argument only for a packaged resource referenced by the loaded SKILL.md. Never claim to have used a skill unless skills.read succeeded during this request.",
   ].join("\n\n");
 }

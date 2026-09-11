@@ -8,6 +8,8 @@ export interface ToolCatalogEntry {
   defaultPolicy: ToolPolicy;
   /** Volatile tools must execute every call and store only their audit-safe result. */
   volatile?: boolean;
+  /** Distinct calls may repeat arguments, but replaying a completed call must not repeat its side effect. */
+  idempotency?: "call";
 }
 
 export const toolCatalog = [
@@ -75,6 +77,7 @@ export const toolCatalog = [
     description: "Read a UTF-8 text file inside this coworker's approved workspace.",
     risk: "low",
     defaultPolicy: "automatic",
+    volatile: true,
   },
   {
     name: "files.write",
@@ -82,6 +85,15 @@ export const toolCatalog = [
     description: "Create or replace a UTF-8 file inside this coworker's approved workspace.",
     risk: "medium",
     defaultPolicy: "automatic",
+    idempotency: "call",
+  },
+  {
+    name: "files.edit",
+    label: "Edit workspace text",
+    description: "Replace one exact, unique text match in a UTF-8 workspace file, or append when oldText is empty. Read first and supply its revision. Managed context changes require user approval.",
+    risk: "medium",
+    defaultPolicy: "automatic",
+    idempotency: "call",
   },
   {
     name: "folders.list",

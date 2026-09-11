@@ -25,6 +25,8 @@ import { createEmailDraft, sendEmail, type EmailPayload } from "@main/integratio
 import { sendCoworkerTelegramMessage } from "@main/integrations/telegram-send";
 import { resolveSharedFolderPath } from "./shared-folders";
 import { resolveWorkspacePath } from "./workspace-path";
+import { editWorkspaceText, prepareWorkspaceTextMutation, readWorkspaceText, resolveWorkspaceOutputPath, writeWorkspaceText } from "./workspace-text";
+import { validateWorkspaceTextApprovalEdit, workspaceTextApproval } from "@shared/workspace-text-approval";
 import { searchWeb } from "@main/integrations/web-search";
 import { skillEnablesTool } from "@shared/skill-capabilities";
 import {
@@ -117,6 +119,13 @@ const schemas = {
   "files.write": z.object({
     path: z.string().min(1).max(2_000),
     content: z.string().max(5_000_000),
+    expectedRevision: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  }),
+  "files.edit": z.object({
+    path: z.string().min(1).max(2_000),
+    oldText: z.string().max(5_000_000),
+    newText: z.string().max(5_000_000),
+    expectedRevision: z.string().regex(/^[a-f0-9]{64}$/),
   }),
   "folders.list": z.object({
     folder: z.string().trim().min(1).max(200).optional(),
@@ -149,7 +158,12 @@ const schemas = {
       name: z.string().trim().min(1).max(240).optional(),
       content: z.string().max(5_000_000).optional(),
       formats: z
-        .array(z.enum(["pdf", "docx", "xlsx", "csv", "pptx"]))
+        .array(
+          z
+            .string()
+            .toLowerCase()
+            .pipe(z.enum(["pdf", "docx", "xlsx", "csv", "pptx"])),
+        )
         .min(1)
         .max(5)
         .refine((formats) => new Set(formats).size === formats.length, "Formats must be unique"),
@@ -242,6 +256,8 @@ function policyFor(coworker: Coworker, toolName: string): ToolPolicy {
 }
 
 function approvalSummary(toolName: string, args: unknown): string {
+  const textProposal = workspaceTextApproval({ actionType: toolName, proposedPayload: args });
+  if (textProposal) return textProposal.title;
   if (toolName === "browser.start_session") {
     const parsed = schemas["browser.start_session"].safeParse(args);
     if (parsed.success) {
@@ -326,6 +342,16 @@ export class ToolGateway {
     return schema.parse(argumentsValue);
   }
 
+  async validateApprovalPayload(approval: Approval, payload: unknown): Promise<unknown> {
+    const args = this.validateArguments(approval.actionType, payload);
+    validateWorkspaceTextApprovalEdit(approval, args);
+    if (approval.actionType === "files.write" || approval.actionType === "files.edit") {
+      const mutation = approval.actionType === "files.write" ? schemas["files.write"].parse(args) : schemas["files.edit"].parse(args);
+      await prepareWorkspaceTextMutation(this.database.getCoworker(approval.coworkerId).workspacePath, mutation);
+    }
+    return args;
+  }
+
   async request(input: {
     task: Task;
     coworker: Coworker;
@@ -338,10 +364,12 @@ export class ToolGateway {
       .update(`${input.toolName}\0${stableJson(input.arguments)}`)
       .digest("hex")
       .slice(0, 24);
-    const idempotencyKey = `${input.task.id}:${operationHash}`;
     const storedToolCallId = createHash("sha256")
       .update(`${input.task.id}\0${input.toolCallId}`)
       .digest("hex");
+    const idempotencyKey = metadata?.volatile || metadata?.idempotency === "call"
+      ? `${input.task.id}:${operationHash}:${storedToolCallId}`
+      : `${input.task.id}:${operationHash}`;
     const toolCall = this.database.createToolCall({
       id: storedToolCallId,
       taskId: input.task.id,
@@ -387,7 +415,7 @@ export class ToolGateway {
         reason,
       };
     }
-    const validatedArguments = parsed.data;
+    let validatedArguments = parsed.data;
 
     const policy = policyFor(input.coworker, input.toolName);
     if (policy === "denied") {
@@ -398,7 +426,25 @@ export class ToolGateway {
         reason,
       };
     }
-    if (policy === "approval") {
+    // Replaying a completed call returns its existing result even if a later
+    // user edit has made that call's original revision stale.
+    if (!metadata.volatile && this.database.getSideEffect(toolCall.idempotencyKey)?.status === "COMPLETED") {
+      const result = await this.execute(toolCall, input.coworker, validatedArguments);
+      return { kind: "completed", toolCall: this.database.getToolCall(toolCall.id), result };
+    }
+    let requiresContextApproval = false;
+    if (input.toolName === "files.write" || input.toolName === "files.edit") {
+      try {
+        const mutation = input.toolName === "files.write" ? schemas["files.write"].parse(validatedArguments) : schemas["files.edit"].parse(validatedArguments);
+        const prepared = await prepareWorkspaceTextMutation(input.coworker.workspacePath, mutation);
+        validatedArguments = { ...mutation, path: prepared.path };
+        requiresContextApproval = prepared.requiresApproval;
+      } catch (error) {
+        this.database.updateToolCall(toolCall.id, "FAILED", { error: error instanceof Error ? error.message : String(error) });
+        throw error;
+      }
+    }
+    if (policy === "approval" || requiresContextApproval) {
       const approval = this.database.createApproval({
         taskId: input.task.id,
         coworkerId: input.coworker.id,
@@ -434,11 +480,13 @@ export class ToolGateway {
       approval.status === "EDITED" && approval.decidedPayload !== null
         ? approval.decidedPayload
         : approval.proposedPayload;
-    const result = await this.execute(toolCall, coworker, args);
+    validateWorkspaceTextApprovalEdit(approval, args);
+    const proposal = workspaceTextApproval(approval);
+    const result = await this.execute(toolCall, coworker, args, proposal?.requiresApproval ? proposal.path : null);
     return { approved: true, result };
   }
 
-  private async execute(toolCall: ToolCall, coworker: Coworker, args: unknown): Promise<unknown> {
+  private async execute(toolCall: ToolCall, coworker: Coworker, args: unknown, approvedContextPath: string | null = null): Promise<unknown> {
     const metadata = getToolCatalogEntry(toolCall.toolName);
     const volatile = metadata?.volatile === true;
     const cached = volatile ? null : this.database.getSideEffect(toolCall.idempotencyKey);
@@ -450,7 +498,7 @@ export class ToolGateway {
     this.database.updateToolCall(toolCall.id, "RUNNING");
     if (!volatile) this.database.startSideEffect(toolCall.idempotencyKey, toolCall.id);
     try {
-      const result = await this.executeUnchecked(toolCall, coworker, args);
+      const result = await this.executeUnchecked(toolCall, coworker, args, approvedContextPath);
       const auditResult = isBrowserRichToolResult(result) ? result.audit : result;
       if (!volatile) {
         this.database.finishSideEffect(toolCall.idempotencyKey, "COMPLETED", auditResult);
@@ -478,6 +526,7 @@ export class ToolGateway {
     toolCall: ToolCall,
     coworker: Coworker,
     rawArgs: unknown,
+    approvedContextPath: string | null,
   ): Promise<unknown> {
     switch (toolCall.toolName) {
       case "skills.read": {
@@ -599,23 +648,36 @@ export class ToolGateway {
       }
       case "files.read": {
         const args = schemas["files.read"].parse(rawArgs);
-        const path = await resolveWorkspacePath(coworker.workspacePath, args.path);
-        return { path: args.path, content: await readFile(path, "utf8") };
+        return readWorkspaceText(coworker.workspacePath, args.path);
       }
       case "files.write": {
         const args = schemas["files.write"].parse(rawArgs);
-        const path = await resolveWorkspacePath(coworker.workspacePath, args.path, {
-          createParent: true,
-        });
-        await writeFile(path, args.content, { encoding: "utf8", mode: 0o600 });
+        const saved = await writeWorkspaceText(coworker.workspacePath, args.path, args.content, args.expectedRevision, { approvedContextPath });
+        const result = { path: args.path, bytes: Buffer.byteLength(args.content), revision: saved.revision };
+        if (saved.managed) return result;
         const artifact = this.database.createArtifact({
           taskId: toolCall.taskId,
           coworkerId: coworker.id,
           name: args.path.split("/").at(-1) ?? args.path,
           mimeType: "text/plain",
-          filePath: path,
+          filePath: saved.filePath,
         });
-        return { path: args.path, bytes: Buffer.byteLength(args.content), artifactId: artifact.id };
+        return { ...result, artifactId: artifact.id };
+      }
+      case "files.edit": {
+        const args = schemas["files.edit"].parse(rawArgs);
+        const saved = await editWorkspaceText(coworker.workspacePath, args, { approvedContextPath });
+        // Return the applied item so approval-resumed models see user edits.
+        const result = { path: args.path, bytes: Buffer.byteLength(saved.content), revision: saved.revision, appliedText: args.newText };
+        if (saved.managed) return result;
+        const artifact = this.database.createArtifact({
+          taskId: toolCall.taskId,
+          coworkerId: coworker.id,
+          name: args.path.split("/").at(-1) ?? args.path,
+          mimeType: "text/plain",
+          filePath: saved.filePath,
+        });
+        return { ...result, artifactId: artifact.id };
       }
       case "folders.list": {
         const args = schemas["folders.list"].parse(rawArgs);
@@ -705,9 +767,7 @@ export class ToolGateway {
           .join("\n");
         const extension = args.format === "markdown" ? "md" : args.format;
         const relativePath = `invoices/${invoiceNumber}.${extension}`;
-        const path = await resolveWorkspacePath(coworker.workspacePath, relativePath, {
-          createParent: true,
-        });
+        const path = await resolveWorkspaceOutputPath(coworker.workspacePath, relativePath);
         if (args.format === "pdf" || args.format === "docx") {
           const bytes = await createDocument(args.format, markdown, invoiceNumber);
           await writeFile(path, bytes, { mode: 0o600 });
@@ -790,10 +850,9 @@ export class ToolGateway {
             parsedSource.dir,
             `${parsedSource.name}.${format}`,
           );
-          const absolutePath = await resolveWorkspacePath(
+          const absolutePath = await resolveWorkspaceOutputPath(
             coworker.workspacePath,
             relativePath,
-            { createParent: true },
           );
           const bytes = await createDocument(
             format as DocumentFormat,

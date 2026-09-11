@@ -4,7 +4,7 @@ Coworker is a local-first Electron app for independent AI coworkers. Each cowork
 
 ## Coworkers and chat
 
-- Multiple coworkers, each with its own role, system prompt, tool set, and workspace
+- Multiple coworkers, each with its own role, system prompt, tool set, workspace, and saved memory
 - Direct conversations with one coworker
 - Multiple named conversations persisted across restarts
 - Search conversation titles and message contents, with messages grouped and timestamped by day
@@ -12,6 +12,20 @@ Coworker is a local-first Electron app for independent AI coworkers. Each cowork
 - Streaming, Markdown-rendered replies with typed tool call rendering
 - Image attachments via picker or drag-and-drop, sent to vision-capable models
 - Searchable live model catalogs with OpenRouter pricing and quick per-coworker model switching
+
+## Memory
+
+- One local `MEMORY.md` per coworker, shared across its conversations and retained across restarts
+- Ask a coworker to remember, show, correct, or forget saved facts and preferences through the bundled `coworker-memory` skill
+- The model can suggest durable preferences and ongoing project facts you share naturally; every model-proposed change requires approval
+- Inline chat cards show the proposed item and let you approve, edit, or reject it
+- Telegram shows the full proposal with approval buttons and an edit-by-reply option
+- Memory loads at the start of every turn, including scheduled work; edits apply on the next turn
+- Edit or clear memory in coworker settings or with `coworker memory show`, `set`, and `clear`
+- An 8,000-character limit and revision checks to protect against conflicting app writes
+- Included in workspace backups
+
+See the [memory guide](memory.md) for examples, limits, and privacy details.
 
 ## Work execution
 
@@ -31,7 +45,7 @@ Coworker is a local-first Electron app for independent AI coworkers. Each cowork
 ## Skills
 
 - Agent Skills-compatible global skill library with per-coworker enablement
-- Bundled `web-search` and `document-authoring` skills
+- Bundled skills include `web-search`, `document-authoring`, and `coworker-memory`
 - Install by uploading a `SKILL.md`, from an HTTPS URL in Settings, or by pasting a skill URL into chat
 - Metadata is exposed to the model first; full instructions load on demand through a controlled skill reader
 

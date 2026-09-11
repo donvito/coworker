@@ -4,6 +4,10 @@ import { ipcChannels } from "@shared/ipc";
 
 const api: DesktopApi = {
   platform: process.platform,
+  memory: {
+    read: (id) => ipcRenderer.invoke(ipcChannels.memoryRead, id),
+    update: (id, input) => ipcRenderer.invoke(ipcChannels.memoryUpdate, id, input),
+  },
   app: {
     bootstrap: () => ipcRenderer.invoke(ipcChannels.bootstrap),
     copyText: (text) => ipcRenderer.invoke(ipcChannels.copyText, text),
