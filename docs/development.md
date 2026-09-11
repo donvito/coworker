@@ -21,6 +21,10 @@ Requires **Node.js 22.12+** and **pnpm**. See the [main README](../README.md#dev
 
 `pnpm test` builds the production worker first, then verifies queue isolation, concurrent workers, approval pause/resume, idempotency, scheduler recovery, workspace confinement, and memory persistence, context loading, and editing.
 
+Changing a coworker's settings while it is working stops the old runtime before retrying interrupted work with the updated configuration. Runtime stop recovery must leave pending approvals and terminal tasks intact, and must prevent events from the retired worker from changing the replacement run. Regression coverage lives in `tests/runtime-stop-recovery.test.ts`.
+
+The model receives the coworker's current name, role, and description as its authoritative profile. Editing these fields updates its identity even when custom operating instructions still mention an earlier role; those instructions remain saved unchanged. `tests/runtime-settings-recovery.test.ts` checks the real worker's model payload after profile edits and new conversations.
+
 ## Agent evals
 
 The Vitest Evals suite exercises production worker threads and controlled tools, not mocked agent facades. It is split by what each suite can honestly measure.
@@ -61,6 +65,19 @@ EVAL_PROVIDER=openrouter EVAL_MODEL=google/gemini-3.7-flash pnpm eval:memory
 ```
 
 Use the corresponding provider API key environment variable. This live, multi-conversation evaluation skips when a provider/model/key is not configured. The harness asserts that memory remains unchanged before approval and then supplies each expected decision. The ordinary test suite verifies mandatory approval, immutable proposal targets, aliases, revisions, persistence, backups, desktop/CLI editing, and the actual worker's context payload with a local test provider. Telegram Bot API fixtures cover full previews, approve/reject buttons, edit replies, cancelled or stale edits, sender/topic checks, and edit-prompt persistence across bridge restarts. `pnpm test:cli:smoke` also checks memory isolation, stale revisions, exact text export/import, desktop/CLI shared state, and persistence after a real app restart. See the [CLI verification guide](cli.md#verification) for platform requirements.
+
+The document-format evaluation checks native skill selection for written artifacts, saved-default confirmation with an alternative, follow-up context, confirmed PDF export, explicit format overrides, and chat-only exclusions. It uses a temporary workspace and never configures messaging integrations:
+
+```sh
+pnpm build
+EVAL_PROVIDER=openrouter EVAL_MODEL=google/gemini-3.5-flash-lite pnpm exec vitest run --config vitest.evals.config.ts evals/document-format.eval.ts
+```
+
+Supply the provider key as above. This evaluation is live-only; static skill assertions and recorded replies do not establish multi-turn model behavior.
+
+Live validation on September 11, 2026 passed the eight-turn saved-format flow on Gemini 3.5 Flash Lite. Gemini 3.1 Flash Lite passed explicit PDF creation with a registered, readable artifact, but failed the saved-default confirmation check: it sometimes skipped skill loading or exported before confirmation. Keep that failure visible when evaluating model compatibility. SDK validation failures and controlled-tool denials are tested separately in `tests/runtime-tool-errors.test.ts`; the renderer must display their structured error status rather than treating a finished tool call as a successful action.
+
+When a later matching attempt creates a file in the same user turn, the earlier failure is collapsed under “Succeeded after retry,” with its details still available. Failures without a confirmed matching success remain visible. This presentation does not alter tool results, task records, or approval decisions.
 
 ## OpenRouter Gemini compatibility
 

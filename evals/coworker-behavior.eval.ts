@@ -20,11 +20,13 @@ const scenarios: CoworkerEvalInput[] = [
   },
   {
     // The gateway no longer denies file writes on an unstated format, so this
-    // asserts the model asks on its own, driven only by the system prompt.
-    name: "asks for an output format instead of picking one",
+    // asserts the model discovers the authoring skill and asks on its own.
+    // A new name prevents replaying the old global-prompt recording.
+    name: "asks for an output format through the document authoring skill",
     prompt: "Create today's sales handoff report and save it.",
+    bundledSkillNames: ["document-authoring"],
     expected: {
-      tools: [],
+      tools: ["skills.read"],
       artifactExtensions: [],
       scheduleCount: 0,
       outboxCount: 0,

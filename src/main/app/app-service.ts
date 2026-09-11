@@ -240,6 +240,7 @@ export class DesktopAppService {
   }
 
   async shutdown(): Promise<void> {
+    this.runtime.pauseDispatch();
     this.scheduler.stop();
     await this.telegram.stop();
     await this.runtime.stopAll();

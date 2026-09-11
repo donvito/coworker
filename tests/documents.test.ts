@@ -179,7 +179,7 @@ describe("local document generation", () => {
     }
   });
 
-  it("exports both formats inside the confined workspace and records artifacts", async () => {
+  it.each([{ formats: ["pdf", "docx"] }, { formats: ["PDF", "DoCx"] }])("exports $formats inside the confined workspace and records artifacts", async ({ formats }) => {
     const root = await mkdtemp(join(tmpdir(), "coworker-documents-"));
     temporaryPaths.push(root);
     const workspace = join(root, "workspace");
@@ -227,7 +227,7 @@ describe("local document generation", () => {
         toolName: "documents.export",
         arguments: {
           sourcePath: "invoices/INV-100.md",
-          formats: ["pdf", "docx"],
+          formats,
         },
       });
 
@@ -240,6 +240,15 @@ describe("local document generation", () => {
         "INV-100.docx",
         "INV-100.pdf",
       ]);
+      expect(gateway.validateArguments("documents.export", {
+        name: "case-check", content: "# Report", formats: ["PDF", "DoCx", "XLSX", "CsV", "PpTx"],
+      })).toMatchObject({ formats: ["pdf", "docx", "xlsx", "csv", "pptx"] });
+      expect(() => gateway.validateArguments("documents.export", {
+        name: "duplicate", content: "# Report", formats: ["pdf", "PDF"],
+      })).toThrow("Formats must be unique");
+      expect(() => gateway.validateArguments("documents.export", {
+        name: "unsupported", content: "# Report", formats: ["EPUB"],
+      })).toThrow();
     } finally {
       database.close();
     }
@@ -295,8 +304,8 @@ describe("local document generation", () => {
       // The task text names no format, but the model chose PDF. The gateway
       // used to pattern-match the task text and deny the call anyway, which
       // overrode a decision the model had already made. Asking for a format is
-      // now the model's job, driven by documentFormatInstruction in the system
-      // prompt; the gateway executes what it was given.
+      // now the model's job, guided by the document-authoring skill;
+      // the gateway executes what it was given.
       expect(response.kind).toBe("completed");
       const artifacts = database.listArtifacts(coworker.id);
       expect(artifacts).toHaveLength(1);

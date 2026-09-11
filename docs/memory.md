@@ -2,6 +2,8 @@
 
 Each coworker has its own saved memory: one local `MEMORY.md` in its workspace, shared across its conversations and retained across app restarts. Use it for concise facts and preferences you want that coworker to know in future work.
 
+A saved document format helps the coworker make a specific suggestion. For example, with “Default document format: PDF” saved, a request to create a document without a format should prompt “Your saved default is PDF. Shall I use PDF for this document, or would you prefer a different format?” Confirming that suggestion lets the coworker proceed. An explicit format in your request takes precedence, and using another format for one document does not change your saved preference.
+
 ## Remember, review, and forget in chat
 
 Ask the coworker directly:

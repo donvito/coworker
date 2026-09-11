@@ -21,7 +21,6 @@ import { toolNamesForSkills } from "@shared/skill-capabilities";
 import { formatWorkspaceContext } from "@shared/workspace-context";
 import {
   documentFormatClarification,
-  documentFormatInstruction,
   hasExplicitDocumentFormat,
   requestsDocumentCreation,
 } from "@shared/document-format";
@@ -145,6 +144,16 @@ function toolResultText(result: unknown): string {
     return JSON.stringify(result);
   }
   return textFromContent(result.content);
+}
+
+function toolExecutionError(result: unknown, isError: boolean): string | null {
+  if (isError) return toolResultText(result);
+  if (typeof result !== "object" || result === null || !("details" in result)) return null;
+  const details = result.details;
+  if (typeof details !== "object" || details === null || !("kind" in details) || details.kind !== "denied") return null;
+  return "reason" in details && typeof details.reason === "string"
+    ? details.reason
+    : "Tool execution was denied.";
 }
 
 const parameterSchemas: Record<string, ReturnType<typeof Type.Object>> = {
@@ -288,16 +297,13 @@ const parameterSchemas: Record<string, ReturnType<typeof Type.Object>> = {
         "Professionally structured Markdown document content to convert directly without creating an intermediate file. Use #/##/### headings, **bold labels**, lists, tables, and --- dividers as appropriate to the document type.",
     })),
     formats: Type.Array(
-      Type.Union([
-        Type.Literal("pdf"),
-        Type.Literal("docx"),
-        Type.Literal("xlsx"),
-        Type.Literal("csv"),
-        Type.Literal("pptx"),
-      ]),
+      Type.String({
+        pattern:
+          "^(?:[Pp][Dd][Ff]|[Dd][Oo][Cc][Xx]|[Xx][Ll][Ss][Xx]|[Cc][Ss][Vv]|[Pp][Pp][Tt][Xx])$",
+      }),
       {
         description:
-          "One or more final output formats. For XLSX or CSV, content must include a Markdown table with a descriptive header row and one record per row. CSV supports exactly one table. For PPTX (PowerPoint), the # title becomes the cover slide, each ## heading starts a slide, lists become bullets, and --- forces a slide break.",
+          "One or more final output formats (canonical lowercase values pdf, docx, xlsx, csv, or pptx; accepted case-insensitively). For XLSX or CSV, content must include a Markdown table with a descriptive header row and one record per row. CSV supports exactly one table. For PPTX (PowerPoint), the # title becomes the cover slide, each ## heading starts a slide, lists become bullets, and --- forces a slide break.",
         minItems: 1,
         maxItems: 5,
         uniqueItems: true,
@@ -566,6 +572,12 @@ async function initialize(workerConfig: WorkerCoworkerConfig): Promise<void> {
   const recentSkillUses = workerConfig.recentSkillUses.length
     ? `Recent durable skill usage: ${[...new Set(workerConfig.recentSkillUses)].join(", ")}. When asked whether a skill was used, answer from this record and the current tool history.`
     : "";
+  const currentProfile = `Current coworker profile (authoritative identity): ${JSON.stringify({
+    name: workerConfig.coworker.name,
+    role: workerConfig.coworker.role,
+    description: workerConfig.coworker.description,
+  })}
+Use this profile for the coworker's current name, role, and description. It takes precedence over conflicting or stale identity details in the operating instructions or earlier conversation history. Continue to follow the operating instructions for how to work.`;
   agent = new Agent({
     initialState: {
       systemPrompt: [
@@ -573,12 +585,11 @@ async function initialize(workerConfig: WorkerCoworkerConfig): Promise<void> {
         workerConfig.globalOperatingInstructions
           ? `Global operating instructions:\n${workerConfig.globalOperatingInstructions}`
           : "",
-        documentFormatInstruction,
-        "Final office file rule: invoice.create writes the selected final format directly. For a new PDF, Word, Excel, or CSV file, pass its content directly to documents.export with a name; do not create a temporary Markdown or text file first. You can create genuine XLSX and CSV files with documents.export, so never claim those formats are unavailable when that tool is enabled.",
         schedulingRule,
         folderRule,
         skillsRule,
         recentSkillUses,
+        currentProfile,
       ]
         .filter(Boolean)
         .join("\n\n"),
@@ -1004,11 +1015,14 @@ function handleAgentEvent(event: Parameters<Agent["subscribe"]>[0] extends (
     return;
   }
   if (event.type === "tool_execution_end") {
+    const error = toolExecutionError(event.result, event.isError);
     emit({
       type: EventType.TOOL_CALL_RESULT,
       messageId: `${event.toolCallId}:result`,
       toolCallId: event.toolCallId,
-      content: toolResultText(event.result),
+      content: error !== null
+        ? JSON.stringify({ isError: true, error })
+        : toolResultText(event.result),
       role: "tool",
       timestamp: Date.now(),
     });

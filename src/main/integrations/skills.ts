@@ -223,61 +223,10 @@ Use the \`web.search\` tool whenever the request needs current or externally ver
   bundled: true,
 } as const;
 
-export const bundledDocumentAuthoringSkill = {
-  id: bundledDocumentAuthoringSkillId,
-  name: "document-authoring",
-  description:
-    "Create or substantially revise polished office documents, presentations, and data reports in PDF, Word DOCX, Excel XLSX, CSV, PowerPoint PPTX, Markdown, or plain text. Use for drafting, restructuring, or improving a final document's content and presentation. Do not use for merely reviewing, summarizing, or answering questions about a document.",
-  content: `---
-name: document-authoring
-description: Create or substantially revise polished office documents, presentations, and data reports in PDF, Word DOCX, Excel XLSX, CSV, PowerPoint PPTX, Markdown, or plain text. Use for drafting, restructuring, or improving a final document's content and presentation. Do not use for merely reviewing, summarizing, or answering questions about a document.
----
-
-# Document authoring
-
-Create a useful final deliverable, not a raw transcript with a file extension.
-
-## Establish the brief
-
-- Respect the format the user selected. If they did not select one, ask which format they want and wait.
-- Identify the document's purpose, audience, required facts, and any template or constraints already supplied.
-- Ask concise follow-up questions only for information that materially affects correctness. Never invent names, dates, recipients, amounts, terms, or other required facts.
-- For a substantial collaborative document, agree on a short outline before drafting when the structure or desired outcome is unclear. Do not force a lengthy coauthoring workflow on a simple, well-specified request.
-
-## Structure the content
-
-For PDF and Word DOCX, give the exporter polished semantic Markdown:
-
-- Use exactly one \`#\` title, then \`##\` major sections and \`###\` subsections where useful.
-- Use meaningful paragraphs, real lists, bold field labels, and Markdown tables for aligned data.
-- Adapt the structure to the deliverable. Letters use conventional correspondence structure; reports foreground purpose and findings; proposals make the recommendation and next steps scannable; agreements use consistent numbered clauses and signature areas where appropriate.
-- Never simulate layout with ALL CAPS body text, repeated equals signs, tabs, repeated punctuation, or manual space padding.
-
-For Excel XLSX and CSV:
-
-- Put the data in a Markdown table with a descriptive header row and one record per row.
-- Use XLSX when presentation, titles, explanatory sections, filters, or multiple tables matter.
-- Use CSV for one portable data table. CSV supports exactly one table and does not preserve presentation layout.
-- Keep amounts, dates, percentages, identifiers, and formulas unambiguous. Do not add decorative prose inside the data table.
-
-For PowerPoint PPTX:
-
-- The single \`#\` title becomes the cover slide; every \`##\` heading starts a new slide with that heading as the slide title.
-- Write slide content as short bullet lists (about 4–7 bullets per slide); \`###\` renders as a bold lead-in line and \`---\` forces a slide break.
-- Markdown tables render as slide tables. Long sections continue automatically onto follow-up slides.
-- Call \`documents.export\` with the "pptx" format — never claim PowerPoint is unavailable, and do not export a different format than the user chose.
-
-## Export and verify
-
-- Call \`documents.export\` directly with a final name, content, and the requested format. Do not create an intermediate Markdown file first.
-- Use \`files.write\` only when the requested final format is Markdown or plain text.
-- Check the tool result for the requested extension and a saved artifact before saying the file is ready.
-- If export fails, explain the actual error and preserve the draft for a corrected attempt. Never claim that a file was created when the tool did not succeed.
-- Before finishing, re-read the complete content for hierarchy, consistency, missing placeholders, unsupported claims, and whether a reader without the conversation context can understand it.
-`,
-  sourceUrl: null,
-  bundled: true,
-} as const;
+export const bundledDocumentAuthoringSkill = loadBundledSkill(
+  "document-authoring",
+  bundledDocumentAuthoringSkillId,
+);
 
 export const bundledTeamChannelSkill = loadBundledSkill(
   "team-channel-collaboration",

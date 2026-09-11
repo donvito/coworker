@@ -273,8 +273,9 @@ export function CoworkerSettingsModal({
             <span>Operating instructions</span>
             <textarea defaultValue={coworker.systemPrompt} name="systemPrompt" required rows={5} />
             <small>
-              Combined with Settings → General → Global operating instructions and built-in tool
-              safeguards.
+              The profile above determines this coworker’s current identity; these instructions
+              guide how it works, alongside Settings → General → Global operating instructions
+              and built-in tool safeguards.
             </small>
           </label>
           <ProviderSelect

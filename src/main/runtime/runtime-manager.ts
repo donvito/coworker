@@ -1,4 +1,5 @@
 import { Worker } from "node:worker_threads";
+import { AsyncLocalStorage } from "node:async_hooks";
 import type { BaseEvent } from "@ag-ui/core";
 import { EventType } from "@ag-ui/core";
 import type { DesktopEvent, RuntimeStatus, Task } from "@shared/contracts";
@@ -16,15 +17,24 @@ import type { ProviderErrorSink } from "./provider-error-logger";
 import { loadWorkspaceContext } from "@main/tools/workspace-text";
 
 interface RuntimeRecord {
+  coworkerId: string;
   worker: Worker;
   ready: Promise<void>;
   resolveReady: () => void;
   rejectReady: (error: Error) => void;
   readyResolved: boolean;
+  exitHandled: Promise<void>;
+  resolveExitHandled: () => void;
+  rejectExitHandled: (error: unknown) => void;
+  physicalExit: Promise<void>;
+  resolvePhysicalExit: () => void;
+  exitObserved: boolean;
   currentTaskId: string | null;
   currentRunId: string | null;
   stopping: boolean;
   idleTimer: NodeJS.Timeout | null;
+  pendingOperations: Set<Promise<unknown>>;
+  coworkerName: string;
   modelProvider: WorkerCoworkerConfig["coworker"]["modelProvider"];
   modelName: string;
 }
@@ -51,8 +61,13 @@ export interface CoworkerRuntimeManagerOptions {
 export class CoworkerRuntimeManager {
   private readonly runtimes = new Map<string, RuntimeRecord>();
   private readonly dispatching = new Set<string>();
+  private readonly pendingDispatches = new Map<Promise<void>, string>();
+  private readonly enqueueRequests = new Set<string>();
+  private readonly stopGenerations = new Map<string, number>();
+  private readonly operationContext = new AsyncLocalStorage<RuntimeRecord>();
   private readonly messageBuffers = new Map<string, { id: string; content: string }>();
   private dispatchPaused = false;
+  private stoppingAll = 0;
   private readonly idleTimeoutMs: number;
   private readonly workerFactory: () => Worker;
 
@@ -80,22 +95,53 @@ export class CoworkerRuntimeManager {
       resolveReady = () => resolve();
       rejectReady = reject;
     });
+    // A stop can reject readiness while model configuration is still loading.
+    void ready.catch(() => undefined);
+    let resolveExitHandled: () => void = () => undefined;
+    let rejectExitHandled: (error: unknown) => void = () => undefined;
+    const exitHandled = new Promise<void>((resolve, reject) => {
+      resolveExitHandled = resolve;
+      rejectExitHandled = reject;
+    });
+    void exitHandled.catch(() => undefined);
+    let resolvePhysicalExit: () => void = () => undefined;
+    const physicalExit = new Promise<void>((resolve) => {
+      resolvePhysicalExit = resolve;
+    });
     const record: RuntimeRecord = {
+      coworkerId,
       worker,
       ready,
       resolveReady,
       rejectReady,
       readyResolved: false,
+      exitHandled,
+      resolveExitHandled,
+      rejectExitHandled,
+      physicalExit,
+      resolvePhysicalExit,
+      exitObserved: false,
       currentTaskId: null,
       currentRunId: null,
       stopping: false,
       idleTimer: null,
+      pendingOperations: new Set(),
+      coworkerName: coworker.name,
       modelProvider: coworker.modelProvider,
       modelName: coworker.modelName,
     };
     this.runtimes.set(coworkerId, record);
     worker.on("message", (message: WorkerToMainMessage) => {
-      void this.handleWorkerMessage(record, message);
+      if (record.exitObserved) return;
+      const handling = this.trackOperation(record, () => this.handleWorkerMessage(record, message));
+      void handling
+        .catch((error) => {
+          void this.options.applicationErrors?.error("runtime.message", error, {
+            coworkerId,
+            taskId: record.currentTaskId,
+            runId: record.currentRunId,
+          });
+        });
     });
     worker.on("error", (error: Error) => {
       void this.options.applicationErrors?.error("runtime.worker", error, {
@@ -112,18 +158,7 @@ export class CoworkerRuntimeManager {
         summary: error.message,
       });
     });
-    worker.on("exit", (code) => {
-      if (code !== 0 && !record.stopping) {
-        void this.options.applicationErrors?.error(
-          "runtime.worker_exit",
-          new Error(`${coworker.name}'s runtime exited with code ${code}`),
-          { coworkerId, taskId: record.currentTaskId, runId: record.currentRunId },
-        );
-      }
-      if (!record.readyResolved) record.stopping = true;
-      record.rejectReady(new Error(`${coworker.name}'s runtime exited during startup (${code})`));
-      void this.handleWorkerExit(coworkerId, record, code);
-    });
+    worker.on("exit", (code) => this.observeWorkerExit(coworkerId, record, code));
 
     try {
       const modelConfiguration = await getRuntimeModelConfiguration(
@@ -131,6 +166,7 @@ export class CoworkerRuntimeManager {
         coworker.modelName,
         this.options.credentials,
       );
+      if (!this.isLiveRuntime(coworkerId, record)) return;
       const config: WorkerCoworkerConfig = {
         coworker,
         globalOperatingInstructions:
@@ -165,6 +201,7 @@ export class CoworkerRuntimeManager {
         }),
       ]);
     } catch (error) {
+      if (record.stopping || this.runtimes.get(coworkerId) !== record) throw error;
       record.stopping = true;
       if (this.runtimes.get(coworkerId) === record) {
         this.runtimes.delete(coworkerId);
@@ -176,33 +213,53 @@ export class CoworkerRuntimeManager {
   }
 
   async stop(coworkerId: string): Promise<void> {
+    this.stopGenerations.set(coworkerId, this.currentStopGeneration(coworkerId) + 1);
+    this.enqueueRequests.delete(coworkerId);
     const runtime = this.runtimes.get(coworkerId);
     if (!runtime) {
       this.setStatus(coworkerId, "STOPPED");
       return;
     }
-    if (runtime.currentTaskId) this.options.tools.releaseBrowserTask(runtime.currentTaskId);
     runtime.stopping = true;
     if (runtime.idleTimer) clearTimeout(runtime.idleTimer);
-    this.send(runtime, { type: "shutdown" });
+    if (!runtime.exitObserved) this.send(runtime, { type: "shutdown" });
     await Promise.race([
-      new Promise<void>((resolve) => runtime.worker.once("exit", () => resolve())),
+      runtime.physicalExit,
       new Promise<void>((resolve) => setTimeout(resolve, 2_000)),
     ]);
-    if (this.runtimes.get(coworkerId) === runtime) {
-      await runtime.worker.terminate();
-      this.runtimes.delete(coworkerId);
+    if (!runtime.exitObserved) {
+      const code = await runtime.worker.terminate();
+      this.observeWorkerExit(coworkerId, runtime, code);
     }
-    this.setStatus(coworkerId, "STOPPED");
+    // A tool can update its own coworker. It must return before cleanup can
+    // drain that operation; the retiring record keeps dispatch blocked meanwhile.
+    if (this.operationContext.getStore() !== runtime) await runtime.exitHandled;
   }
 
   async stopAll(): Promise<void> {
-    await Promise.all([...this.runtimes.keys()].map((id) => this.stop(id)));
+    this.stoppingAll += 1;
+    try {
+      // Invalidate claimed dispatches as well as workers. A dispatch can be
+      // waiting for startup before its worker has entered the runtime map.
+      const ids = new Set([...this.runtimes.keys(), ...this.dispatching]);
+      await Promise.all([...ids].map((id) => this.stop(id)));
+      await this.waitForDispatches();
+      const selfCoworkerId = this.operationContext.getStore()?.coworkerId;
+      await Promise.all(
+        [...this.runtimes.keys()]
+          .filter((id) => id !== selfCoworkerId)
+          .map((id) => this.stop(id)),
+      );
+      await this.waitForDispatches();
+    } finally {
+      this.stoppingAll -= 1;
+    }
   }
 
   enqueueTask(coworkerId: string): void {
-    if (this.dispatchPaused) return;
-    queueMicrotask(() => void this.dispatch(coworkerId));
+    if (this.dispatchPaused || this.stoppingAll > 0) return;
+    this.enqueueRequests.add(coworkerId);
+    queueMicrotask(() => this.scheduleDispatch(coworkerId));
   }
 
   pauseDispatch(): void {
@@ -215,6 +272,26 @@ export class CoworkerRuntimeManager {
       if (this.options.database.listTasks(coworker.id).some((task) => task.status === "QUEUED")) {
         this.enqueueTask(coworker.id);
       }
+    }
+  }
+
+  private scheduleDispatch(coworkerId: string): void {
+    const pending = this.dispatch(coworkerId);
+    this.pendingDispatches.set(pending, coworkerId);
+    void pending.then(
+      () => this.pendingDispatches.delete(pending),
+      () => this.pendingDispatches.delete(pending),
+    );
+  }
+
+  private async waitForDispatches(): Promise<void> {
+    const selfCoworkerId = this.operationContext.getStore()?.coworkerId;
+    while (true) {
+      const pending = [...this.pendingDispatches.entries()]
+        .filter(([, coworkerId]) => coworkerId !== selfCoworkerId)
+        .map(([promise]) => promise);
+      if (pending.length === 0) return;
+      await Promise.allSettled(pending);
     }
   }
 
@@ -231,8 +308,12 @@ export class CoworkerRuntimeManager {
   }
 
   private async dispatch(coworkerId: string): Promise<void> {
-    if (this.dispatchPaused) return;
+    if (this.dispatchPaused || this.stoppingAll > 0) return;
     if (this.dispatching.has(coworkerId)) return;
+    const retiring = this.runtimes.get(coworkerId);
+    if (retiring?.stopping || retiring?.exitObserved) return;
+    const generation = this.currentStopGeneration(coworkerId);
+    this.enqueueRequests.delete(coworkerId);
     this.dispatching.add(coworkerId);
     let claimedTask: Task | null = null;
     try {
@@ -242,7 +323,8 @@ export class CoworkerRuntimeManager {
         return;
       }
       const current = this.runtimes.get(coworkerId);
-      if (current?.currentTaskId) return;
+      if (current?.stopping || current?.currentTaskId) return;
+      if (!this.isCurrentGeneration(coworkerId, generation)) return;
       const task = this.options.database.claimNextTask(coworkerId);
       if (!task) {
         if (current) {
@@ -252,9 +334,20 @@ export class CoworkerRuntimeManager {
         return;
       }
       claimedTask = task;
+      if (!this.isCurrentGeneration(coworkerId, generation)) {
+        this.requeueInterruptedTask(task.id);
+        return;
+      }
       await this.start(coworkerId);
       const runtime = this.runtimes.get(coworkerId);
-      if (!runtime) throw new Error("Coworker runtime disappeared during startup");
+      if (
+        !runtime ||
+        runtime.stopping ||
+        !this.isCurrentGeneration(coworkerId, generation)
+      ) {
+        this.requeueInterruptedTask(task.id);
+        return;
+      }
       if (runtime.idleTimer) clearTimeout(runtime.idleTimer);
       runtime.idleTimer = null;
       runtime.currentTaskId = task.id;
@@ -264,8 +357,18 @@ export class CoworkerRuntimeManager {
       const approval = this.options.database.getApprovalForTask(task.id);
       let resume: Extract<MainToWorkerMessage, { type: "run" }>["resume"];
       if (approval && approval.status !== "PENDING") {
+        if (!this.isCurrentDispatch(coworkerId, runtime, generation)) {
+          this.requeueInterruptedTask(task.id);
+          return;
+        }
         const coworker = this.options.database.getCoworker(coworkerId);
-        const execution = await this.options.tools.executeApproval(approval, coworker);
+        const execution = await this.trackOperation(runtime, () =>
+          this.options.tools.executeApproval(approval, coworker),
+        );
+        if (!this.isCurrentDispatch(coworkerId, runtime, generation)) {
+          this.requeueInterruptedTask(task.id);
+          return;
+        }
         resume = {
           decision:
             approval.status === "REJECTED"
@@ -303,13 +406,18 @@ export class CoworkerRuntimeManager {
             coworker.workspacePath,
             this.options.database.listTaskImageAttachments(task.id),
           );
+      const workspaceContext = await loadWorkspaceContext(coworker.workspacePath);
+      if (!this.isCurrentDispatch(coworkerId, runtime, generation)) {
+        this.requeueInterruptedTask(task.id);
+        return;
+      }
       this.send(runtime, {
         type: "run",
         taskId: task.id,
         runId: task.runId,
         threadId: task.threadId,
         input: task.input,
-        workspaceContext: await loadWorkspaceContext(coworker.workspacePath),
+        workspaceContext,
         images,
         threadMessages,
         checkpoint: checkpoint?.messages,
@@ -319,6 +427,18 @@ export class CoworkerRuntimeManager {
       const runtime = this.runtimes.get(coworkerId);
       const taskId = runtime?.currentTaskId ?? claimedTask?.id;
       const message = error instanceof Error ? error.message : String(error);
+      if (
+        claimedTask &&
+        (!this.isCurrentGeneration(coworkerId, generation) || runtime?.stopping)
+      ) {
+        this.options.tools.releaseBrowserTask(claimedTask.id);
+        this.requeueInterruptedTask(claimedTask.id);
+        if (runtime && this.runtimes.get(coworkerId) === runtime) {
+          runtime.currentTaskId = null;
+          runtime.currentRunId = null;
+        }
+        return;
+      }
       if (taskId) {
         this.options.tools.releaseBrowserTask(taskId);
         this.options.database.setTaskStatus(taskId, "FAILED", { error: message });
@@ -362,6 +482,9 @@ export class CoworkerRuntimeManager {
       this.setStatus(coworkerId, "ERROR", taskId ?? undefined);
     } finally {
       this.dispatching.delete(coworkerId);
+      if (this.enqueueRequests.has(coworkerId) && !this.dispatchPaused) {
+        queueMicrotask(() => this.scheduleDispatch(coworkerId));
+      }
     }
   }
 
@@ -369,10 +492,23 @@ export class CoworkerRuntimeManager {
     runtime: RuntimeRecord,
     message: WorkerToMainMessage,
   ): Promise<void> {
+    if (this.runtimes.get(message.coworkerId) !== runtime) return;
+    if (message.type !== "ready") {
+      if (runtime.currentTaskId !== message.taskId) return;
+      if ("runId" in message && runtime.currentRunId !== message.runId) return;
+    }
+    if (
+      runtime.stopping &&
+      message.type !== "ready" &&
+      message.type !== "tool.request" &&
+      message.type !== "checkpoint"
+    ) {
+      return;
+    }
     if (message.type === "ready") {
       runtime.readyResolved = true;
       runtime.resolveReady();
-      this.setStatus(message.coworkerId, "IDLE");
+      if (!runtime.stopping) this.setStatus(message.coworkerId, "IDLE");
       return;
     }
     if (message.type === "agui.event") {
@@ -397,18 +533,22 @@ export class CoworkerRuntimeManager {
           toolName: message.toolName,
           arguments: message.arguments,
         });
+        const canReply =
+          this.runtimes.get(message.coworkerId) === runtime && !runtime.stopping;
         if (result.kind === "approval") {
-          this.send(runtime, {
-            type: "tool.response",
-            requestId: message.requestId,
-            response: {
-              kind: "approval",
-              approvalId: result.approval.id,
-              summary: result.approval.summary,
-              toolCallId: message.toolCallId,
-            },
-          });
-          this.setStatus(message.coworkerId, "WAITING_FOR_APPROVAL", message.taskId);
+          if (canReply) {
+            this.send(runtime, {
+              type: "tool.response",
+              requestId: message.requestId,
+              response: {
+                kind: "approval",
+                approvalId: result.approval.id,
+                summary: result.approval.summary,
+                toolCallId: message.toolCallId,
+              },
+            });
+            this.setStatus(message.coworkerId, "WAITING_FOR_APPROVAL", message.taskId);
+          }
           this.options.emit({
             type: "entity.changed",
             entity: "approvals",
@@ -416,29 +556,35 @@ export class CoworkerRuntimeManager {
           });
           this.options.emit({ type: "entity.changed", entity: "tasks", id: message.taskId });
         } else if (result.kind === "denied") {
-          this.send(runtime, {
-            type: "tool.response",
-            requestId: message.requestId,
-            response: { kind: "denied", reason: result.reason },
-          });
+          if (canReply) {
+            this.send(runtime, {
+              type: "tool.response",
+              requestId: message.requestId,
+              response: { kind: "denied", reason: result.reason },
+            });
+          }
         } else {
-          this.send(runtime, {
-            type: "tool.response",
-            requestId: message.requestId,
-            response: { kind: "completed", result: result.result },
-          });
+          if (canReply) {
+            this.send(runtime, {
+              type: "tool.response",
+              requestId: message.requestId,
+              response: { kind: "completed", result: result.result },
+            });
+          }
           this.options.emit({ type: "entity.changed", entity: "artifacts" });
         }
         this.options.emit({ type: "entity.changed", entity: "activity" });
       } catch (error) {
-        this.send(runtime, {
-          type: "tool.response",
-          requestId: message.requestId,
-          response: {
-            kind: "denied",
-            reason: error instanceof Error ? error.message : String(error),
-          },
-        });
+        if (this.runtimes.get(message.coworkerId) === runtime && !runtime.stopping) {
+          this.send(runtime, {
+            type: "tool.response",
+            requestId: message.requestId,
+            response: {
+              kind: "denied",
+              reason: error instanceof Error ? error.message : String(error),
+            },
+          });
+        }
       }
       return;
     }
@@ -464,6 +610,11 @@ export class CoworkerRuntimeManager {
         await this.options.onTaskCompleted?.(
           this.options.database.getTask(message.taskId),
         );
+        if (!this.isLiveRuntime(message.coworkerId, runtime)) {
+          this.options.emit({ type: "entity.changed", entity: "tasks", id: message.taskId });
+          this.options.emit({ type: "entity.changed", entity: "activity" });
+          return;
+        }
         this.setStatus(message.coworkerId, "IDLE");
       } else {
         this.setStatus(message.coworkerId, "IDLE");
@@ -485,7 +636,9 @@ export class CoworkerRuntimeManager {
           this.options.database.getTask(message.taskId),
           message.error,
         );
-        this.setStatus(message.coworkerId, "ERROR", message.taskId);
+        if (this.isLiveRuntime(message.coworkerId, runtime)) {
+          this.setStatus(message.coworkerId, "ERROR", message.taskId);
+        }
       } else if (task.status === "CANCELLED") {
         this.setStatus(message.coworkerId, "IDLE");
       }
@@ -501,7 +654,7 @@ export class CoworkerRuntimeManager {
         message.error,
       );
       this.options.emit({ type: "entity.changed", entity: "tasks", id: message.taskId });
-      this.enqueueTask(message.coworkerId);
+      if (this.isLiveRuntime(message.coworkerId, runtime)) this.enqueueTask(message.coworkerId);
     }
   }
 
@@ -541,20 +694,39 @@ export class CoworkerRuntimeManager {
     code: number,
   ): Promise<void> {
     if (this.runtimes.get(coworkerId) !== runtime) return;
-    this.runtimes.delete(coworkerId);
     if (runtime.idleTimer) clearTimeout(runtime.idleTimer);
-    if (runtime.stopping) return;
+    if (runtime.currentRunId) this.messageBuffers.delete(runtime.currentRunId);
+    while (runtime.pendingOperations.size > 0) {
+      await Promise.allSettled([...runtime.pendingOperations]);
+    }
+    if (this.runtimes.get(coworkerId) !== runtime) return;
+    this.runtimes.delete(coworkerId);
 
-    if (runtime.currentTaskId) {
-      this.options.tools.releaseBrowserTask(runtime.currentTaskId);
-      const task = this.options.database.getTask(runtime.currentTaskId);
+    const taskId = runtime.currentTaskId;
+    const runId = runtime.currentRunId;
+    if (taskId) {
+      this.options.tools.releaseBrowserTask(taskId);
+      const task = this.options.database.getTask(taskId);
       if (task.status === "RUNNING") {
         this.options.database.setTaskStatus(task.id, "QUEUED");
+        this.options.emit({ type: "entity.changed", entity: "tasks", id: task.id });
+        this.options.emit({ type: "entity.changed", entity: "activity" });
       }
     }
+    runtime.currentTaskId = null;
+    runtime.currentRunId = null;
+    if (runtime.stopping) {
+      this.setStatus(coworkerId, "STOPPED");
+      if (this.enqueueRequests.has(coworkerId) && !this.dispatchPaused) {
+        queueMicrotask(() => this.scheduleDispatch(coworkerId));
+      }
+      return;
+    }
+
+    const generation = this.currentStopGeneration(coworkerId);
     this.options.database.addActivity({
       coworkerId,
-      taskId: runtime.currentTaskId,
+      taskId,
       type: "runtime.crashed",
       summary: `Coworker runtime exited unexpectedly (code ${code})`,
     });
@@ -564,13 +736,93 @@ export class CoworkerRuntimeManager {
         provider: runtime.modelProvider,
         model: runtime.modelName,
         coworkerId,
-        taskId: runtime.currentTaskId ?? undefined,
-        runId: runtime.currentRunId ?? undefined,
+        taskId: taskId ?? undefined,
+        runId: runId ?? undefined,
       },
       new Error(`Coworker runtime exited unexpectedly (code ${code})`),
     );
-    this.setStatus(coworkerId, "ERROR", runtime.currentTaskId ?? undefined);
-    setTimeout(() => this.enqueueTask(coworkerId), 1_000).unref();
+    if (!this.isCurrentGeneration(coworkerId, generation) || this.runtimes.has(coworkerId)) return;
+    this.setStatus(coworkerId, "ERROR", taskId ?? undefined);
+    setTimeout(() => {
+      if (this.isCurrentGeneration(coworkerId, generation)) this.enqueueTask(coworkerId);
+    }, 1_000).unref();
+  }
+
+  private observeWorkerExit(coworkerId: string, runtime: RuntimeRecord, code: number): void {
+    if (runtime.exitObserved) return;
+    runtime.exitObserved = true;
+    runtime.resolvePhysicalExit();
+    if (code !== 0 && !runtime.stopping) {
+      void this.options.applicationErrors?.error(
+        "runtime.worker_exit",
+        new Error(`${runtime.coworkerName}'s runtime exited with code ${code}`),
+        { coworkerId, taskId: runtime.currentTaskId, runId: runtime.currentRunId },
+      );
+    }
+    if (!runtime.readyResolved) runtime.stopping = true;
+    runtime.rejectReady(new Error(`${runtime.coworkerName}'s runtime exited during startup (${code})`));
+    void this.handleWorkerExit(coworkerId, runtime, code)
+      .then(() => runtime.resolveExitHandled(), (error) => {
+        runtime.rejectExitHandled(error);
+        void this.options.applicationErrors?.error("runtime.cleanup", error, { coworkerId });
+      });
+  }
+
+  private trackOperation<T>(runtime: RuntimeRecord, operation: () => Promise<T>): Promise<T> {
+    // Register before invoking: an operation may synchronously initiate stop.
+    // Invoke synchronously so completion/checkpoint messages retain their
+    // existing ordering relative to a stop called immediately afterwards.
+    let resolvePending!: (value: T | PromiseLike<T>) => void;
+    let rejectPending!: (error: unknown) => void;
+    const pending = new Promise<T>((resolve, reject) => {
+      resolvePending = resolve;
+      rejectPending = reject;
+    });
+    runtime.pendingOperations.add(pending);
+    try {
+      const result = this.operationContext.run(runtime, operation);
+      Promise.resolve(result).then(resolvePending, rejectPending);
+    } catch (error) {
+      rejectPending(error);
+    }
+    void pending.then(
+      () => runtime.pendingOperations.delete(pending),
+      () => runtime.pendingOperations.delete(pending),
+    );
+    return pending;
+  }
+
+  private currentStopGeneration(coworkerId: string): number {
+    return this.stopGenerations.get(coworkerId) ?? 0;
+  }
+
+  private isCurrentGeneration(coworkerId: string, generation: number): boolean {
+    return this.currentStopGeneration(coworkerId) === generation;
+  }
+
+  private isCurrentDispatch(
+    coworkerId: string,
+    runtime: RuntimeRecord,
+    generation: number,
+  ): boolean {
+    return (
+      this.isCurrentGeneration(coworkerId, generation) &&
+      !runtime.stopping &&
+      !runtime.exitObserved &&
+      this.runtimes.get(coworkerId) === runtime
+    );
+  }
+
+  private isLiveRuntime(coworkerId: string, runtime: RuntimeRecord): boolean {
+    return this.runtimes.get(coworkerId) === runtime && !runtime.stopping && !runtime.exitObserved;
+  }
+
+  private requeueInterruptedTask(taskId: string): void {
+    const task = this.options.database.getTask(taskId);
+    if (task.status !== "RUNNING") return;
+    this.options.database.setTaskStatus(taskId, "QUEUED");
+    this.options.emit({ type: "entity.changed", entity: "tasks", id: taskId });
+    this.options.emit({ type: "entity.changed", entity: "activity" });
   }
 
   private scheduleIdleShutdown(coworkerId: string, runtime: RuntimeRecord): void {

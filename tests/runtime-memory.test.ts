@@ -69,9 +69,14 @@ describe("real worker memory context", () => {
       };
       const system = () => requests.at(-1)!.messages.filter((message) => ["system", "developer"].includes(message.role)).map((message) => message.content).join("\n");
 
-      await store(coworker.id, "FIRST_MEMORY_MARKER");
+      await store(coworker.id, "FIRST_MEMORY_MARKER\n- Default document format: PDF");
       await run();
       expect(system()).toContain("FIRST_MEMORY_MARKER");
+      expect(system()).toContain("Default document format: PDF");
+      // Format workflow belongs to the selectable authoring skill. A global
+      // prohibition on defaults would suppress memory-informed suggestions.
+      expect(system()).not.toContain("Never choose Markdown or any other format by default");
+      expect(system()).not.toContain("Document format rule:");
       expect(system().match(/Saved context for this coworker/g)).toHaveLength(1);
       const firstWorker = workers[0];
       await store(coworker.id, "UPDATED_MEMORY_MARKER");

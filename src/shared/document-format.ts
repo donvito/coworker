@@ -1,10 +1,3 @@
-export const documentFormatInstruction = [
-  "Document format rule: Before creating a document, invoice, report, letter, proposal, memo, or similar file, confirm that the user explicitly chose an output format.",
-  "If no format was chosen, ask which format they want (for example Word DOCX, PDF, Excel XLSX, CSV, Markdown, or plain text), then stop and wait for their answer without creating a file.",
-  "Never choose Markdown or any other format by default.",
-  "If the user already named a format in the current request or recent conversation, proceed without asking again.",
-].join(" ");
-
 export const documentFormatClarification =
   "The user has not chosen an output format yet. Ask whether they want Word (DOCX), PDF, Excel (XLSX), CSV, Markdown, or plain text, then wait for their answer. Do not create a file or default to Markdown.";
 

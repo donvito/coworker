@@ -9,6 +9,7 @@ export interface WorkerCoworkerConfig {
     | "id"
     | "name"
     | "role"
+    | "description"
     | "systemPrompt"
     | "modelProvider"
     | "modelName"

@@ -158,7 +158,12 @@ const schemas = {
       name: z.string().trim().min(1).max(240).optional(),
       content: z.string().max(5_000_000).optional(),
       formats: z
-        .array(z.enum(["pdf", "docx", "xlsx", "csv", "pptx"]))
+        .array(
+          z
+            .string()
+            .toLowerCase()
+            .pipe(z.enum(["pdf", "docx", "xlsx", "csv", "pptx"])),
+        )
         .min(1)
         .max(5)
         .refine((formats) => new Set(formats).size === formats.length, "Formats must be unique"),
