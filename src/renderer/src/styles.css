@@ -2214,7 +2214,8 @@ select:focus {
   border-radius: 9px;
 }
 
-.folder-picker legend {
+.folder-picker legend,
+.coworker-memory-editor legend {
   padding: 0 4px;
   color: #374940;
   font-size: 13px;

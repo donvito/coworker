@@ -48,7 +48,7 @@ export function CoworkerMemoryEditor({ coworkerId, name, disabled = false, onDir
   }
 
   return (
-    <fieldset className="form-stack">
+    <fieldset className="form-stack coworker-memory-editor">
       <legend>Memory</legend>
       <small>Facts and preferences saved for {name}, across conversations. Saved separately from other settings. Clear the text and save to forget all saved memory.</small>
       <label>
