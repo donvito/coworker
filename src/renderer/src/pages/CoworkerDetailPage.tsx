@@ -40,6 +40,7 @@ import {
   type ArtifactTarget,
 } from "../components/ArtifactActions";
 import { ComposerTools } from "../components/ComposerTools";
+import { AppearancePicker } from "../components/AppearancePicker";
 import { CoworkerSettingsModal } from "../components/CoworkerSettingsModal";
 import { WorkspaceTextApprovalCard } from "../components/WorkspaceTextApprovalCard";
 import { workspaceTextApproval } from "@shared/workspace-text-approval";
@@ -1070,10 +1071,13 @@ function GroupConversationSurface({
             />
           ))}
         </nav>
-        <button className="conversation-workroom-link" onClick={onBack}>
-          <Icon name="home" />
-          <span>Back to workspace</span>
-        </button>
+        <div className="conversation-roster-footer">
+          <AppearancePicker />
+          <button className="conversation-workroom-link" onClick={onBack}>
+            <Icon name="home" />
+            <span>Back to workspace</span>
+          </button>
+        </div>
       </aside>
 
       <section className="conversation-main">
@@ -2561,10 +2565,13 @@ function CoworkerSurface({
             </button>
           </div>
         ) : null}
-        <button className="conversation-workroom-link" onClick={onBack}>
-          <Icon name="home" />
-          <span>Back to workspace</span>
-        </button>
+        <div className="conversation-roster-footer">
+          <AppearancePicker />
+          <button className="conversation-workroom-link" onClick={onBack}>
+            <Icon name="home" />
+            <span>Back to workspace</span>
+          </button>
+        </div>
       </aside>
 
       <section

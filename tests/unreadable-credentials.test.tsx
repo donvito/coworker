@@ -28,6 +28,7 @@ function renderSettings(overrides: Record<string, unknown>) {
         launchAtLogin: false,
         runInBackground: true,
         theme: "forest",
+        colorMode: "light",
         showReasoning: true,
         globalOperatingInstructions: "Ask when information is missing.",
         defaultModelProvider: null,

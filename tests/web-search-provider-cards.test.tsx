@@ -33,6 +33,7 @@ describe("web search credentials", () => {
           launchAtLogin: false,
           runInBackground: true,
           theme: "forest",
+          colorMode: "light",
           showReasoning: true,
           globalOperatingInstructions: "Ask when information is missing.",
           defaultModelProvider: null,

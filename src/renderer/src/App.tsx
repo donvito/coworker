@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { ActivityItem } from "@shared/contracts";
 import { AppShell } from "./components/AppShell";
 import { Icon } from "./components/Icon";
+import { useAppearance } from "./lib/appearance";
 import type { PageId } from "./navigation";
 import { ActivityPage } from "./pages/ActivityPage";
 import { ApprovalsPage } from "./pages/ApprovalsPage";
@@ -19,11 +20,7 @@ export default function App() {
   const [selectedCoworkerId, setSelectedCoworkerId] = useState<string | null>(null);
   const [focusConversationId, setFocusConversationId] = useState<string | null>(null);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("general");
-  const theme = snapshot?.settings.theme ?? "graphite";
-
-  useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-  }, [theme]);
+  useAppearance(snapshot?.settings);
 
   useEffect(() => {
     if (lastEvent?.type === "navigation.requested") {

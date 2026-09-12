@@ -6,6 +6,7 @@ export const updateMemorySchema = z.object({
   expectedRevision: z.string().regex(/^[a-f0-9]{64}$/),
 }).strict();
 import {
+  appColorModes,
   appThemes,
   approvalStatuses,
   modelProviders,
@@ -284,6 +285,7 @@ export const settingsPatchSchema = z
     launchAtLogin: z.boolean().optional(),
     demoMode: z.boolean().optional(),
     theme: z.enum(appThemes).optional(),
+    colorMode: z.enum(appColorModes).optional(),
     showReasoning: z.boolean().optional(),
     globalOperatingInstructions: z.string().trim().max(50_000).optional(),
     defaultModelProvider: remoteModelProviderSchema.nullable().optional(),

@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import appIcon from "../assets/app-icon.png";
 import type { PageId } from "../navigation";
+import { AppearancePicker } from "./AppearancePicker";
 import { Icon, type IconName } from "./Icon";
 
 const navigation: Array<{ id: PageId; label: string; icon: IconName }> = [
@@ -65,6 +66,7 @@ export function AppShell({
               {/^\d/.test(version) ? `v${version}` : version}
             </span>
           ) : null}
+          <AppearancePicker />
           <button
             className={activePage === "settings" ? "nav-item active" : "nav-item"}
             onClick={() => onNavigate("settings")}

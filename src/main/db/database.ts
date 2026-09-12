@@ -15,7 +15,7 @@ import {
 import { readMigrationFiles } from "drizzle-orm/migrator";
 import { drizzle, type NodeSQLiteDatabase } from "drizzle-orm/node-sqlite";
 import { migrate } from "drizzle-orm/node-sqlite/migrator";
-import { appThemes, remoteModelProviders } from "@shared/contracts";
+import { appColorModes, appThemes, remoteModelProviders } from "@shared/contracts";
 import { isCustomModelProvider } from "@shared/model-providers";
 import type {
   ActivityItem,
@@ -93,6 +93,7 @@ const defaultSettings: AppSettings = {
   launchAtLogin: false,
   demoMode: true,
   theme: "graphite",
+  colorMode: "light",
   showReasoning: true,
   globalOperatingInstructions:
     "When essential information is missing or ambiguous, ask a concise follow-up question before acting. Do not invent names, dates, recipients, amounts, document details, or other required information. Before creating a document, confirm its output format if the user has not already selected one.",
@@ -492,6 +493,7 @@ export class CoworkerDatabase {
         ? modelName
         : null;
     const storedTheme = stored.get("theme");
+    const storedColorMode = stored.get("colorMode");
     const appSettings: AppSettings = {
       runInBackground: Boolean(
         stored.get("runInBackground") ?? defaultSettings.runInBackground,
@@ -499,6 +501,8 @@ export class CoworkerDatabase {
       launchAtLogin: Boolean(stored.get("launchAtLogin") ?? defaultSettings.launchAtLogin),
       demoMode: Boolean(stored.get("demoMode") ?? defaultSettings.demoMode),
       theme: appThemes.find((candidate) => candidate === storedTheme) ?? defaultSettings.theme,
+      colorMode:
+        appColorModes.find((candidate) => candidate === storedColorMode) ?? defaultSettings.colorMode,
       showReasoning: Boolean(stored.get("showReasoning") ?? defaultSettings.showReasoning),
       globalOperatingInstructions:
         typeof stored.get("globalOperatingInstructions") === "string"

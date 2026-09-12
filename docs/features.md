@@ -13,6 +13,13 @@ Coworker is a local-first Electron app for independent AI coworkers. Each cowork
 - Image attachments via picker or drag-and-drop, sent to vision-capable models
 - Searchable live model catalogs with OpenRouter pricing and quick per-coworker model switching
 
+## Appearance
+
+- Light, Dark, and System modes, independent of the selected color theme
+- Graphite, Forest, Ocean, Plum, and Clay themes in both light and dark mode
+- Quick **Appearance** controls in the workspace, coworker chat, and channel sidebars, also available in **Settings → General**
+- Switch in place without losing unsent drafts; saved choices restore across restarts, and System mode follows device changes
+
 ## Memory
 
 - One local `MEMORY.md` per coworker, shared across its conversations and retained across restarts

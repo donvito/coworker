@@ -13,6 +13,7 @@ import {
   BrowserWindow,
   Menu,
   nativeImage,
+  nativeTheme,
   powerMonitor,
   shell,
   Tray,
@@ -79,6 +80,14 @@ let shutdownFailed = false;
 let startupPromise: Promise<void> | null = null;
 const startedAt = new Date().toISOString();
 
+function windowBackgroundColor(): string {
+  return nativeTheme.shouldUseDarkColors ? "#15191d" : "#e9ecee";
+}
+
+nativeTheme.on("updated", () => {
+  mainWindow?.setBackgroundColor(windowBackgroundColor());
+});
+
 function showDesktop(): void {
   if (isQuitting || shutdownStarted) return;
   if (!ready) { showWhenReady = true; return; }
@@ -118,7 +127,7 @@ function createMainWindow(): BrowserWindow {
     minHeight: 760,
     show: false,
     title: appTitle,
-    backgroundColor: "#f2efe8",
+    backgroundColor: windowBackgroundColor(),
     icon: appIcon(),
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
     webPreferences: {
@@ -287,6 +296,8 @@ async function start(): Promise<void> {
     credentials,
     onSettingsChanged: async (settings) => {
       runInBackground = settings.runInBackground;
+      nativeTheme.themeSource = settings.colorMode;
+      mainWindow?.setBackgroundColor(windowBackgroundColor());
     },
   });
   // Reflect the OS registration without re-enabling entries the user disabled

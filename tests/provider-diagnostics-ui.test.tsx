@@ -55,6 +55,7 @@ describe("provider diagnostics settings", () => {
       launchAtLogin: false,
       runInBackground: true,
       theme: "forest",
+      colorMode: "light",
       showReasoning: true,
       globalOperatingInstructions: "Ask when information is missing.",
       defaultModelProvider: null,
@@ -72,17 +73,23 @@ describe("provider diagnostics settings", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Copy report" }));
     await waitFor(() => expect(copyProviderReport).toHaveBeenCalledOnce());
-    expect(screen.getByRole("status").textContent).toContain(
-      "Copied a redacted report with 1 provider error.",
+    await waitFor(() =>
+      expect(screen.getByRole("status").textContent).toContain(
+        "Copied a redacted report with 1 provider error.",
+      ),
     );
 
     expect(screen.queryByRole("button", { name: /Export report/ })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /Download diagnostics ZIP/ }));
     await waitFor(() => expect(exportSupportBundle).toHaveBeenCalledOnce());
-    expect(screen.getByRole("status").textContent).toContain("Diagnostics ZIP saved");
+    await waitFor(() =>
+      expect(screen.getByRole("status").textContent).toContain("Diagnostics ZIP saved"),
+    );
 
     fireEvent.click(screen.getByRole("button", { name: /Export all data/ }));
     await waitFor(() => expect(exportDataBackup).toHaveBeenCalledOnce());
-    expect(screen.getByRole("status").textContent).toContain("Complete data backup saved");
+    await waitFor(() =>
+      expect(screen.getByRole("status").textContent).toContain("Complete data backup saved"),
+    );
   });
 });

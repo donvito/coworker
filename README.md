@@ -35,6 +35,10 @@ Prebuilt installers for **macOS**, **Windows**, and **Linux** are on every [GitH
 
 The builds are not code-signed yet, so the OS warns on first launch. See [install notes](docs/releasing.md#after-you-download).
 
+## Appearance
+
+Choose **Light**, **Dark**, or **System** mode with any of the five themes: **Graphite**, **Forest**, **Ocean**, **Plum**, and **Clay**. Open **Appearance** at the bottom of the workspace or coworker chat sidebar to switch without leaving your page or losing an unsent draft. Your choices are saved across restarts; System mode follows your device. These controls are also in **Settings → General → Appearance**.
+
 ## Development
 
 Requires **Node.js 22.12+** and **pnpm**.

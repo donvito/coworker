@@ -429,11 +429,16 @@ export const appThemes = ["forest", "ocean", "plum", "clay", "graphite"] as cons
 
 export type AppTheme = (typeof appThemes)[number];
 
+export const appColorModes = ["light", "dark", "system"] as const;
+
+export type AppColorMode = (typeof appColorModes)[number];
+
 export interface AppSettings {
   runInBackground: boolean;
   launchAtLogin: boolean;
   demoMode: boolean;
   theme: AppTheme;
+  colorMode: AppColorMode;
   showReasoning: boolean;
   globalOperatingInstructions: string;
   defaultModelProvider: RemoteModelProvider | null;

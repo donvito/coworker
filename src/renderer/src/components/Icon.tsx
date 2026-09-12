@@ -25,9 +25,35 @@ export type IconName =
   | "archive"
   | "folder"
   | "tool"
+  | "sun"
+  | "moon"
+  | "monitor"
+  | "palette"
   | "copy";
 
 const paths: Record<IconName, React.ReactNode> = {
+  palette: (
+    <>
+      <path d="M12 3a9 9 0 1 0 0 18h1.1a1.9 1.9 0 0 0 1.3-3.2 1.9 1.9 0 0 1 1.3-3.2H18a3 3 0 0 0 3-3C21 6.8 17 3 12 3Z" />
+      <circle cx="7.5" cy="10" r=".75" fill="currentColor" />
+      <circle cx="10.5" cy="6.8" r=".75" fill="currentColor" />
+      <circle cx="15" cy="7.3" r=".75" fill="currentColor" />
+      <circle cx="17.5" cy="10.5" r=".75" fill="currentColor" />
+    </>
+  ),
+  sun: (
+    <>
+      <circle cx="12" cy="12" r="4" />
+      <path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5 19 19M5 19l1.5-1.5M17.5 6.5 19 5" />
+    </>
+  ),
+  moon: <path d="M20.5 13.3A8.8 8.8 0 0 1 10.7 3.5a9 9 0 1 0 9.8 9.8Z" />,
+  monitor: (
+    <>
+      <rect x="3" y="3" width="18" height="13" rx="2" />
+      <path d="M12 16v5M8 21h8" />
+    </>
+  ),
   home: <path d="m3 10 9-7 9 7v9a2 2 0 0 1-2 2h-5v-7h-4v7H5a2 2 0 0 1-2-2Z" />,
   people: (
     <>
