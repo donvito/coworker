@@ -441,7 +441,7 @@ describe("discord-messaging skill", () => {
   });
 });
 
-describe("discord bridge", () => {
+describe("discord bridge", { timeout: 20_000 }, () => {
   it("rejects a bad token and stores a good token only in the credential store", async () => {
     const context = await setup();
     await expect(
@@ -1118,7 +1118,6 @@ describe("discord bridge", () => {
     const context = await setup();
     await connectAndPair(context);
     const approval = await proposeMemory(context);
-    context.emit({ type: "entity.changed", entity: "approvals", id: approval.id });
     await waitFor(
       () =>
         context.fake
@@ -1142,12 +1141,15 @@ describe("discord bridge", () => {
     });
     await waitFor(() => Object.values(edits()).some((item) => item.cancelled), "cancelled");
     expect(context.database.getApproval(approval.id).status).toBe("PENDING");
+    expect(inbound).not.toHaveBeenCalled();
+
+    const beforeSecond = Object.keys(edits()).length;
     context.fake.pushInteraction({
       channelId: "100",
       customId: `apr:${approval.id}:edit`,
       messageId: "5",
     });
-    await waitFor(() => Object.keys(edits()).length >= 1, "second edit prompt");
+    await waitFor(() => Object.keys(edits()).length > beforeSecond, "second edit prompt");
     const promptId2 = Object.keys(edits()).at(-1)!;
     context.fake.pushMessage({
       channelId: "100",

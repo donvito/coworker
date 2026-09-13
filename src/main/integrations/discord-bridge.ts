@@ -223,6 +223,12 @@ export class DiscordBridgeService {
     this.flushSequenceWrite();
     await this.gateway?.stop();
     this.flushSequenceWrite();
+    if (this.config) {
+      this.saveConfig(
+        { sessionId: null, lastSequence: null, resumeUrl: null },
+        { notify: false },
+      );
+    }
     this.gateway = null;
     await this.outbound.catch(() => undefined);
     this.api = null;
@@ -528,10 +534,12 @@ export class DiscordBridgeService {
   private looksLikePairingAttempt(text: string): boolean {
     const config = this.config;
     if (!config) return false;
-    const compact = text.replace(/\s/g, "");
+    const trimmed = text.trim();
+    const compact = trimmed.replace(/\s/g, "");
     if (config.pairingCode && compact.toUpperCase() === config.pairingCode.toUpperCase()) return true;
     if (/^[0-9A-Fa-f]{16}$/.test(compact)) return true;
-    if (/^[A-Za-z0-9_-]{8,32}$/.test(compact)) return true;
+    // Single token only — do not treat ordinary sentences (e.g. "other channel") as codes.
+    if (/^[A-Za-z0-9_-]{8,32}$/.test(trimmed)) return true;
     if (config.botUserId && text.includes(`<@${config.botUserId}>`)) return true;
     if (config.botUsername && new RegExp(`@${config.botUsername}\\b`, "i").test(text)) return true;
     return false;
