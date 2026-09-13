@@ -982,7 +982,7 @@ describe("discord bridge", () => {
   it("closes and resumes when a heartbeat ACK is missing", async () => {
     const context = await setup({ heartbeatInterval: 40, ackHeartbeats: false });
     await context.service.configureDiscord({ botToken: testToken, coworkerId: context.ava.id });
-    await waitFor(() => context.fake.lastSocket()?.sentOps.includes(2), "identify");
+    await waitFor(() => Boolean(context.fake.lastSocket()?.sentOps.includes(2)), "identify");
     await waitFor(
       () => context.fake.sockets.some((socket) => socket.lastCloseCode === 4000),
       "missing ACK close",
@@ -997,7 +997,7 @@ describe("discord bridge", () => {
     await waitFor(() => context.fake.sockets.length >= 2, "wake reconnect");
     expect(context.fake.sockets[0]!.lastCloseCode).toBe(4000);
     await waitFor(
-      () => context.fake.lastSocket()?.sentOps.includes(6),
+      () => Boolean(context.fake.lastSocket()?.sentOps.includes(6)),
       "resume after wake",
     );
     expect(context.database.listActivity().filter((item) => item.type === "discord.conflict")).toEqual(

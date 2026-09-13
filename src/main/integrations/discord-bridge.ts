@@ -1279,14 +1279,12 @@ export class DiscordBridgeService {
     }
     if (!channelId) {
       channelId =
-        this.lastInboundThread.get(conversationId) ??
-        this.config?.lastThreads[conversationId] ??
-        null;
+        this.lastInboundThread.get(conversationId) ?? this.config?.lastThreads[conversationId];
       if (!channelId && config.channelType !== null && isDiscordForumType(config.channelType)) {
-        channelId = (await this.createOutboundThread(conversation)) ?? null;
+        channelId = await this.createOutboundThread(conversation);
         if (!channelId) return;
       } else if (!channelId) {
-        channelId = config.channelId;
+        channelId = config.channelId ?? undefined;
       }
     }
 
