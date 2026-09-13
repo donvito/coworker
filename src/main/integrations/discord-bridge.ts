@@ -27,11 +27,14 @@ import {
   DiscordRestApi,
   discordCredentialKey,
   discordDownloadLimit,
+  discordThreadTitleFromText,
   isDiscordForumType,
   isDiscordHumanMessage,
   isDiscordThreadType,
+  messageMentionsDiscordBot,
   parseDiscordConfig,
   resolveDiscordReceiptEmoji,
+  stripDiscordBotMentions,
   type DiscordApprovalEditRequest,
   type DiscordChannel,
   type DiscordInboundMessageRef,
@@ -141,6 +144,7 @@ export class DiscordBridgeService {
   private readonly approvalNotices = new Map<string, { messageId: string; channelId: string }>();
   private readonly pendingThreadNames = new Map<string, string>();
   private readonly channelCache = new Map<string, DiscordChannel>();
+  private readonly threadCreatesInFlight = new Map<string, Promise<string | null>>();
   private sequenceTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingSequence: { lastSequence: number | null; sessionId: string | null } | null = null;
 
@@ -250,6 +254,7 @@ export class DiscordBridgeService {
     this.approvalNotices.clear();
     this.pendingThreadNames.clear();
     this.channelCache.clear();
+    this.threadCreatesInFlight.clear();
   }
 
   async wake(): Promise<void> {
@@ -354,7 +359,7 @@ export class DiscordBridgeService {
       if (parentId === config.channelId && message.guild_id === config.guildId) {
         await this.sendPlain(
           message.channel_id,
-          `You're already connected — messages here go to ${this.linkedCoworkerName()}. Just send a message.`,
+          `You're already connected — @mention the bot in this channel to start a thread, or keep talking in an existing thread.`,
         );
         return;
       }
@@ -378,13 +383,50 @@ export class DiscordBridgeService {
       return;
     }
 
-    const conversationId = await this.resolveInboundConversation(message, channel);
+    if (!inThread) {
+      if (config.channelType !== null && isDiscordForumType(config.channelType)) return;
+      if (!messageMentionsDiscordBot(message.content ?? "", config.botUserId)) return;
+      const stripped = stripDiscordBotMentions(message.content ?? "", config.botUserId);
+      const threadId = await this.ensureMentionThread(message, stripped);
+      if (!threadId) return;
+      if (stripped === "/stop" || stripped.startsWith("/stop ")) {
+        await this.handleStopCommand(message, threadId);
+        return;
+      }
+      await this.injectInbound(message, this.channelCache.get(threadId) ?? null, {
+        threadId,
+        content: stripped,
+      });
+      return;
+    }
+
+    await this.injectInbound(message, channel);
+  }
+
+  private async injectInbound(
+    message: DiscordMessage,
+    channel: DiscordChannel | null,
+    options: { threadId?: string; content?: string } = {},
+  ): Promise<void> {
+    const config = this.config;
+    if (!config) return;
+    const replyThreadId = options.threadId ?? (channel && isDiscordThreadType(channel.type) ? message.channel_id : undefined);
+    const conversationId = replyThreadId
+      ? this.conversationForThread(replyThreadId, options.content ?? message.content ?? "")
+      : await this.resolveInboundConversation(message, channel);
+    if (!conversationId) return;
     const images = await this.collectInboundImages(message);
     const documentNote = await this.collectInboundDocuments(message);
-    const combined = [message.content ?? "", documentNote].filter(Boolean).join("\n\n");
-    if (!combined.trim() && images.length === 0) {
+    const textContent = stripDiscordBotMentions(
+      options.content ?? message.content ?? "",
+      config.botUserId,
+    );
+    const combined = [textContent, documentNote].filter(Boolean).join("\n\n");
+    const replyChannel = replyThreadId ?? message.channel_id;
+    const injectContent = combined.trim() || "(mentioned you in Discord)";
+    if (!combined.trim() && images.length === 0 && !options.threadId) {
       await this.sendPlain(
-        message.channel_id,
+        replyChannel,
         "I can only receive text, photos, and files here for now.",
       );
       return;
@@ -392,13 +434,13 @@ export class DiscordBridgeService {
 
     const clientMessageId = `discord:${message.id}`;
     this.injectedMessageIds.add(clientMessageId);
-    if (inThread) {
-      this.inboundThreadOrigins.set(clientMessageId, message.channel_id);
-      this.lastInboundThread.set(conversationId, message.channel_id);
-      if (config.lastThreads[conversationId] !== message.channel_id) {
+    if (replyThreadId) {
+      this.inboundThreadOrigins.set(clientMessageId, replyThreadId);
+      this.lastInboundThread.set(conversationId, replyThreadId);
+      if (config.lastThreads[conversationId] !== replyThreadId) {
         this.saveConfig(
           {
-            lastThreads: { ...config.lastThreads, [conversationId]: message.channel_id },
+            lastThreads: { ...config.lastThreads, [conversationId]: replyThreadId },
           },
           { notify: false },
         );
@@ -408,7 +450,7 @@ export class DiscordBridgeService {
     const release = this.tryBeginMutation();
     if (!release) {
       await this.sendPlain(
-        message.channel_id,
+        replyChannel,
         "The app is briefly busy creating a backup. Please resend this in a moment.",
       );
       return;
@@ -417,7 +459,7 @@ export class DiscordBridgeService {
       const receipt = await this.options.host.sendConversationMessage({
         conversationId,
         clientMessageId,
-        content: combined,
+        content: injectContent,
         mentionedCoworkerIds: [],
         images: images.length > 0 ? images : undefined,
       });
@@ -436,12 +478,118 @@ export class DiscordBridgeService {
     } catch (error) {
       this.options.onError?.("discord.inbound", error);
       await this.sendPlain(
-        message.channel_id,
+        replyChannel,
         `I couldn't pass that on: ${error instanceof Error ? error.message : "unknown error"}`,
       );
     } finally {
       release();
     }
+  }
+
+  private async ensureMentionThread(message: DiscordMessage, stripped: string): Promise<string | null> {
+    const config = this.config;
+    if (!config || !this.api) return null;
+    const knownId =
+      message.thread?.id ??
+      (config.threads[message.id] ? message.id : undefined);
+    if (knownId) {
+      this.mapMentionThread(
+        this.channelCache.get(knownId) ?? {
+          id: knownId,
+          type: 11,
+          guild_id: message.guild_id,
+          parent_id: config.channelId,
+          name: discordThreadTitleFromText(stripped),
+        },
+        stripped,
+      );
+      return knownId;
+    }
+    const inFlight = this.threadCreatesInFlight.get(message.id);
+    if (inFlight) return inFlight;
+    let finish!: (threadId: string | null) => void;
+    const gate = new Promise<string | null>((resolve) => {
+      finish = resolve;
+    });
+    this.threadCreatesInFlight.set(message.id, gate);
+    void this.createMentionThread(message, stripped)
+      .then(finish, () => finish(null))
+      .finally(() => this.threadCreatesInFlight.delete(message.id));
+    return gate;
+  }
+
+  private async createMentionThread(message: DiscordMessage, stripped: string): Promise<string | null> {
+    if (!this.api || !this.config) return null;
+    try {
+      const thread = await this.api.createThreadFromMessage({
+        channelId: message.channel_id,
+        messageId: message.id,
+        name: discordThreadTitleFromText(stripped),
+      });
+      this.cacheChannel(thread);
+      this.mapMentionThread(thread, stripped);
+      return thread.id;
+    } catch (error) {
+      if (error instanceof DiscordApiError && error.status === 400) {
+        try {
+          const existing = await this.api.getChannel(message.id);
+          if (isDiscordThreadType(existing.type)) {
+            this.cacheChannel(existing);
+            this.mapMentionThread(existing, stripped);
+            return existing.id;
+          }
+        } catch {
+          // Fall through to the failure path.
+        }
+      }
+      this.options.onError?.("discord.thread", error);
+      if (!this.threadFailureLogged.has(message.id)) {
+        this.threadFailureLogged.add(message.id);
+        const missingPermission = error instanceof DiscordApiError && error.status === 403;
+        this.options.database.addActivity({
+          type: "discord.thread_failed",
+          summary: missingPermission
+            ? "Couldn't start a Discord thread from that mention (missing Create Public Threads — re-invite with the same URL)"
+            : "Couldn't start a Discord thread from that mention",
+        });
+        this.options.emit({ type: "entity.changed", entity: "activity" });
+        await this.sendPlain(
+          message.channel_id,
+          missingPermission
+            ? "I couldn't start a thread here. I need Create Public Threads — re-invite the bot with the same URL, or talk in an existing thread."
+            : "I couldn't start a thread for that mention. Try again, or talk in an existing thread.",
+        );
+      }
+      return null;
+    }
+  }
+
+  private conversationForThread(threadId: string, titleSource: string): string | null {
+    const mapped = this.config?.threads[threadId];
+    if (mapped) return mapped;
+    this.mapMentionThread(
+      this.channelCache.get(threadId) ?? {
+        id: threadId,
+        type: 11,
+        name: discordThreadTitleFromText(titleSource),
+      },
+      titleSource,
+    );
+    return this.config?.threads[threadId] ?? null;
+  }
+
+  private mapMentionThread(thread: DiscordChannel, stripped: string): void {
+    if (!this.config || this.config.threads[thread.id]) return;
+    const title =
+      thread.name?.trim() ||
+      discordThreadTitleFromText(stripped) ||
+      `Discord thread ${thread.id}`;
+    const conversation = this.createThreadConversation(title);
+    if (!conversation) return;
+    this.saveConfig({
+      threads: { ...this.config.threads, [thread.id]: conversation.id },
+      lastThreads: { ...this.config.lastThreads, [conversation.id]: thread.id },
+    });
   }
 
   private persistInboundRef(clientMessageId: string, ref: DiscordInboundMessageRef): void {
@@ -507,7 +655,9 @@ export class DiscordBridgeService {
     this.options.emit({ type: "entity.changed", entity: "activity" });
     await this.sendPlain(
       message.channel_id,
-      `Connected. Messages here go to ${coworkerName}.`,
+      inThread
+        ? `Connected. Messages here go to ${coworkerName}.`
+        : `Connected. Messages here go to ${coworkerName}. @mention the bot in this channel to start a thread; messages in a thread continue without another mention.`,
     );
   }
 
@@ -876,8 +1026,8 @@ export class DiscordBridgeService {
         this.options.emit({ type: "entity.changed", entity: "coworkers", id: coworker.id });
       }
       const decision = action === "reject" ? "reject" : "approve";
-      const approval = await this.options.host.decideApproval({ approvalId, decision });
       this.approvalNotices.delete(approvalId);
+      const approval = await this.options.host.decideApproval({ approvalId, decision });
       const outcome =
         decision === "reject"
           ? "Rejected."

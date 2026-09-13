@@ -26,5 +26,5 @@ Do not call it for a normal reply in a conversation: the app already mirrors con
 ## Constraints
 
 - Photos up to 10 MB and other files up to 25 MB send as attachments. Larger files fail — say so and offer an alternative.
-- The message goes to the one Discord channel the user paired, or the thread they last wrote from in that conversation. You cannot message other servers or DMs.
+- The message goes to the mapped Discord thread for this conversation, or the thread the user last wrote from. Parent-channel chatter is mention-only. You cannot message other servers or DMs.
 - If the tool reports that Discord is not connected or paired, tell the user to connect it in Settings → Integrations and stop; do not retry.

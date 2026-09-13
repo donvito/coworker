@@ -10,11 +10,23 @@ import { modelSupportsImageInput } from "@main/integrations/model-catalog";
 import {
   discordCredentialKey,
   discordInvitePermissions,
+  discordThreadTitleFromText,
+  messageMentionsDiscordBot,
   parseDiscordConfig,
+  stripDiscordBotMentions,
 } from "@main/integrations/discord";
 import type { DesktopEvent } from "@shared/contracts";
 
 const testToken = "TESTTESTTESTTESTTEST.TEST1.TESTTESTTESTTESTTESTTEST";
+const botUserId = "99";
+
+function mention(text: string): string {
+  return `<@${botUserId}> ${text}`;
+}
+
+function mappedThreads(database: CoworkerDatabase) {
+  return parseDiscordConfig(database.getDiscordIntegration()!).threads;
+}
 const temporaryPaths: string[] = [];
 const services: DesktopAppService[] = [];
 
@@ -66,6 +78,7 @@ function fakeDiscord(
     ackHeartbeats?: boolean;
     reactionStatus?: number;
     message429Remaining?: number;
+    threadFromMessageStatus?: number;
   } = {},
 ) {
   const calls: Array<{ method: string; path: string; body: Record<string, unknown> }> = [];
@@ -216,6 +229,25 @@ function fakeDiscord(
       return respond(channels.get(channelMatch[1]!) ?? { id: channelMatch[1], type: 0, guild_id: "10", name: "unknown" });
     }
     if (method === "POST" && path.endsWith("/typing")) return respond(undefined, 204);
+    const fromMessage = path.match(/^\/channels\/(\d+)\/messages\/(\d+)\/threads$/);
+    if (method === "POST" && fromMessage) {
+      if (options.threadFromMessageStatus) {
+        return respond({ message: "Missing Permissions" }, options.threadFromMessageStatus);
+      }
+      const parentId = fromMessage[1]!;
+      const messageId = fromMessage[2]!;
+      const existing = channels.get(messageId);
+      if (existing && existing.type === 11) return respond(existing);
+      const thread = {
+        id: messageId,
+        type: 11,
+        guild_id: "10",
+        name: body.name,
+        parent_id: parentId,
+      };
+      channels.set(thread.id, thread);
+      return respond(thread);
+    }
     if (method === "POST" && path.endsWith("/threads")) {
       threadSeq += 1;
       const thread = {
@@ -273,6 +305,7 @@ function fakeDiscord(
       return sockets.at(-1);
     },
     pushMessage(input: {
+      id?: string;
       channelId: string;
       content?: string;
       guildId?: string | null;
@@ -291,8 +324,9 @@ function fakeDiscord(
       const socket = sockets.at(-1);
       if (!socket) throw new Error("Gateway is not connected");
       const channel = channels.get(input.channelId);
+      const id = input.id ?? String((messageSeq += 1));
       socket.dispatch("MESSAGE_CREATE", {
-        id: String((messageSeq += 1)),
+        id,
         channel_id: input.channelId,
         guild_id: input.guildId === null ? undefined : (input.guildId ?? "10"),
         type: input.type ?? 0,
@@ -349,6 +383,7 @@ async function setup(
     ackHeartbeats?: boolean;
     reactionStatus?: number;
     message429Remaining?: number;
+    threadFromMessageStatus?: number;
   } = {},
 ) {
   const root = await mkdtemp(join(tmpdir(), "coworker-discord-"));
@@ -534,8 +569,10 @@ describe("discord bridge", { timeout: 20_000 }, () => {
     const context = await setup();
     await connectAndPair(context);
     context.enqueue.mockClear();
-    context.fake.pushMessage({ channelId: "100", content: "Hello from Discord" });
-    const conversationId = `coworker:${context.ava.id}`;
+    context.fake.pushMessage({ id: "55", channelId: "100", content: mention("Hello from Discord") });
+    await waitFor(() => Object.keys(mappedThreads(context.database)).length === 1, "mention thread");
+    const conversationId = Object.values(mappedThreads(context.database))[0]!;
+    expect(conversationId).not.toBe(`coworker:${context.ava.id}`);
     await waitFor(
       () =>
         context.database
@@ -549,9 +586,10 @@ describe("discord bridge", { timeout: 20_000 }, () => {
     expect(matching).toHaveLength(1);
     expect(matching[0]!.id.startsWith("discord:")).toBe(true);
     expect(context.enqueue).toHaveBeenCalledTimes(1);
+    expect(context.fake.sent("POST", "/100/messages/55/threads")).toHaveLength(1);
 
     context.fake.pushMessage({
-      channelId: "100",
+      channelId: "55",
       content: "from another member",
       authorId: "42",
     });
@@ -560,7 +598,7 @@ describe("discord bridge", { timeout: 20_000 }, () => {
         context.database
           .listConversationMessages(conversationId)
           .some((message) => message.content === "from another member"),
-      "any human in the paired channel",
+      "any human in the mapped thread",
     );
 
     const before = context.fake.sent("POST", "/messages").length;
@@ -577,8 +615,9 @@ describe("discord bridge", { timeout: 20_000 }, () => {
   it("reacts with 👀 only after RUN_STARTED and survives a restart", async () => {
     const context = await setup();
     await connectAndPair(context);
-    context.fake.pushMessage({ channelId: "100", content: "please look" });
-    const conversationId = `coworker:${context.ava.id}`;
+    context.fake.pushMessage({ channelId: "100", content: mention("please look") });
+    await waitFor(() => Object.keys(mappedThreads(context.database)).length === 1, "mention thread");
+    const conversationId = Object.values(mappedThreads(context.database))[0]!;
     await waitFor(
       () =>
         context.database
@@ -630,7 +669,7 @@ describe("discord bridge", { timeout: 20_000 }, () => {
     await context.service.discord.restart();
     await waitFor(() => context.fake.sent("GET", "/gateway").length > 1, "restart");
     await new Promise((resolveWait) => setTimeout(resolveWait, 30));
-    context.fake.pushMessage({ channelId: "100", content: "emoji fallback" });
+    context.fake.pushMessage({ channelId: "100", content: mention("emoji fallback") });
     await waitFor(
       () =>
         Object.values(parseDiscordConfig(context.database.getDiscordIntegration()!).inboundMessages)
@@ -803,7 +842,7 @@ describe("discord bridge", { timeout: 20_000 }, () => {
     context.fake.registerFile("file-1", new Uint8Array([1, 2, 3, 4]));
     context.fake.pushMessage({
       channelId: "100",
-      content: "see attached",
+      content: mention("see attached"),
       attachments: [
         {
           id: "file-1",
@@ -816,8 +855,12 @@ describe("discord bridge", { timeout: 20_000 }, () => {
     await waitFor(
       () =>
         context.database
-          .listConversationMessages(`coworker:${context.ava.id}`)
-          .some((message) => message.content.includes("discord-inbox/")),
+          .listConversations(context.ava.id)
+          .some((conversation) =>
+            context.database
+              .listConversationMessages(conversation.id)
+              .some((message) => message.content.includes("discord-inbox/")),
+          ),
       "inbox note",
     );
     const inbox = join(context.root, "ava", "discord-inbox");
@@ -898,6 +941,23 @@ describe("discord bridge", { timeout: 20_000 }, () => {
       () => context.database.getApproval(result.approval.id).status === "APPROVED",
       "approved",
     );
+    await waitFor(
+      () =>
+        context.fake
+          .calls
+          .some(
+            (call) =>
+              call.method === "PATCH" &&
+              String(call.body.content).includes("Approved.") &&
+              !String(call.body.content).includes("desktop app"),
+          ),
+      "approved notice text",
+    );
+    expect(
+      context.fake.calls.some(
+        (call) => call.method === "PATCH" && String(call.body.content).includes("handled in the desktop app"),
+      ),
+    ).toBe(false);
   });
 
   it("moves the bot to another coworker and keeps the paired channel", async () => {
@@ -1079,7 +1139,7 @@ describe("discord bridge", { timeout: 20_000 }, () => {
     context.fake.registerFile("photo-1", jpeg);
     context.fake.pushMessage({
       channelId: "100",
-      content: "look at this",
+      content: mention("look at this"),
       attachments: [
         { id: "photo-1", filename: "shot.jpg", size: jpeg.byteLength, content_type: "image/jpeg" },
       ],
@@ -1097,7 +1157,7 @@ describe("discord bridge", { timeout: 20_000 }, () => {
     context.fake.registerFile("photo-2", jpeg);
     context.fake.pushMessage({
       channelId: "100",
-      content: "caption survives",
+      content: mention("caption survives"),
       attachments: [
         { id: "photo-2", filename: "shot2.jpg", size: jpeg.byteLength, content_type: "image/jpeg" },
       ],
@@ -1105,8 +1165,12 @@ describe("discord bridge", { timeout: 20_000 }, () => {
     await waitFor(
       () =>
         context.database
-          .listConversationMessages(`coworker:${context.ava.id}`)
-          .some((message) => message.content === "caption survives"),
+          .listConversations(context.ava.id)
+          .some((conversation) =>
+            context.database
+              .listConversationMessages(conversation.id)
+              .some((message) => message.content === "caption survives"),
+          ),
       "caption without image",
     );
     expect(
@@ -1242,7 +1306,7 @@ describe("discord bridge", { timeout: 20_000 }, () => {
   it("records receiptReactionDenied when the reaction PUT is 403", async () => {
     const context = await setup({ reactionStatus: 403 });
     await connectAndPair(context);
-    context.fake.pushMessage({ channelId: "100", content: "please look" });
+    context.fake.pushMessage({ channelId: "100", content: mention("please look") });
     await waitFor(
       () =>
         Object.values(parseDiscordConfig(context.database.getDiscordIntegration()!).inboundMessages).length === 1,
@@ -1304,5 +1368,195 @@ describe("discord bridge", { timeout: 20_000 }, () => {
           .some((call) => String(call.body.content).includes("typed on desktop")),
       "retried mirror",
     );
+  });
+
+  it("ignores parent-channel chatter and opens a thread only on @mention", async () => {
+    const context = await setup();
+    await connectAndPair(context);
+    const beforeMessages = context.database.listConversationMessages(`coworker:${context.ava.id}`).length;
+    const beforePosts = context.fake.sent("POST", "/messages").length;
+    context.fake.pushMessage({ channelId: "100", content: "just chatting in general" });
+    await new Promise((resolveWait) => setTimeout(resolveWait, 80));
+    expect(Object.keys(mappedThreads(context.database))).toHaveLength(0);
+    expect(context.database.listConversationMessages(`coworker:${context.ava.id}`)).toHaveLength(
+      beforeMessages,
+    );
+    expect(context.fake.sent("POST", "/messages").length).toBe(beforePosts);
+    expect(context.fake.sent("POST", "/threads")).toHaveLength(0);
+
+    context.fake.pushMessage({ id: "77", channelId: "100", content: mention("find AI jobs") });
+    await waitFor(() => Object.keys(mappedThreads(context.database))[0] === "77", "mention thread id");
+    const conversationId = mappedThreads(context.database)["77"]!;
+    expect(context.database.getConversation(conversationId).title).toBe("find AI jobs");
+    expect(
+      context.database
+        .listConversationMessages(conversationId)
+        .some((message) => message.content === "find AI jobs"),
+    ).toBe(true);
+    expect(
+      context.database
+        .listConversationMessages(`coworker:${context.ava.id}`)
+        .some((message) => message.content.includes("find AI jobs")),
+    ).toBe(false);
+    expect(context.fake.sent("POST", "/channels/100/messages/77/threads")).toHaveLength(1);
+  });
+
+  it("reuses one thread and conversation when the same mention is dispatched twice", async () => {
+    const context = await setup();
+    await connectAndPair(context);
+    const payload = { id: "88", channelId: "100", content: mention("dedupe me") };
+    context.fake.pushMessage(payload);
+    context.fake.pushMessage(payload);
+    await waitFor(
+      () =>
+        context.database
+          .listConversations(context.ava.id)
+          .some((conversation) =>
+            context.database
+              .listConversationMessages(conversation.id)
+              .some((message) => message.content === "dedupe me"),
+          ),
+      "injected once",
+    );
+    expect(Object.keys(mappedThreads(context.database))).toEqual(["88"]);
+    expect(context.fake.sent("POST", "/channels/100/messages/88/threads")).toHaveLength(1);
+    const conversationId = mappedThreads(context.database)["88"]!;
+    expect(
+      context.database
+        .listConversationMessages(conversationId)
+        .filter((message) => message.content === "dedupe me"),
+    ).toHaveLength(1);
+  });
+
+  it("keeps talking in a mapped thread without another mention and never nests threads", async () => {
+    const context = await setup();
+    await connectAndPair(context);
+    context.fake.pushMessage({ id: "90", channelId: "100", content: mention("first turn") });
+    await waitFor(() => Boolean(mappedThreads(context.database)["90"]), "first thread");
+    const conversationId = mappedThreads(context.database)["90"]!;
+    context.enqueue.mockClear();
+    context.fake.pushMessage({
+      id: "91",
+      channelId: "90",
+      content: mention("follow up still this conversation"),
+    });
+    await waitFor(
+      () =>
+        context.database
+          .listConversationMessages(conversationId)
+          .some((message) => message.content === "follow up still this conversation"),
+      "thread follow-up",
+    );
+    expect(Object.keys(mappedThreads(context.database))).toEqual(["90"]);
+    expect(context.fake.sent("POST", "/channels/90/messages/91/threads")).toHaveLength(0);
+    expect(context.enqueue).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not inject when creating a mention thread is forbidden", async () => {
+    const context = await setup({ threadFromMessageStatus: 403 });
+    await connectAndPair(context);
+    context.fake.pushMessage({ id: "92", channelId: "100", content: mention("please thread") });
+    await waitFor(
+      () =>
+        context.database.listActivity().some((item) => item.type === "discord.thread_failed"),
+      "thread failure activity",
+    );
+    expect(Object.keys(mappedThreads(context.database))).toHaveLength(0);
+    expect(
+      context.database
+        .listConversations(context.ava.id)
+        .some((conversation) =>
+          context.database
+            .listConversationMessages(conversation.id)
+            .some((message) => message.content.includes("please thread")),
+        ),
+    ).toBe(false);
+    expect(
+      context.fake
+        .sent("POST", "/messages")
+        .some((call) => String(call.body.content).includes("Create Public Threads")),
+    ).toBe(true);
+  });
+
+  it("restores mention-thread mapping after a restart", async () => {
+    const context = await setup();
+    await connectAndPair(context);
+    context.fake.pushMessage({ id: "93", channelId: "100", content: mention("persist this") });
+    await waitFor(() => Boolean(mappedThreads(context.database)["93"]), "mapped before restart");
+    const conversationId = mappedThreads(context.database)["93"]!;
+    await context.service.discord.stop();
+    await context.service.discord.start();
+    await waitFor(() => context.fake.sent("GET", "/gateway").length > 1, "reconnect");
+    await new Promise((resolveWait) => setTimeout(resolveWait, 30));
+    expect(mappedThreads(context.database)["93"]).toBe(conversationId);
+    context.fake.pushMessage({ channelId: "93", content: "still the same thread" });
+    await waitFor(
+      () =>
+        context.database
+          .listConversationMessages(conversationId)
+          .some((message) => message.content === "still the same thread"),
+      "post-restart thread message",
+    );
+    expect(context.fake.sent("POST", "/channels/100/messages/93/threads").length).toBe(1);
+  });
+
+  it("does not rewrite a Discord Approve notice as handled on desktop", async () => {
+    const context = await setup();
+    await connectAndPair(context);
+    const task = context.database.createTask({
+      coworkerId: context.ava.id,
+      title: "Send the file",
+      input: "send it to me",
+      threadId: `coworker:${context.ava.id}`,
+    });
+    const result = await context.service.tools.request({
+      task,
+      coworker: context.database.getCoworker(context.ava.id),
+      toolCallId: "call-apr-race",
+      toolName: "discord.send",
+      arguments: { message: "the invoice" },
+    });
+    expect(result.kind).toBe("approval");
+    if (result.kind !== "approval") return;
+    context.emit({ type: "entity.changed", entity: "approvals", id: result.approval.id });
+    await waitFor(
+      () =>
+        context.fake
+          .sent("POST", "/messages")
+          .some((call) => JSON.stringify(call.body.components ?? {}).includes(`apr:${result.approval.id}:approve`)),
+      "approval buttons",
+    );
+    context.fake.pushInteraction({
+      channelId: "100",
+      customId: `apr:${result.approval.id}:approve`,
+      messageId: "5",
+    });
+    await waitFor(
+      () => context.database.getApproval(result.approval.id).status === "APPROVED",
+      "approved",
+    );
+    await waitFor(
+      () =>
+        context.fake.calls.some(
+          (call) => call.method === "PATCH" && String(call.body.content).includes("Approved."),
+        ),
+      "approved label",
+    );
+    expect(
+      context.fake.calls.filter((call) => call.method === "PATCH").map((call) => call.body.content),
+    ).not.toContain("This approval was handled in the desktop app.");
+  });
+});
+
+describe("discord mention helpers", () => {
+  it("strips user and nick mentions and titles threads safely", () => {
+    expect(messageMentionsDiscordBot("hey <@99> there", "99")).toBe(true);
+    expect(messageMentionsDiscordBot("hey <@!99>", "99")).toBe(true);
+    expect(messageMentionsDiscordBot("hey <@88>", "99")).toBe(false);
+    expect(stripDiscordBotMentions("<@99> find AI jobs", "99")).toBe("find AI jobs");
+    expect(stripDiscordBotMentions("<@!99>", "99")).toBe("");
+    expect(discordThreadTitleFromText("")).toBe("Conversation");
+    expect(discordThreadTitleFromText("   \n\t")).toBe("Conversation");
+    expect(discordThreadTitleFromText("x".repeat(120)).length).toBeLessThanOrEqual(100);
   });
 });

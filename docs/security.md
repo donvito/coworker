@@ -8,7 +8,7 @@ Memory edits through the desktop, CLI, and controlled file tools use the same co
 
 Telegram approval buttons and edit replies are accepted only from the paired private-chat user for the linked coworker. An edit reply must address the recorded prompt in its original topic. Sending that reply approves its exact text; it is not forwarded to the model as a new message.
 
-Discord approval buttons and edit replies are accepted from any human in the paired guild channel or one of its threads. Other guild channels and DMs are ignored. An edit reply must address the recorded prompt. Sending that reply approves its exact text; it is not forwarded to the model as a new message.
+Discord approval buttons and edit replies are accepted from any human in the paired guild channel or one of its threads. Parent-channel chatter is ignored unless it @mentions the bot (that mention starts a thread). Other guild channels and DMs are ignored. An edit reply must address the recorded prompt. Sending that reply approves its exact text; it is not forwarded to the model as a new message.
 
 Memory approvals have no **Always allow** option. Approval and tool history retain the reviewed text, including rejected proposals and user edits.
 

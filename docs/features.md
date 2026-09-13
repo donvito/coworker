@@ -71,7 +71,8 @@ Pair one Discord server channel (or a thread/forum post in it) and message a cow
 
 - Invite the bot, then paste the pairing code in the channel or thread you want — that is the only pairing action
 - Threads and forum posts become their own desktop conversations
-- Anyone in the paired channel or thread can talk; other guild channels are ignored
+- In the paired parent channel, ordinary chatter is ignored; any human can @mention the bot to start a thread (named from the message) and talk there. Messages in that thread continue without another mention
+- Other guild channels are ignored
 - The bot reacts 👀 after it has injected the message and the coworker run has started
 - Replies finish as Discord markdown (typing while they work; no live draft stream)
 - Documents and photos move both ways into `discord-inbox/`

@@ -116,6 +116,31 @@ export function isDiscordHumanMessage(message: DiscordMessage): boolean {
   return message.type === 0 || message.type === 19;
 }
 
+export function messageMentionsDiscordBot(content: string, botUserId: string): boolean {
+  if (!botUserId) return false;
+  return content.includes(`<@${botUserId}>`) || content.includes(`<@!${botUserId}>`);
+}
+
+export function stripDiscordBotMentions(content: string, botUserId: string): string {
+  if (!botUserId) return content.trim();
+  const escaped = botUserId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return content
+    .replace(new RegExp(`<@!?${escaped}>`, "g"), " ")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+}
+
+/** Discord thread names are 1–100 characters. Empty/control-only text gets a usable fallback. */
+export function discordThreadTitleFromText(text: string): string {
+  const cleaned = text
+    .replace(/[\u0000-\u001f\u007f]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!cleaned) return "Conversation";
+  return cleaned.length > 100 ? `${cleaned.slice(0, 99)}…` : cleaned;
+}
+
 export interface DiscordButton {
   type: 2;
   style: 1 | 2 | 3 | 4 | 5;
@@ -496,13 +521,31 @@ export class DiscordRestApi {
     );
   }
 
+  /** Start a public thread from an existing parent-channel message (thread id === message id). */
+  createThreadFromMessage(input: {
+    channelId: string;
+    messageId: string;
+    name: string;
+  }): Promise<DiscordChannel> {
+    return this.request<DiscordChannel>(
+      "POST",
+      `/channels/${input.channelId}/messages/${input.messageId}/threads`,
+      {
+        body: {
+          name: discordThreadTitleFromText(input.name),
+          auto_archive_duration: 10080,
+        },
+      },
+    );
+  }
+
   createThread(input: {
     channelId: string;
     name: string;
     forum?: boolean;
     message?: string;
   }): Promise<DiscordChannel> {
-    const name = input.name.slice(0, 100) || "Conversation";
+    const name = discordThreadTitleFromText(input.name);
     if (input.forum) {
       return this.request<DiscordChannel>("POST", `/channels/${input.channelId}/threads`, {
         body: {

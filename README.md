@@ -29,7 +29,7 @@ Coworker is a local-first desktop app for independent AI coworkers. There is **n
 - **Scheduler** — persistent cron and one-time jobs, in plain language, with crash recovery.
 - **Approvals** — consequential actions pause until you approve or reject them, in the app or from Telegram or Discord.
 - **Telegram** — pair a private chat and message a coworker from your phone. Replies, files, and approval buttons stay in sync with the desktop.
-- **Discord** — pair a server channel (or a thread in it) by posting a pairing code. Threads map to desktop conversations; replies, files, 👀 receipts, and approval buttons stay in sync. Telegram can stay connected at the same time.
+- **Discord** — pair a server channel (or a thread in it) by posting a pairing code. @mention the bot in that channel to start a thread; existing threads stay their own conversations. Replies, files, 👀 receipts, and approval buttons stay in sync. Telegram can stay connected at the same time.
 
 ## Download
 

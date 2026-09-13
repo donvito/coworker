@@ -1478,7 +1478,7 @@ export function SettingsPage({
                               ? discordStatus?.gatewayError ??
                                 "Discord Gateway is not connected"
                               : discordPaired
-                                ? "Paired — anyone in that channel or its threads can talk"
+                                ? "Paired — @mention the bot in the channel to start a thread"
                                 : "Not paired — invite the bot, then paste the code"}
                           </small>
                         </div>
@@ -1581,7 +1581,8 @@ export function SettingsPage({
 
                     {discordConnected && discordPaired ? (
                       <p className="discord-hint">
-                        Each Discord thread or forum post becomes its own conversation here.
+                        Mention the bot in the paired channel to start a thread (its own
+                        conversation). Messages in that thread continue without another mention.
                         Anyone who can see the paired channel can see replies and approvals.
                         {discordStatus?.receiptReactionDenied
                           ? " Receipts need Add Reactions and Read Message History — re-invite with the same URL if 👀 is missing."

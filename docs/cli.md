@@ -197,7 +197,7 @@ coworker discord unpair
 coworker discord disconnect
 ```
 
-The token is entered through hidden terminal input or stdin and is stored using the same OS-backed credential store as the desktop. After configuring, invite the bot with the printed URL (leave the pre-selected permissions as-is), turn on Message Content Intent if the printed portal link says so, and post the pairing code in the Discord channel or thread you want. Confirm the status shows the guild and `#channel` before sending work. `unpair` keeps the bot configured, issues a new code, and requires pairing again; `disconnect` removes the Discord connection and deletes the token.
+The token is entered through hidden terminal input or stdin and is stored using the same OS-backed credential store as the desktop. After configuring, invite the bot with the printed URL (leave the pre-selected permissions as-is), turn on Message Content Intent if the printed portal link says so, and post the pairing code in the Discord channel or thread you want. Confirm the status shows the guild and `#channel` before sending work. In a paired text channel, @mention the bot to start a thread; ordinary parent-channel chatter is ignored. `unpair` keeps the bot configured, issues a new code, and requires pairing again; `disconnect` removes the Discord connection and deletes the token.
 
 `discord configure`, `discord unpair`, and `discord status` print the invite URL, pairing code, and Message Content Intent link while waiting for pairing. Once paired, they show the coworker, guild, and `#channel` (plus a thread name if you paired from one). The main `status` command distinguishes an unconfigured Discord integration from connected, disconnected, and error states. Telegram and Discord may both be connected.
 
