@@ -10,6 +10,7 @@ import type {
   ProviderErrorDiagnostic,
   RemoteModelProvider,
   Skill,
+  DiscordIntegrationStatus,
   TelegramIntegrationStatus,
   WebSearchProvider,
 } from "@shared/contracts";
@@ -87,6 +88,9 @@ export function SettingsPage({
   );
   const [telegramStatus, setTelegramStatus] = useState<TelegramIntegrationStatus | null>(null);
   const [telegramCoworkerChoice, setTelegramCoworkerChoice] = useState<string | null>(null);
+  const [discordStatus, setDiscordStatus] = useState<DiscordIntegrationStatus | null>(null);
+  const [discordCoworkerChoice, setDiscordCoworkerChoice] = useState<string | null>(null);
+  const [discordCodeCopied, setDiscordCodeCopied] = useState(false);
   const [confirmingArchivedDelete, setConfirmingArchivedDelete] = useState<string | null>(null);
 
   const knownProviderCards = remoteModelProviderDefinitions.filter(
@@ -171,8 +175,12 @@ export function SettingsPage({
       .telegramStatus()
       .then(setTelegramStatus)
       .catch(() => setTelegramStatus(null));
+    void window.coworker.integrations
+      .discordStatus()
+      .then(setDiscordStatus)
+      .catch(() => setDiscordStatus(null));
     // Refetches whenever a snapshot refresh reports integration changes, so
-    // pairing completed from the Telegram side appears without a manual reload.
+    // pairing completed from Telegram or Discord appears without a manual reload.
   }, [tab, integrations]);
 
   async function refreshProviderErrors() {
@@ -414,6 +422,87 @@ export function SettingsPage({
       setNotice(unpairError instanceof Error ? unpairError.message : String(unpairError));
     } finally {
       setWorking(false);
+    }
+  }
+
+  async function configureDiscord(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    setWorking(true);
+    setNotice(null);
+    try {
+      const chosenCoworkerId = String(data.get("coworkerId") || "");
+      const status = await window.coworker.integrations.configureDiscord({
+        botToken: String(data.get("botToken") || "") || undefined,
+        coworkerId: chosenCoworkerId,
+      });
+      setDiscordStatus(status);
+      setDiscordCoworkerChoice(null);
+      form.reset();
+      await onChanged();
+      const chosenName = coworkers.find(
+        (candidate) => candidate.id === chosenCoworkerId,
+      )?.name;
+      setNoticeKind("success");
+      setNotice(
+        status.pairingCode
+          ? "Discord bot connected. One step left: invite the bot, then paste the pairing code."
+          : `Discord bot connected — messages go to ${chosenName ?? "your coworker"}.`,
+      );
+    } catch (configureError) {
+      setNoticeKind("error");
+      setNotice(
+        configureError instanceof Error ? configureError.message : String(configureError),
+      );
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function unpairDiscord() {
+    setWorking(true);
+    setNotice(null);
+    try {
+      setDiscordStatus(await window.coworker.integrations.unpairDiscord());
+      await onChanged();
+      setNoticeKind("success");
+      setNotice("Discord channel unpaired. Invite is unchanged — paste the new code to pair again.");
+    } catch (unpairError) {
+      setNoticeKind("error");
+      setNotice(unpairError instanceof Error ? unpairError.message : String(unpairError));
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function disconnectDiscord() {
+    setWorking(true);
+    setNotice(null);
+    try {
+      await window.coworker.integrations.disconnectDiscord();
+      setDiscordStatus(await window.coworker.integrations.discordStatus());
+      await onChanged();
+      setNoticeKind("success");
+      setNotice("Discord bot disconnected and its token removed.");
+    } catch (disconnectError) {
+      setNoticeKind("error");
+      setNotice(
+        disconnectError instanceof Error ? disconnectError.message : String(disconnectError),
+      );
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function copyDiscordPairingCode(code: string) {
+    try {
+      await window.coworker.app.copyText(code);
+      setDiscordCodeCopied(true);
+      window.setTimeout(() => setDiscordCodeCopied(false), 1500);
+    } catch (copyError) {
+      setNoticeKind("error");
+      setNotice(copyError instanceof Error ? copyError.message : String(copyError));
     }
   }
 
@@ -1317,6 +1406,221 @@ export function SettingsPage({
                               ? `Move bot to ${chosenCoworker?.name}`
                               : "Save changes"
                             : "Connect Telegram bot"}
+                        </button>
+                      </div>
+                    </form>
+                  </>
+                );
+              })()}
+
+              <h2 className="integration-divider">Discord bot</h2>
+              {(() => {
+                const discordIntegration =
+                  discordStatus?.integration ??
+                  integrations.find((item) => item.type === "discord") ??
+                  null;
+                const discordConfig = (discordIntegration?.config ?? {}) as {
+                  botUsername?: string;
+                  coworkerId?: string;
+                  guildId?: string | null;
+                  channelId?: string | null;
+                  channelName?: string | null;
+                  pairedThreadName?: string | null;
+                };
+                const discordConnected = discordIntegration?.status === "connected";
+                const discordPaired = Boolean(discordConfig.guildId && discordConfig.channelId);
+                const linkedCoworker = coworkers.find(
+                  (candidate) => candidate.id === discordConfig.coworkerId,
+                );
+                const chosenCoworkerId =
+                  discordCoworkerChoice ?? discordConfig.coworkerId ?? coworkers[0]?.id;
+                const chosenCoworker =
+                  coworkers.find((candidate) => candidate.id === chosenCoworkerId) ?? null;
+                const relinking = Boolean(
+                  discordConnected &&
+                    linkedCoworker &&
+                    chosenCoworker &&
+                    chosenCoworker.id !== linkedCoworker.id,
+                );
+                const channelLabel = discordStatus?.channelName ?? discordConfig.channelName;
+                const threadLabel = discordStatus?.threadName ?? discordConfig.pairedThreadName;
+                const intentOff = discordStatus?.messageContentIntentEnabled === false;
+                return (
+                  <>
+                    <p>
+                      Chat with one coworker from a Discord server channel — messages
+                      mirror both ways. Telegram can stay connected at the same time.
+                    </p>
+
+                    {discordConnected ? (
+                      <div className="discord-connection">
+                        <span
+                          aria-hidden="true"
+                          className={
+                            discordPaired ? "connection-dot connected" : "connection-dot"
+                          }
+                        />
+                        <div className="discord-connection-identity">
+                          <strong>
+                            {discordIntegration?.name} ⇄{" "}
+                            {linkedCoworker
+                              ? `${linkedCoworker.name} (${linkedCoworker.role})`
+                              : "no coworker"}
+                            {discordPaired && channelLabel
+                              ? ` in #${channelLabel}`
+                              : ""}
+                            {discordPaired && threadLabel ? ` · ${threadLabel}` : ""}
+                          </strong>
+                          <small>
+                            {discordPaired
+                              ? "Paired — anyone in that channel or its threads can talk"
+                              : "Not paired — invite the bot, then paste the code"}
+                          </small>
+                        </div>
+                        <div className="discord-connection-actions">
+                          {discordPaired ? (
+                            <button
+                              type="button"
+                              className="secondary-button"
+                              disabled={working}
+                              onClick={() => void unpairDiscord()}
+                            >
+                              Unpair channel
+                            </button>
+                          ) : null}
+                          <button
+                            type="button"
+                            className="secondary-button"
+                            disabled={working}
+                            onClick={() => void disconnectDiscord()}
+                          >
+                            Disconnect
+                          </button>
+                        </div>
+                      </div>
+                    ) : null}
+
+                    {discordConnected && discordStatus?.pairingCode ? (
+                      <div className="discord-pairing">
+                        <strong>One step left: invite the bot, then paste this code</strong>
+                        <ol className="discord-pairing-steps">
+                          <li>
+                            Invite the bot (leave the pre-selected permissions as-is). If you
+                            paste the code first, nothing happens until you invite and paste
+                            again.
+                          </li>
+                          <li>Paste this in the channel or thread you want.</li>
+                        </ol>
+                        <div className="discord-pairing-actions">
+                          {discordStatus.inviteUrl ? (
+                            <a
+                              className="primary-button"
+                              href={discordStatus.inviteUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              Invite bot to Discord
+                            </a>
+                          ) : null}
+                          <code className="discord-pairing-code">{discordStatus.pairingCode}</code>
+                          <button
+                            type="button"
+                            className="secondary-button"
+                            onClick={() =>
+                              void copyDiscordPairingCode(discordStatus.pairingCode!)
+                            }
+                          >
+                            {discordCodeCopied ? "Copied" : "Copy"}
+                          </button>
+                        </div>
+                        <p>
+                          Messages there go to{" "}
+                          <strong>{linkedCoworker?.name ?? "your coworker"}</strong>.
+                        </p>
+                        {discordStatus.intentSettingsUrl ? (
+                          <p className={intentOff ? "discord-intent-warning" : "discord-hint"}>
+                            {intentOff
+                              ? "Discord says the bot cannot read message content. "
+                              : "If Discord says the bot cannot read message content: "}
+                            <a
+                              href={discordStatus.intentSettingsUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              Turn on Message Content Intent
+                            </a>{" "}
+                            → Privileged Gateway Intents.
+                          </p>
+                        ) : null}
+                      </div>
+                    ) : null}
+
+                    {discordConnected && discordPaired ? (
+                      <p className="discord-hint">
+                        Each Discord thread or forum post becomes its own conversation here.
+                        Anyone who can see the paired channel can see replies and approvals.
+                        {discordStatus?.receiptReactionDenied
+                          ? " Receipts need Add Reactions and Read Message History — re-invite with the same URL if 👀 is missing."
+                          : ""}
+                      </p>
+                    ) : null}
+
+                    {!discordConnected ? (
+                      <ol className="discord-steps">
+                        <li>
+                          Create a Discord app → Bot → copy the token.
+                        </li>
+                        <li>
+                          You will turn on <strong>Message Content Intent</strong> after
+                          Coworker verifies the token (we’ll link the exact page).
+                        </li>
+                      </ol>
+                    ) : null}
+
+                    <form className="form-stack integration-form" onSubmit={configureDiscord}>
+                      <label>
+                        <span>{discordConnected ? "Replace bot token (optional)" : "Bot token"}</span>
+                        <input
+                          name="botToken"
+                          type="password"
+                          placeholder={
+                            discordIntegration
+                              ? "Stored — enter a value to replace"
+                              : "Paste the bot token"
+                          }
+                        />
+                      </label>
+                      <label>
+                        <span>Linked coworker</span>
+                        <select
+                          name="coworkerId"
+                          onChange={(event) => setDiscordCoworkerChoice(event.target.value)}
+                          value={chosenCoworkerId}
+                        >
+                          {coworkers.map((candidate) => (
+                            <option key={candidate.id} value={candidate.id}>
+                              {candidate.name} — {candidate.role}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      {relinking ? (
+                        <p className="discord-relink-warning" role="alert">
+                          This bot currently chats with {linkedCoworker!.name}. Saving moves
+                          it to {chosenCoworker!.name} and disconnects {linkedCoworker!.name}{" "}
+                          from Discord.
+                          {discordPaired
+                            ? " Your paired channel carries over — no re-pairing needed."
+                            : ""}
+                        </p>
+                      ) : null}
+                      <div>
+                        <button className="primary-button" disabled={working}>
+                          {discordConnected
+                            ? relinking
+                              ? `Move bot to ${chosenCoworker?.name}`
+                              : "Save changes"
+                            : "Connect Discord bot"}
                         </button>
                       </div>
                     </form>

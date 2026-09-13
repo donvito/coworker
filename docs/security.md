@@ -6,7 +6,13 @@ Each coworker's saved memory is a plaintext UTF-8 `MEMORY.md` in its workspace, 
 
 Memory edits through the desktop, CLI, and controlled file tools use the same confined file boundary with validation and revision checks. Every agent-proposed memory change requires a durable approval, even if its file tool is set to automatic or the user explicitly asked it to remember something. The application enforces this boundary for whole-file writes, focused text edits, and confined file aliases; document exporters and downloads cannot overwrite managed context. User edits to a proposal can change its text, while its target, original text, and revision remain fixed. Rejected or stale proposals do not change memory. Direct user-operated settings and CLI edits save without an extra approval.
 
-Telegram approval buttons and edit replies are accepted only from the paired private-chat user for the linked coworker. An edit reply must address the recorded prompt in its original topic. Sending that reply approves its exact text; it is not forwarded to the model as a new message. Memory approvals have no **Always allow** option. Approval and tool history retain the reviewed text, including rejected proposals and user edits.
+Telegram approval buttons and edit replies are accepted only from the paired private-chat user for the linked coworker. An edit reply must address the recorded prompt in its original topic. Sending that reply approves its exact text; it is not forwarded to the model as a new message.
+
+Discord approval buttons and edit replies are accepted from any human in the paired guild channel or one of its threads. Other guild channels and DMs are ignored. An edit reply must address the recorded prompt. Sending that reply approves its exact text; it is not forwarded to the model as a new message.
+
+Memory approvals have no **Always allow** option. Approval and tool history retain the reviewed text, including rejected proposals and user edits.
+
+Discord and Telegram bot tokens live in the OS credential store, never SQLite, activity, or logs. Discord inbound text requires the privileged Message Content Intent (a Developer Portal toggle, not an OAuth permission). Receipt reactions use Add Reactions and Read Message History; a 403 is logged without the token and surfaced as a one-line Settings hint. The bot reacts 👀 only after a successful inject plus `RUN_STARTED`, using persisted message snowflakes so a delayed run can still react after restart.
 
 Clearing memory removes the saved text from future turn context; it does not erase earlier conversations, tool history, existing backups, or data already sent to a provider. Disabling the memory skill does not stop existing memory from loading. See the [memory guide](memory.md) for editing and clearing it.
 

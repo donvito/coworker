@@ -19,6 +19,7 @@ import {
   conversationSearchSchema,
   createTaskSchema,
   configureTelegramSchema,
+  configureDiscordSchema,
   createConversationSchema,
   idSchema,
   listLimitSchema,
@@ -65,6 +66,9 @@ const mutationChannels = new Set<string>([
   ipcChannels.integrationsConfigureTelegram,
   ipcChannels.integrationsUnpairTelegram,
   ipcChannels.integrationsDisconnectTelegram,
+  ipcChannels.integrationsConfigureDiscord,
+  ipcChannels.integrationsUnpairDiscord,
+  ipcChannels.integrationsDisconnectDiscord,
   ipcChannels.skillsInstallFromUrl,
   ipcChannels.skillsInstallFromContent,
   ipcChannels.skillsInstallFromPackage,
@@ -334,6 +338,14 @@ export function registerIpc(input: {
   handle(ipcChannels.integrationsUnpairTelegram, () => input.service.unpairTelegram());
   handle(ipcChannels.integrationsDisconnectTelegram, () =>
     input.service.disconnectTelegram(),
+  );
+  handle(ipcChannels.integrationsConfigureDiscord, (_event, value) =>
+    input.service.configureDiscord(configureDiscordSchema.parse(value)),
+  );
+  handle(ipcChannels.integrationsDiscordStatus, () => input.service.discordStatus());
+  handle(ipcChannels.integrationsUnpairDiscord, () => input.service.unpairDiscord());
+  handle(ipcChannels.integrationsDisconnectDiscord, () =>
+    input.service.disconnectDiscord(),
   );
 
   handle(ipcChannels.agentsRun, (_event, value) =>

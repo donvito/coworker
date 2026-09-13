@@ -1,6 +1,6 @@
 # Terminal and headless guide
 
-Coworker includes a CLI for headless operation and administration. It uses the Electron runtime bundled with the desktop app; no separate Node installation is needed for an installed app. Headless mode creates no window or tray, but still runs workers, schedules, and configured Telegram connections. This release requires a desktop environment and access to the user's OS credential storage; it is not a display-free Linux server distribution.
+Coworker includes a CLI for headless operation and administration. It uses the Electron runtime bundled with the desktop app; no separate Node installation is needed for an installed app. Headless mode creates no window or tray, but still runs workers, schedules, and configured Telegram and Discord connections. This release requires a desktop environment and access to the user's OS credential storage; it is not a display-free Linux server distribution.
 
 ## Coworker memory
 
@@ -87,7 +87,7 @@ coworker run --headless
 
 `start` runs headless in the background and returns after readiness. It returns the existing instance's status if that profile is already running. `run --headless` stays in the foreground and refuses to attach to an existing owner; Ctrl-C or SIGTERM shuts it down. A supervisor can use this foreground command, but the CLI does not install OS services.
 
-A profile has one owner. Opening the desktop while headless mode is running reveals that owner's UI without duplicating schedules, Telegram polling, or workers. CLI changes are visible in the desktop. Closing the desktop retains the existing **Run in background** setting; `stop` explicitly quits the entire instance.
+A profile has one owner. Opening the desktop while headless mode is running reveals that owner's UI without duplicating schedules, Telegram polling, Discord Gateway, or workers. CLI changes are visible in the desktop. Closing the desktop retains the existing **Run in background** setting; `stop` explicitly quits the entire instance.
 
 `restart` preserves the owning app executable and identity, profile, and whether the app has desktop UI. It stops services, flushes logs, waits for process exit, and starts the replacement. Active tasks follow the app's existing interrupted-task recovery on restart. Shutdown failures or timeouts are reported; the CLI never silently force-kills the owner. Configuration commands do not start an app automatically because startup also activates scheduled work.
 
@@ -184,6 +184,22 @@ coworker telegram disconnect
 The token is entered through hidden terminal input or stdin and is stored using the same OS-backed credential store as the desktop. After configuring, send the pairing link/code to the bot and confirm `Pairing: paired` before sending work. `unpair` keeps the bot configured but requires pairing again; `disconnect` removes the Telegram connection.
 
 `telegram configure`, `telegram unpair`, and `telegram status` print the pairing link while waiting for pairing. Once paired, they show the chat ID instead. The main `status` command distinguishes an unconfigured Telegram integration from connected, disconnected, and error states.
+
+## Discord
+
+Configure the bot without exposing its token in shell history:
+
+```sh
+coworker discord configure COWORKER_ID --prompt-token
+# or: printf '%s' "$DISCORD_BOT_TOKEN" | coworker discord configure COWORKER_ID --token-stdin
+coworker discord status
+coworker discord unpair
+coworker discord disconnect
+```
+
+The token is entered through hidden terminal input or stdin and is stored using the same OS-backed credential store as the desktop. After configuring, invite the bot with the printed URL (leave the pre-selected permissions as-is), turn on Message Content Intent if the printed portal link says so, and post the pairing code in the Discord channel or thread you want. Confirm the status shows the guild and `#channel` before sending work. `unpair` keeps the bot configured, issues a new code, and requires pairing again; `disconnect` removes the Discord connection and deletes the token.
+
+`discord configure`, `discord unpair`, and `discord status` print the invite URL, pairing code, and Message Content Intent link while waiting for pairing. Once paired, they show the coworker, guild, and `#channel` (plus a thread name if you paired from one). The main `status` command distinguishes an unconfigured Discord integration from connected, disconnected, and error states. Telegram and Discord may both be connected.
 
 ## Skills, schedules, and approvals
 

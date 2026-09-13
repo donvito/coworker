@@ -24,6 +24,7 @@ import type {
   RemoteModelProvider,
   SendConversationMessageInput,
   Task,
+  DiscordIntegrationStatus,
   TelegramIntegrationStatus,
   UpdateConversationInput,
   WebSearchProvider,
@@ -80,11 +81,23 @@ import {
   type TelegramIntegrationConfig,
 } from "@main/integrations/telegram";
 import { TelegramBridgeService } from "@main/integrations/telegram-bridge";
+import {
+  DiscordRestApi,
+  discordCredentialKey,
+  discordIntentSettingsUrl,
+  discordInviteUrl,
+  messageContentIntentEnabled,
+  mintDiscordPairingCode,
+  parseDiscordConfig,
+  type DiscordIntegrationConfig,
+  type DiscordWebSocketConstructor,
+} from "@main/integrations/discord";
+import { DiscordBridgeService } from "@main/integrations/discord-bridge";
 import { DISCUSSION_PASS_MARKER, isDiscussionPass } from "@shared/discussion";
 import { defaultEnabledBundledSkillNames } from "@shared/skill-capabilities";
 import { BrowserAutomationService } from "@main/integrations/browser-automation";
 import { memoryFile, type UpdateMemoryInput } from "@shared/workspace-context";
-import { updateMemorySchema } from "@shared/validation";
+import { configureDiscordSchema, updateMemorySchema } from "@shared/validation";
 import { readWorkspaceText, writeWorkspaceText } from "@main/tools/workspace-text";
 
 export interface DesktopAppServiceOptions {
@@ -100,6 +113,12 @@ export interface DesktopAppServiceOptions {
     fetchImpl?: typeof fetch;
     pollTimeoutSeconds?: number;
     draftKeepAliveMs?: number;
+  };
+  /** Test hooks for the Discord bridge (fake REST + Gateway). */
+  discord?: {
+    fetchImpl?: typeof fetch;
+    WebSocketImpl?: DiscordWebSocketConstructor;
+    typingKeepAliveMs?: number;
   };
 }
 
@@ -135,6 +154,7 @@ export class DesktopAppService {
   readonly runtime: CoworkerRuntimeManager;
   readonly scheduler: SchedulerService;
   readonly telegram: TelegramBridgeService;
+  readonly discord: DiscordBridgeService;
   readonly tools: ToolGateway;
   readonly browser: BrowserAutomationService;
   readonly providerErrors: ProviderErrorLogger;
@@ -158,7 +178,11 @@ export class DesktopAppService {
         createSchedule: (input) => this.createSchedule(input),
         browser: this.browser,
       },
-      { dataPath: options.dataPath, telegramFetch: options.telegram?.fetchImpl },
+      {
+        dataPath: options.dataPath,
+        telegramFetch: options.telegram?.fetchImpl,
+        discordFetch: options.discord?.fetchImpl,
+      },
     );
     this.runtime = new CoworkerRuntimeManager({
       database: this.database,
@@ -186,6 +210,16 @@ export class DesktopAppService {
       fetchImpl: options.telegram?.fetchImpl,
       pollTimeoutSeconds: options.telegram?.pollTimeoutSeconds,
       draftKeepAliveMs: options.telegram?.draftKeepAliveMs,
+    });
+    this.discord = new DiscordBridgeService({
+      database: this.database,
+      credentials: options.credentials,
+      host: this,
+      emit: (event) => this.emit(event),
+      onError: (scope, error) => void options.applicationLogger?.error(scope, error),
+      fetchImpl: options.discord?.fetchImpl,
+      WebSocketImpl: options.discord?.WebSocketImpl,
+      typingKeepAliveMs: options.discord?.typingKeepAliveMs,
     });
   }
 
@@ -230,6 +264,7 @@ export class DesktopAppService {
     await this.options.onSettingsChanged?.(this.database.getSettings());
     await this.scheduler.start();
     await this.telegram.start();
+    await this.discord.start();
     await this.recoverDiscussions();
     for (const coworker of this.database.listCoworkers()) {
       if (this.database.listTasks(coworker.id).some((task) => task.status === "QUEUED")) {
@@ -243,6 +278,7 @@ export class DesktopAppService {
     this.runtime.pauseDispatch();
     this.scheduler.stop();
     await this.telegram.stop();
+    await this.discord.stop();
     await this.runtime.stopAll();
     await this.browser.closeAll();
     this.database.close();
@@ -1277,6 +1313,196 @@ export class DesktopAppService {
     this.emit({ type: "entity.changed", entity: "coworkers", id: coworkerId });
   }
 
+  async configureDiscord(input: {
+    botToken?: string;
+    coworkerId: string;
+  }): Promise<DiscordIntegrationStatus> {
+    const parsed = configureDiscordSchema.parse(input);
+    const coworker = this.database.getCoworker(parsed.coworkerId);
+    const submittedToken = parsed.botToken?.trim();
+    const storedToken = submittedToken
+      ? null
+      : await readableCredential(this.options.credentials, discordCredentialKey);
+    const token = submittedToken || storedToken;
+    if (!token) throw new Error("A Discord bot token from the Developer Portal is required");
+
+    const api = new DiscordRestApi(token, this.options.discord?.fetchImpl ?? fetch);
+    let me: Awaited<ReturnType<DiscordRestApi["getMe"]>>;
+    try {
+      me = await api.getMe();
+    } catch (error) {
+      throw new Error(
+        `Discord did not accept that bot token: ${error instanceof Error ? error.message : "unknown error"}`,
+      );
+    }
+    if (!me.username) throw new Error("Discord did not return the bot's username");
+
+    let applicationId = me.id;
+    let intentEnabled: boolean | null = null;
+    try {
+      const application = await api.getApplication();
+      if (application.id) applicationId = application.id;
+      intentEnabled = messageContentIntentEnabled(application.flags);
+    } catch (error) {
+      void this.options.applicationLogger?.error("discord.application", error);
+    }
+
+    await this.options.credentials.set(discordCredentialKey, token);
+    const existing = this.database.getDiscordIntegration();
+    const previous = existing ? parseDiscordConfig(existing) : null;
+    const sameBot = previous?.botUserId === me.id;
+    const sameCoworker = previous?.coworkerId === coworker.id;
+    const config: DiscordIntegrationConfig = {
+      botUsername: me.username,
+      botUserId: me.id,
+      applicationId,
+      coworkerId: coworker.id,
+      conversationId: `coworker:${coworker.id}`,
+      guildId: sameBot ? previous?.guildId ?? null : null,
+      channelId: sameBot ? previous?.channelId ?? null : null,
+      channelType: sameBot ? previous?.channelType ?? null : null,
+      guildName: sameBot ? previous?.guildName ?? null : null,
+      channelName: sameBot ? previous?.channelName ?? null : null,
+      pairedThreadId: sameBot ? previous?.pairedThreadId ?? null : null,
+      pairedThreadName: sameBot ? previous?.pairedThreadName ?? null : null,
+      pairedUserId: sameBot ? previous?.pairedUserId ?? null : null,
+      pairingCode: (sameBot && previous?.pairingCode) || mintDiscordPairingCode(),
+      threads: sameBot && sameCoworker ? previous?.threads ?? {} : sameBot ? previous?.threads ?? {} : {},
+      lastThreads: sameBot ? previous?.lastThreads ?? {} : {},
+      inboundMessages: sameBot ? previous?.inboundMessages ?? {} : {},
+      receiptEmoji: previous?.receiptEmoji ?? "👀",
+      receiptReactionDenied: sameBot ? previous?.receiptReactionDenied ?? false : false,
+      sessionId: sameBot ? previous?.sessionId ?? null : null,
+      lastSequence: sameBot ? previous?.lastSequence ?? null : null,
+      messageContentIntentEnabled: intentEnabled,
+      approvalEdits: sameBot && sameCoworker ? previous?.approvalEdits ?? {} : {},
+    };
+    const integration = this.database.upsertDiscordIntegration({
+      name: me.username,
+      credentialKey: discordCredentialKey,
+      status: "connected",
+      config: { ...config },
+    });
+    this.enableDiscordTool(coworker.id);
+
+    const previousCoworkerId = previous?.coworkerId ?? null;
+    if (sameBot && previousCoworkerId && previousCoworkerId !== coworker.id) {
+      this.disableDiscordTool(previousCoworkerId);
+      const previousName = this.coworkerNameOrNull(previousCoworkerId);
+      this.database.addActivity({
+        type: "discord.relinked",
+        summary: `Discord bot ${me.username} moved from ${previousName ?? "another coworker"} to ${coworker.name}`,
+      });
+      this.emit({ type: "entity.changed", entity: "activity" });
+      if (config.channelId) {
+        try {
+          await api.sendMessage({
+            channelId: config.channelId,
+            content: `This channel now goes to ${coworker.name}${previousName ? ` (previously ${previousName})` : ""}. No re-pairing needed — just send a message.`,
+          });
+        } catch (error) {
+          void this.options.applicationLogger?.error("discord.relink-notice", error);
+        }
+      }
+    }
+
+    this.emit({ type: "entity.changed", entity: "integrations", id: integration.id });
+    await this.discord.restart();
+    return this.discordStatus();
+  }
+
+  discordStatus(): DiscordIntegrationStatus {
+    const integration = this.database.getDiscordIntegration();
+    if (!integration || integration.status !== "connected") {
+      return {
+        integration,
+        inviteUrl: null,
+        pairingCode: null,
+        intentSettingsUrl: null,
+      };
+    }
+    const config = parseDiscordConfig(integration);
+    const paired = Boolean(config.guildId && config.channelId);
+    return {
+      integration,
+      inviteUrl: discordInviteUrl(config.applicationId),
+      pairingCode: paired ? null : config.pairingCode || null,
+      intentSettingsUrl: discordIntentSettingsUrl(config.applicationId),
+      messageContentIntentEnabled: config.messageContentIntentEnabled ?? undefined,
+      guildName: config.guildName,
+      channelName: config.channelName,
+      threadName: config.pairedThreadName,
+      receiptReactionDenied: config.receiptReactionDenied || undefined,
+    };
+  }
+
+  async unpairDiscord(): Promise<DiscordIntegrationStatus> {
+    const integration = this.database.getDiscordIntegration();
+    if (!integration) throw new Error("The Discord integration is not configured");
+    this.database.updateDiscordIntegration({
+      config: {
+        guildId: null,
+        channelId: null,
+        channelType: null,
+        guildName: null,
+        channelName: null,
+        pairedThreadId: null,
+        pairedThreadName: null,
+        pairedUserId: null,
+        pairingCode: mintDiscordPairingCode(),
+        threads: {},
+        lastThreads: {},
+        inboundMessages: {},
+        approvalEdits: {},
+        receiptReactionDenied: false,
+      },
+    });
+    this.emit({ type: "entity.changed", entity: "integrations", id: integration.id });
+    await this.discord.restart();
+    return this.discordStatus();
+  }
+
+  async disconnectDiscord(): Promise<void> {
+    await this.discord.stop();
+    const integration = this.database.getDiscordIntegration();
+    if (integration) {
+      this.database.updateDiscordIntegration({
+        status: "disconnected",
+        config: { guildId: null, channelId: null },
+      });
+      this.emit({ type: "entity.changed", entity: "integrations", id: integration.id });
+    }
+    try {
+      await this.options.credentials.delete(discordCredentialKey);
+    } catch {
+      // The credential may already be gone; disconnecting stays idempotent.
+    }
+  }
+
+  private enableDiscordTool(coworkerId: string): void {
+    const coworker = this.database.getCoworker(coworkerId);
+    if (coworker.enabledTools.includes("discord.send")) return;
+    this.database.updateCoworker(coworkerId, {
+      enabledTools: [...coworker.enabledTools, "discord.send"],
+      policies: {
+        ...coworker.policies,
+        "discord.send": coworker.policies["discord.send"] ?? "approval",
+      },
+    });
+    this.emit({ type: "entity.changed", entity: "coworkers", id: coworkerId });
+  }
+
+  private disableDiscordTool(coworkerId: string): void {
+    const name = this.coworkerNameOrNull(coworkerId);
+    if (name === null) return;
+    const coworker = this.database.getCoworker(coworkerId);
+    if (!coworker.enabledTools.includes("discord.send")) return;
+    this.database.updateCoworker(coworkerId, {
+      enabledTools: coworker.enabledTools.filter((tool) => tool !== "discord.send"),
+    });
+    this.emit({ type: "entity.changed", entity: "coworkers", id: coworkerId });
+  }
+
   private coworkerNameOrNull(coworkerId: string): string | null {
     try {
       return this.database.getCoworker(coworkerId).name;
@@ -1670,7 +1896,7 @@ export class DesktopAppService {
   }
 
   private enableBundledSkills(): void {
-    const migrationKey = "bundled-skills-enabled-v4";
+    const migrationKey = "bundled-skills-enabled-v5";
     if (this.database.getMetadata(migrationKey) === "true") return;
     const bundledIds = this.database
       .listSkills()

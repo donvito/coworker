@@ -23,6 +23,7 @@ import type { CredentialStore } from "@main/security/credential-store";
 import { readDocumentText } from "@main/integrations/document-text";
 import { createEmailDraft, sendEmail, type EmailPayload } from "@main/integrations/email";
 import { sendCoworkerTelegramMessage } from "@main/integrations/telegram-send";
+import { sendCoworkerDiscordMessage } from "@main/integrations/discord-send";
 import { resolveSharedFolderPath } from "./shared-folders";
 import { resolveWorkspacePath } from "./workspace-path";
 import { editWorkspaceText, prepareWorkspaceTextMutation, readWorkspaceText, resolveWorkspaceOutputPath, writeWorkspaceText } from "./workspace-text";
@@ -229,6 +230,10 @@ const schemas = {
     message: z.string().trim().min(1).max(100_000),
     attachments: z.array(z.string().min(1).max(2_000)).max(10).optional(),
   }),
+  "discord.send": z.object({
+    message: z.string().trim().min(1).max(100_000),
+    attachments: z.array(z.string().min(1).max(2_000)).max(10).optional(),
+  }),
 } as const;
 
 export type ToolGatewayResult =
@@ -285,6 +290,19 @@ function approvalSummary(toolName: string, args: unknown): string {
       return `Send Telegram message “${preview}”${files}`;
     }
   }
+  if (toolName === "discord.send") {
+    const parsed = schemas["discord.send"].safeParse(args);
+    if (parsed.success) {
+      const preview =
+        parsed.data.message.length > 80
+          ? `${parsed.data.message.slice(0, 77)}…`
+          : parsed.data.message;
+      const files = parsed.data.attachments?.length
+        ? ` · ${parsed.data.attachments.map((path) => path.split("/").at(-1)).join(", ")}`
+        : "";
+      return `Send Discord message “${preview}”${files}`;
+    }
+  }
   if (toolName === "schedules.create") {
     const parsed = schemas["schedules.create"].safeParse(args);
     if (parsed.success) {
@@ -333,7 +351,11 @@ export class ToolGateway {
     private readonly credentials: CredentialStore,
     private readonly outboxPath: string,
     private readonly actions: ToolGatewayActions = {},
-    private readonly options: { dataPath?: string; telegramFetch?: typeof fetch } = {},
+    private readonly options: {
+      dataPath?: string;
+      telegramFetch?: typeof fetch;
+      discordFetch?: typeof fetch;
+    } = {},
   ) {}
 
   validateArguments(toolName: string, argumentsValue: unknown): unknown {
@@ -975,6 +997,19 @@ export class ToolGateway {
           message: args.message,
           attachments: args.attachments,
           fetchImpl: this.options.telegramFetch,
+        });
+      }
+      case "discord.send": {
+        const args = schemas["discord.send"].parse(rawArgs);
+        const task = this.database.getTask(toolCall.taskId);
+        return sendCoworkerDiscordMessage({
+          database: this.database,
+          credentials: this.credentials,
+          workspacePath: coworker.workspacePath,
+          conversationId: task.threadId,
+          message: args.message,
+          attachments: args.attachments,
+          fetchImpl: this.options.discordFetch,
         });
       }
       default:

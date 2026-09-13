@@ -2116,6 +2116,80 @@ export class CoworkerDatabase {
     return this.getIntegration(existing.id);
   }
 
+  getDiscordIntegration(): Integration | null {
+    const row = this.database
+      .select()
+      .from(integrations)
+      .where(eq(integrations.type, "discord"))
+      .limit(1)
+      .get();
+    return row ? integrationFromRow(row) : null;
+  }
+
+  upsertDiscordIntegration(input: {
+    name: string;
+    credentialKey: string | null;
+    status: Integration["status"];
+    config: Record<string, unknown>;
+  }): Integration {
+    const existing = this.database
+      .select()
+      .from(integrations)
+      .where(eq(integrations.type, "discord"))
+      .limit(1)
+      .get();
+    const timestamp = now();
+    if (existing) {
+      this.database
+        .update(integrations)
+        .set({
+          name: input.name,
+          mode: "bot",
+          status: input.status,
+          credentialKey: input.credentialKey,
+          configJson: json(input.config),
+          updatedAt: timestamp,
+        })
+        .where(eq(integrations.id, existing.id))
+        .run();
+      return this.getIntegration(existing.id);
+    }
+    const id = randomUUID();
+    this.database
+      .insert(integrations)
+      .values({
+        id,
+        type: "discord",
+        name: input.name,
+        mode: "bot",
+        status: input.status,
+        credentialKey: input.credentialKey,
+        configJson: json(input.config),
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      })
+      .run();
+    return this.getIntegration(id);
+  }
+
+  updateDiscordIntegration(patch: {
+    status?: Integration["status"];
+    config?: Record<string, unknown>;
+  }): Integration {
+    const existing = this.getDiscordIntegration();
+    if (!existing) throw new Error("The Discord integration is not configured");
+    this.database
+      .update(integrations)
+      .set({
+        status: patch.status ?? existing.status,
+        configJson: json({ ...existing.config, ...(patch.config ?? {}) }),
+        updatedAt: now(),
+      })
+      .where(eq(integrations.id, existing.id))
+      .run();
+    return this.getIntegration(existing.id);
+  }
+
   getSideEffect(key: string): { status: string; result: unknown } | null {
     const row = this.database
       .select({ status: sideEffects.status, resultJson: sideEffects.resultJson })

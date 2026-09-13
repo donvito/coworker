@@ -15,9 +15,11 @@ import {
   CoworkerModelBadge,
   PageHeader,
   StatusLabel,
-  TelegramLinkBadge,
+  DiscordLinkBadge,
   coworkerAvatarCount,
   coworkerAvatarVisual,
+  discordLinkedCoworkerId,
+  TelegramLinkBadge,
   telegramLinkedCoworkerId,
 } from "../components/Primitives";
 
@@ -116,6 +118,9 @@ export function CoworkersPage({
               <CoworkerModelBadge coworker={coworker} modelEndpoints={modelEndpoints} />
               {telegramLinkedCoworkerId(integrations) === coworker.id ? (
                 <TelegramLinkBadge />
+              ) : null}
+              {discordLinkedCoworkerId(integrations) === coworker.id ? (
+                <DiscordLinkBadge />
               ) : null}
             </span>
             <span className="roster-open-cta">

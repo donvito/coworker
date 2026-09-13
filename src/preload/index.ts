@@ -113,6 +113,12 @@ const api: DesktopApi = {
     unpairTelegram: () => ipcRenderer.invoke(ipcChannels.integrationsUnpairTelegram),
     disconnectTelegram: () =>
       ipcRenderer.invoke(ipcChannels.integrationsDisconnectTelegram),
+    configureDiscord: (input) =>
+      ipcRenderer.invoke(ipcChannels.integrationsConfigureDiscord, input),
+    discordStatus: () => ipcRenderer.invoke(ipcChannels.integrationsDiscordStatus),
+    unpairDiscord: () => ipcRenderer.invoke(ipcChannels.integrationsUnpairDiscord),
+    disconnectDiscord: () =>
+      ipcRenderer.invoke(ipcChannels.integrationsDisconnectDiscord),
   },
   skills: {
     list: () => ipcRenderer.invoke(ipcChannels.skillsList),

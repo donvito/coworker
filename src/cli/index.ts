@@ -150,7 +150,9 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
         const key = command.values["key-stdin"] || command.values["token-stdin"]
           ? await secretFromStdin()
           : command.values["prompt-key"] ? await promptSecret()
-            : command.values["prompt-token"] ? await promptSecret("Telegram bot token") : undefined;
+            : command.values["prompt-token"]
+              ? await promptSecret(command.name.startsWith("discord") ? "Discord bot token" : "Telegram bot token")
+              : undefined;
         const memoryRevision = ["memory set", "memory clear"].includes(command.name) && !command.values.revision
           ? (await requestControl(dataPath, ipcChannels.memoryRead, [command.args[0]]) as WorkspaceTextDocument).revision
           : undefined;

@@ -407,7 +407,7 @@ export interface ActivityItem {
 
 export interface Integration {
   id: string;
-  type: "email" | "telegram";
+  type: "email" | "telegram" | "discord";
   name: string;
   mode: "local-outbox" | "resend" | "bot";
   status: "connected" | "disconnected" | "error";
@@ -423,6 +423,24 @@ export interface TelegramIntegrationStatus {
   integration: Integration | null;
   /** Deep link that pairs the user's Telegram chat: https://t.me/<bot>?start=<code>. */
   pairingLink: string | null;
+}
+
+export interface DiscordIntegrationStatus {
+  integration: Integration | null;
+  /** Authorize URL with the minimum bot permissions already selected. */
+  inviteUrl: string | null;
+  /** Posted in a guild channel or thread to pair. Null once paired. */
+  pairingCode: string | null;
+  /** Developer Portal bot page for Privileged Gateway Intents. */
+  intentSettingsUrl: string | null;
+  /** From GET /applications/@me flags when available. */
+  messageContentIntentEnabled?: boolean;
+  guildName?: string | null;
+  channelName?: string | null;
+  /** Thread or forum-post title if pairing happened inside one. */
+  threadName?: string | null;
+  /** True after a receipt reaction PUT returned 403. */
+  receiptReactionDenied?: boolean;
 }
 
 export const appThemes = ["forest", "ocean", "plum", "clay", "graphite"] as const;
@@ -494,7 +512,7 @@ export type DesktopEvent =
       type: "conversation.inbound";
       coworkerId: string;
       conversationId: string;
-      source: "telegram";
+      source: "telegram" | "discord";
     }
   | {
       type: "navigation.requested";
@@ -625,6 +643,13 @@ export interface DesktopApi {
     telegramStatus(): Promise<TelegramIntegrationStatus>;
     unpairTelegram(): Promise<TelegramIntegrationStatus>;
     disconnectTelegram(): Promise<void>;
+    configureDiscord(input: {
+      botToken?: string;
+      coworkerId: string;
+    }): Promise<DiscordIntegrationStatus>;
+    discordStatus(): Promise<DiscordIntegrationStatus>;
+    unpairDiscord(): Promise<DiscordIntegrationStatus>;
+    disconnectDiscord(): Promise<void>;
     configureModel(input: {
       provider: RemoteModelProvider;
       apiKey?: string;

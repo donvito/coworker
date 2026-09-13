@@ -1,4 +1,4 @@
-import type { AppSettings, Approval, ConfigureModelResult, ModelEndpoint, TelegramIntegrationStatus } from "@shared/contracts";
+import type { AppSettings, Approval, ConfigureModelResult, DiscordIntegrationStatus, ModelEndpoint, TelegramIntegrationStatus } from "@shared/contracts";
 import type { ModelProviderDefinition } from "@shared/model-providers";
 import type { CredentialReadStatus } from "@main/security/credential-store";
 import type { LogRecord } from "@main/control/logs";
@@ -51,6 +51,38 @@ function formatTelegram(result: TelegramIntegrationStatus): string {
   return lines.join("\n");
 }
 
+function discordState(result: DiscordIntegrationStatus | undefined): string {
+  return result?.integration?.status ?? "not configured";
+}
+
+function formatDiscord(result: DiscordIntegrationStatus): string {
+  const { integration, inviteUrl, pairingCode, intentSettingsUrl } = result;
+  if (!integration) return "Discord is not configured.";
+  const { config } = integration;
+  const connected = integration.status === "connected";
+  const paired = connected && config.guildId && config.channelId;
+  const lines = [
+    `Discord: ${connected && !paired ? "connected, waiting to pair" : discordState(result)}`,
+    `Bot: ${cell(config.botUsername)}`,
+  ];
+  if (connected && !paired) {
+    if (inviteUrl) lines.push(`Invite: ${inviteUrl}`);
+    if (pairingCode) lines.push(`Pairing code: ${pairingCode}`);
+    lines.push("Post that code in the Discord channel or thread you want.");
+    if (intentSettingsUrl) lines.push(`Message Content Intent: ${intentSettingsUrl}`);
+  }
+  if (paired) {
+    lines.push(`Coworker: ${cell(config.coworkerId)}`);
+    lines.push(`Guild: ${cell(result.guildName ?? config.guildId)}`);
+    const channel = result.channelName ?? config.channelName ?? config.channelId;
+    lines.push(`Channel: #${cell(channel)}`);
+    if (result.threadName || config.pairedThreadName) {
+      lines.push(`Thread: ${cell(result.threadName ?? config.pairedThreadName)}`);
+    }
+  }
+  return lines.join("\n");
+}
+
 interface ModelProvidersResult {
   providers: Array<Pick<ModelProviderDefinition, "id" | "label"> & { credentialStatus: CredentialReadStatus }>;
   endpoints: ModelEndpoint[];
@@ -91,7 +123,7 @@ export function humanOutput(command: string, value: unknown): string {
     const services = status.services as Record<string, unknown> | undefined;
     return ["Coworker is running.", `Mode: ${cell(status.mode)}  PID: ${cell(status.pid)}  Uptime: ${cell(status.uptimeSeconds)}s`,
       `Profile: ${cell(status.profile)}\nData: ${cell(status.dataPath)}`,
-      `Scheduler: ${cell(services?.scheduler)}  Telegram: ${telegramState(services?.telegram as TelegramIntegrationStatus | undefined)}`].join("\n");
+      `Scheduler: ${cell(services?.scheduler)}  Telegram: ${telegramState(services?.telegram as TelegramIntegrationStatus | undefined)}  Discord: ${discordState(services?.discord as DiscordIntegrationStatus | undefined)}`].join("\n");
   }
   if (["start", "restart"].includes(command)) return `Coworker started (${cell((value as Record<string, unknown>).mode)} mode, PID ${cell((value as Record<string, unknown>).pid)}).`;
   if (command === "stop") return "Coworker stopped.";
@@ -100,6 +132,7 @@ export function humanOutput(command: string, value: unknown): string {
   if (command === "models endpoints add") return `Endpoint added.\nProvider ID: ${cell((value as { provider: string }).provider)}`;
   if (command === "models list") return table((value as Array<Record<string, unknown>>).map((model) => ({ Model: model.id, Name: model.name ?? "" })), ["Model", "Name"]);
   if (["telegram status", "telegram configure", "telegram unpair"].includes(command)) return formatTelegram(value as TelegramIntegrationStatus);
+  if (["discord status", "discord configure", "discord unpair"].includes(command)) return formatDiscord(value as DiscordIntegrationStatus);
   if (command === "approvals show") return formatApproval(value as Approval);
   if (command === "activity list") {
     const rows = value as Array<Record<string, unknown>>;

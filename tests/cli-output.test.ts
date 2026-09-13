@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Approval, Integration, TelegramIntegrationStatus } from "@shared/contracts";
+import type { Approval, DiscordIntegrationStatus, Integration, TelegramIntegrationStatus } from "@shared/contracts";
 import type { LogRecord } from "@main/control/logs";
 import { formatOutput, humanOutput } from "../src/cli/output";
 
@@ -20,6 +20,18 @@ const integration: Integration = {
 };
 const telegram: TelegramIntegrationStatus = {
   integration, pairingLink: "https://t.me/example_bot?start=pair-code",
+};
+const discordIntegration: Integration = {
+  id: "discord-1", type: "discord", name: "coworker-bot", mode: "bot", status: "connected",
+  credentialKey: "integration:discord:bot",
+  config: { botUsername: "coworker-bot", guildId: null, channelId: null },
+  createdAt: "2026-09-10T00:00:00Z", updatedAt: "2026-09-10T00:00:00Z",
+};
+const discord: DiscordIntegrationStatus = {
+  integration: discordIntegration,
+  inviteUrl: "https://discord.com/oauth2/authorize?client_id=88&scope=bot&permissions=309237763136",
+  pairingCode: "AABBCCDDEEFF0011",
+  intentSettingsUrl: "https://discord.com/developers/applications/88/bot",
 };
 const providers = {
   providers: [
@@ -104,9 +116,61 @@ describe("terminal output", () => {
 
   it.each([null, "disconnected", "error", "connected"] as const)("uses the nested integration for overview status (%s)", (status) => {
     const result = { integration: status ? { ...integration, status } : null, pairingLink: null };
-    const output = humanOutput("status", { running: true, services: { scheduler: "running", telegram: result } });
+    const discordResult = { integration: status ? { ...discordIntegration, status } : null, inviteUrl: null, pairingCode: null, intentSettingsUrl: null };
+    const output = humanOutput("status", { running: true, services: { scheduler: "running", telegram: result, discord: discordResult } });
     expect(output).toContain(`Telegram: ${status ?? "not configured"}`);
+    expect(output).toContain(`Discord: ${status ?? "not configured"}`);
     if (status === null) expect(humanOutput("telegram status", result)).toBe("Telegram is not configured.");
+    if (status === null) expect(humanOutput("discord status", discordResult)).toBe("Discord is not configured.");
+  });
+
+  it.each(["discord status", "discord configure", "discord unpair"])("shows Discord pairing instructions for %s", (command) => {
+    const output = humanOutput(command, discord);
+    expect(output).toContain("Discord: connected, waiting to pair");
+    expect(output).toContain("Bot: coworker-bot");
+    expect(output).toContain(`Invite: ${discord.inviteUrl}`);
+    expect(output).toContain(`Pairing code: ${discord.pairingCode}`);
+    expect(output).toContain("Post that code in the Discord channel or thread you want.");
+    expect(output).toContain(`Message Content Intent: ${discord.intentSettingsUrl}`);
+    expect(output).not.toContain("Channel:");
+  });
+
+  it("shows a paired Discord channel without offering to pair again", () => {
+    const output = humanOutput("discord status", {
+      integration: {
+        ...discordIntegration,
+        config: {
+          ...discordIntegration.config,
+          coworkerId: "ava",
+          guildId: "10",
+          channelId: "100",
+          channelName: "general",
+          pairedThreadName: "research",
+        },
+      },
+      inviteUrl: discord.inviteUrl,
+      pairingCode: null,
+      intentSettingsUrl: discord.intentSettingsUrl,
+      guildName: "Test Server",
+      channelName: "general",
+      threadName: "research",
+    });
+    expect(output).toContain("Discord: connected");
+    expect(output).toContain("Coworker: ava");
+    expect(output).toContain("Guild: Test Server");
+    expect(output).toContain("Channel: #general");
+    expect(output).toContain("Thread: research");
+    expect(output).not.toContain("Pairing code:");
+    expect(output).not.toContain("waiting to pair");
+  });
+
+  it.each(["disconnected", "error"] as const)("reports Discord's %s state without pairing instructions", (status) => {
+    const result = { ...discord, integration: { ...discordIntegration, status }, pairingCode: null };
+    const output = humanOutput("discord status", result);
+    expect(output).toContain(`Discord: ${status}`);
+    expect(output).toContain("Bot: coworker-bot");
+    expect(output).not.toContain("Pairing code:");
+    expect(output).not.toContain("waiting to pair");
   });
 
   it("lists provider IDs, distinct credential states, and custom endpoints", () => {
@@ -129,7 +193,7 @@ describe("terminal output", () => {
 
   it("preserves full JSON responses independently of human formatting", () => {
     const cases: Array<[string, unknown]> = [
-      ["approvals show", approval], ["telegram configure", telegram], ["models providers", providers],
+      ["approvals show", approval], ["telegram configure", telegram], ["discord configure", discord], ["models providers", providers],
       ["models default", { defaultModelProvider: null, defaultModelName: null, theme: "forest" }],
       ["models endpoints add", { provider: "openai-compatible:new", configured: true, models: [], defaultApplied: false }],
       ["logs show", [record]], ["stop", null],

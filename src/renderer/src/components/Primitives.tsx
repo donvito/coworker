@@ -176,6 +176,31 @@ export function TelegramLinkBadge({ compact = false }: { compact?: boolean }) {
   );
 }
 
+/** The coworker linked to the connected Discord bot, if any. */
+export function discordLinkedCoworkerId(integrations: Integration[]): string | null {
+  const integration = integrations.find(
+    (candidate) => candidate.type === "discord" && candidate.status === "connected",
+  );
+  const coworkerId = (integration?.config as { coworkerId?: string } | undefined)?.coworkerId;
+  return typeof coworkerId === "string" && coworkerId ? coworkerId : null;
+}
+
+export function DiscordLinkBadge({ compact = false }: { compact?: boolean }) {
+  return (
+    <span
+      aria-label="Connected to the Discord bot"
+      className={
+        compact
+          ? "coworker-model-badge compact discord-link-badge"
+          : "coworker-model-badge discord-link-badge"
+      }
+      title="Connected to the Discord bot"
+    >
+      <span>Discord</span>
+    </span>
+  );
+}
+
 /** A quiet hover-revealed button that copies text and confirms briefly. */
 export function CopyTextButton({
   text,
