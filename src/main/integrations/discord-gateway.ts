@@ -19,6 +19,45 @@ export const discordOpcode = {
   heartbeatAck: 11,
 } as const;
 
+/** Close codes Discord documents as non-resumable / do-not-reconnect. */
+export const discordFatalCloseCodes = new Set([4004, 4010, 4011, 4012, 4013, 4014]);
+
+export function discordGatewayErrorHint(code: number): string {
+  if (code === 4004) return "Discord rejected the bot token.";
+  if (code === 4014) {
+    return "Discord closed the connection because Message Content Intent is off. Turn it on in the Developer Portal, then reconnect.";
+  }
+  if (code === 4013) return "Discord rejected the Gateway intents. Check Privileged Gateway Intents in the Developer Portal.";
+  if (code === 4010 || code === 4011 || code === 4012) {
+    return `Discord closed the Gateway (code ${code}) and will not accept a reconnect until the bot is reconfigured.`;
+  }
+  return `Discord closed the Gateway (code ${code}).`;
+}
+
+export class DiscordFatalCloseError extends Error {
+  constructor(
+    readonly code: number,
+    readonly hint: string,
+  ) {
+    super(hint);
+    this.name = "DiscordFatalCloseError";
+  }
+}
+
+export class DiscordInvalidSessionError extends Error {
+  constructor() {
+    super("Discord session is not resumable");
+    this.name = "DiscordInvalidSessionError";
+  }
+}
+
+export class DiscordReconnectError extends Error {
+  constructor(readonly code: number) {
+    super(`Discord Gateway closed (${code})`);
+    this.name = "DiscordReconnectError";
+  }
+}
+
 export interface DiscordGatewayDispatch {
   t: string;
   d: unknown;
@@ -30,6 +69,7 @@ export interface DiscordGatewayHandlers {
   onDispatch?: (event: DiscordGatewayDispatch) => void | Promise<void>;
   onConflict?: (reason: string) => void;
   onClose?: (code: number, reason: string) => void;
+  onFatal?: (code: number, hint: string) => void;
   onError?: (scope: string, error: unknown) => void;
   onSequence?: (sequence: number | null, sessionId: string | null) => void;
 }
@@ -42,10 +82,15 @@ export interface DiscordGatewayOptions {
   /** Resume after reconnect when both are present. */
   sessionId?: string | null;
   lastSequence?: number | null;
+  resumeUrl?: string | null;
 }
 
 const maxBackoffMs = 60_000;
-const conflictPauseMs = 60_000;
+const minReconnectMs = 1_000;
+const invalidSessionMinMs = 1_000;
+const invalidSessionMaxMs = 5_000;
+/** Client close that keeps the session resumable. Discord invalidates 1000/1001. */
+export const discordResumableCloseCode = 4000;
 
 function delay(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
@@ -64,23 +109,32 @@ function delay(ms: number, signal?: AbortSignal): Promise<void> {
 /**
  * Raw Discord Gateway: identify, heartbeat, resume, and dispatch.
  * Uses Node's built-in WebSocket — no discord.js.
+ *
+ * Discord allows concurrent Gateway sessions per bot. A second Coworker with
+ * the same token is not kicked (4005/4010 are not a multi-instance signal);
+ * both processes receive MESSAGE_CREATE and may inject/reply. Avoid running
+ * two connected instances against one bot until an out-of-band lock exists.
  */
 export class DiscordGateway {
   private socket: WebSocket | null = null;
   private running = false;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  private heartbeatStartTimer: ReturnType<typeof setTimeout> | null = null;
   private heartbeatIntervalMs = 41_250;
+  private awaitingHeartbeatAck = false;
   private sequence: number | null;
   private sessionId: string | null;
-  private resumeUrl: string | null = null;
+  private resumeUrl: string | null;
   private identified = false;
+  private expectInvalidSession = false;
   private connectLoop: Promise<void> = Promise.resolve();
   private abort: AbortController | null = null;
-  private backoffMs = 1_000;
+  private backoffMs = minReconnectMs;
 
   constructor(private readonly options: DiscordGatewayOptions) {
     this.sequence = options.lastSequence ?? null;
     this.sessionId = options.sessionId ?? null;
+    this.resumeUrl = options.resumeUrl ?? null;
   }
 
   isRunning(): boolean {
@@ -99,17 +153,25 @@ export class DiscordGateway {
   async stop(): Promise<void> {
     this.running = false;
     this.abort?.abort();
+    this.clearSession();
     this.teardownSocket(1000, "stopped");
     await this.connectLoop.catch(() => undefined);
   }
 
-  /** Close and reconnect (OS resume / reconfigure). */
+  /** Close with a resumable code and reconnect (OS resume / reconfigure). */
   async wake(): Promise<void> {
     if (!this.running) {
       await this.start();
       return;
     }
-    this.teardownSocket(1000, "wake");
+    this.teardownSocket(discordResumableCloseCode, "wake");
+  }
+
+  private clearSession(): void {
+    this.sessionId = null;
+    this.sequence = null;
+    this.resumeUrl = null;
+    this.options.handlers.onSequence?.(null, null);
   }
 
   private async loop(): Promise<void> {
@@ -117,13 +179,23 @@ export class DiscordGateway {
       const signal = this.abort?.signal;
       try {
         await this.connectOnce();
-        this.backoffMs = 1_000;
+        if (!this.running || signal?.aborted) return;
+        await delay(minReconnectMs, signal);
+        this.backoffMs = minReconnectMs;
       } catch (error) {
         if (!this.running || signal?.aborted) return;
+        if (error instanceof DiscordFatalCloseError) {
+          this.running = false;
+          this.options.handlers.onFatal?.(error.code, error.hint);
+          return;
+        }
         this.options.handlers.onError?.("discord.gateway", error);
-        if (error instanceof DiscordApiError && error.status === 401) {
-          this.options.handlers.onConflict?.("Discord rejected the bot token");
-          await delay(conflictPauseMs, signal);
+        if (error instanceof DiscordInvalidSessionError) {
+          const wait =
+            invalidSessionMinMs +
+            Math.floor(Math.random() * (invalidSessionMaxMs - invalidSessionMinMs));
+          await delay(wait, signal);
+          this.backoffMs = minReconnectMs;
           continue;
         }
         await delay(Math.min(this.backoffMs, maxBackoffMs), signal);
@@ -188,15 +260,18 @@ export class DiscordGateway {
         this.clearHeartbeat();
         this.socket = null;
         this.options.handlers.onClose?.(close.code, close.reason ?? "");
-        if (close.code === 4004) {
-          finish(new DiscordApiError(401, "authentication failed"));
+        if (discordFatalCloseCodes.has(close.code)) {
+          finish(new DiscordFatalCloseError(close.code, discordGatewayErrorHint(close.code)));
           return;
         }
-        if (close.code === 4005 || close.code === 4010) {
-          this.sessionId = null;
-          this.options.handlers.onConflict?.(
-            "Another process is using this Discord bot; pausing this bridge for a minute",
-          );
+        if (this.expectInvalidSession) {
+          this.expectInvalidSession = false;
+          finish(new DiscordInvalidSessionError());
+          return;
+        }
+        if (close.code !== 1000 && close.code !== 1001 && close.code !== discordResumableCloseCode) {
+          finish(new DiscordReconnectError(close.code));
+          return;
         }
         finish();
       });
@@ -238,21 +313,21 @@ export class DiscordGateway {
       this.send({ op: discordOpcode.heartbeat, d: this.sequence });
       return;
     }
+    if (payload.op === discordOpcode.heartbeatAck) {
+      this.awaitingHeartbeatAck = false;
+      return;
+    }
     if (payload.op === discordOpcode.reconnect) {
-      this.teardownSocket(4000, "reconnect");
+      this.teardownSocket(discordResumableCloseCode, "reconnect");
       return;
     }
     if (payload.op === discordOpcode.invalidSession) {
       const resumable = payload.d === true;
       if (!resumable) {
-        this.sessionId = null;
-        this.sequence = null;
-        this.options.handlers.onSequence?.(null, null);
-        this.options.handlers.onConflict?.(
-          "Another process is using this Discord bot; pausing this bridge for a minute",
-        );
+        this.clearSession();
+        this.expectInvalidSession = true;
       }
-      this.teardownSocket(4000, "invalid session");
+      this.teardownSocket(discordResumableCloseCode, "invalid session");
       return;
     }
     if (payload.op !== discordOpcode.dispatch || !payload.t) return;
@@ -262,11 +337,13 @@ export class DiscordGateway {
       this.sessionId = ready.session_id ?? this.sessionId;
       this.resumeUrl = ready.resume_gateway_url ?? this.resumeUrl;
       this.identified = true;
+      this.backoffMs = minReconnectMs;
       this.options.handlers.onSequence?.(this.sequence, this.sessionId);
       this.options.handlers.onReady?.(this.sessionId ?? "", this.resumeUrl ?? undefined);
     }
     if (payload.t === "RESUMED") {
       this.identified = true;
+      this.backoffMs = minReconnectMs;
     }
 
     await this.options.handlers.onDispatch?.({
@@ -296,17 +373,36 @@ export class DiscordGateway {
 
   private startHeartbeat(): void {
     this.clearHeartbeat();
-    this.heartbeatTimer = setInterval(() => {
-      this.send({ op: discordOpcode.heartbeat, d: this.sequence });
-    }, this.heartbeatIntervalMs);
-    this.heartbeatTimer.unref?.();
+    this.awaitingHeartbeatAck = false;
+    const jitter = Math.random();
+    this.heartbeatStartTimer = setTimeout(() => {
+      this.heartbeatStartTimer = null;
+      this.beat();
+      this.heartbeatTimer = setInterval(() => this.beat(), this.heartbeatIntervalMs);
+      this.heartbeatTimer.unref?.();
+    }, Math.max(1, this.heartbeatIntervalMs * jitter));
+    this.heartbeatStartTimer.unref?.();
+  }
+
+  private beat(): void {
+    if (this.awaitingHeartbeatAck) {
+      this.teardownSocket(discordResumableCloseCode, "heartbeat ack missing");
+      return;
+    }
+    this.awaitingHeartbeatAck = true;
+    this.send({ op: discordOpcode.heartbeat, d: this.sequence });
   }
 
   private clearHeartbeat(): void {
+    if (this.heartbeatStartTimer) {
+      clearTimeout(this.heartbeatStartTimer);
+      this.heartbeatStartTimer = null;
+    }
     if (this.heartbeatTimer) {
       clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = null;
     }
+    this.awaitingHeartbeatAck = false;
   }
 
   private send(payload: unknown): void {

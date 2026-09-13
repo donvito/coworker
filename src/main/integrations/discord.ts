@@ -103,11 +103,17 @@ export interface DiscordMessage {
   guild_id?: string;
   author?: DiscordUser;
   content?: string;
+  type?: number;
   attachments?: DiscordAttachment[];
   referenced_message?: DiscordMessage | null;
   message_reference?: DiscordMessageReference;
   thread?: DiscordChannel;
   components?: DiscordMessageComponent[];
+}
+
+/** DEFAULT (0) and REPLY (19). System messages (pins, thread-created, joins) are ignored. */
+export function isDiscordHumanMessage(message: DiscordMessage): boolean {
+  return message.type === 0 || message.type === 19;
 }
 
 export interface DiscordButton {
@@ -174,8 +180,11 @@ export interface DiscordIntegrationConfig {
   receiptReactionDenied: boolean;
   sessionId: string | null;
   lastSequence: number | null;
+  resumeUrl: string | null;
   messageContentIntentEnabled: boolean | null;
   approvalEdits: Record<string, DiscordApprovalEditRequest>;
+  refusedChannels: string[];
+  gatewayError: string | null;
 }
 
 function parseInboundMessages(
@@ -245,11 +254,16 @@ export function parseDiscordConfig(integration: Integration): DiscordIntegration
     receiptReactionDenied: config.receiptReactionDenied === true,
     sessionId: typeof config.sessionId === "string" ? config.sessionId : null,
     lastSequence: typeof config.lastSequence === "number" ? config.lastSequence : null,
+    resumeUrl: typeof config.resumeUrl === "string" ? config.resumeUrl : null,
     messageContentIntentEnabled:
       typeof config.messageContentIntentEnabled === "boolean"
         ? config.messageContentIntentEnabled
         : null,
     approvalEdits: parseApprovalEdits(config.approvalEdits),
+    refusedChannels: Array.isArray(config.refusedChannels)
+      ? config.refusedChannels.filter((item): item is string => typeof item === "string")
+      : [],
+    gatewayError: typeof config.gatewayError === "string" ? config.gatewayError : null,
   };
 }
 
@@ -284,6 +298,31 @@ export function resolveDiscordReceiptEmoji(value: string | undefined): string {
     return discordDefaultReceiptEmoji;
   }
 }
+
+export function redactDiscordPath(path: string): string {
+  return path.replace(/\/interactions\/[^/]+\/[^/]+/g, "/interactions/<id>/<token>");
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    timer.unref?.();
+  });
+}
+
+async function discordRetryAfterSeconds(response: Response): Promise<number> {
+  const header = Number(response.headers.get("retry-after"));
+  if (Number.isFinite(header) && header > 0) return header;
+  try {
+    const body = (await response.clone().json()) as { retry_after?: number };
+    if (typeof body.retry_after === "number" && body.retry_after > 0) return body.retry_after;
+  } catch {
+    // Use the default below.
+  }
+  return 1;
+}
+
+const discordCdnHosts = new Set(["cdn.discordapp.com", "media.discordapp.net"]);
 
 export function mintDiscordPairingCode(): string {
   const bytes = new Uint8Array(8);
@@ -352,34 +391,44 @@ export class DiscordRestApi {
     path: string,
     options?: { body?: unknown; timeoutMs?: number; contentType?: string },
   ): Promise<T> {
-    const timeout = AbortSignal.timeout(options?.timeoutMs ?? jsonCallTimeoutMs);
-    let response: Response;
-    try {
-      response = await this.fetchImpl(`${this.baseUrl}${path}`, {
-        method,
-        headers: this.headers(
-          options?.body !== undefined && !(options.body instanceof FormData)
-            ? { "Content-Type": options.contentType ?? "application/json" }
-            : undefined,
-        ),
-        body:
-          options?.body === undefined
-            ? undefined
-            : options.body instanceof FormData
-              ? options.body
-              : JSON.stringify(options.body),
-        signal: timeout,
-      });
-    } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") {
-        throw new Error(`Discord ${method} ${path} was aborted`);
+    const label = `${method} ${redactDiscordPath(path)}`;
+    let attempt = 0;
+    while (true) {
+      const timeout = AbortSignal.timeout(options?.timeoutMs ?? jsonCallTimeoutMs);
+      let response: Response;
+      try {
+        response = await this.fetchImpl(`${this.baseUrl}${path}`, {
+          method,
+          headers: this.headers(
+            options?.body !== undefined && !(options.body instanceof FormData)
+              ? { "Content-Type": options.contentType ?? "application/json" }
+              : undefined,
+          ),
+          body:
+            options?.body === undefined
+              ? undefined
+              : options.body instanceof FormData
+                ? options.body
+                : JSON.stringify(options.body),
+          signal: timeout,
+        });
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          throw new Error(`Discord ${label} was aborted`);
+        }
+        if (error instanceof DOMException && error.name === "TimeoutError") {
+          throw new Error(`Discord ${label} timed out`);
+        }
+        throw new Error(`Discord ${label} failed: could not reach discord.com`);
       }
-      if (error instanceof DOMException && error.name === "TimeoutError") {
-        throw new Error(`Discord ${method} ${path} timed out`);
+      if (response.status === 429 && attempt < 3) {
+        const retryAfter = await discordRetryAfterSeconds(response);
+        await delay(Math.min(Math.max(retryAfter, 0.2) * 1000, 10_000));
+        attempt += 1;
+        continue;
       }
-      throw new Error(`Discord ${method} ${path} failed: could not reach discord.com`);
+      return this.unwrap<T>(label, response);
     }
-    return this.unwrap<T>(`${method} ${path}`, response);
   }
 
   getMe(): Promise<DiscordUser> {
@@ -499,20 +548,35 @@ export class DiscordRestApi {
     token: string;
     type: number;
     content?: string;
+    ephemeral?: boolean;
   }): Promise<void> {
     await this.request<void>("POST", `/interactions/${input.interactionId}/${input.token}/callback`, {
       body: {
         type: input.type,
-        data: input.content === undefined ? undefined : { content: input.content },
+        data:
+          input.content === undefined
+            ? undefined
+            : {
+                content: input.content,
+                ...(input.ephemeral ? { flags: 64 } : {}),
+              },
       },
     });
   }
 
   async downloadAttachment(url: string, maxBytes = discordDownloadLimit): Promise<Uint8Array> {
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch {
+      throw new Error("Discord file download rejected: invalid URL");
+    }
+    if (!discordCdnHosts.has(parsed.hostname.toLowerCase())) {
+      throw new Error("Discord file download rejected: unexpected host");
+    }
     let response: Response;
     try {
       response = await this.fetchImpl(url, {
-        headers: this.headers(),
         signal: AbortSignal.timeout(uploadTimeoutMs),
       });
     } catch {

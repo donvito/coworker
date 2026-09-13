@@ -10,6 +10,7 @@ import {
   discordCredentialKey,
   discordDocumentUploadLimit,
   discordPhotoUploadLimit,
+  isDiscordForumType,
 } from "./discord";
 
 const photoMimeTypes: Record<string, string> = {
@@ -61,13 +62,30 @@ export async function sendCoworkerDiscordMessage(input: {
     );
   }
 
-  const mappedThread =
-    input.conversationId && input.conversationId !== config.conversationId
-      ? Object.entries(config.threads).find(([, mapped]) => mapped === input.conversationId)?.[0]
-      : undefined;
-  const threadId =
-    mappedThread ?? (input.conversationId ? config.lastThreads[input.conversationId] : undefined);
-  const channelId = threadId ?? config.channelId;
+  const api = new DiscordRestApi(token, input.fetchImpl ?? fetch);
+  const conversationId = input.conversationId ?? config.conversationId;
+  const mappedThread = Object.entries(config.threads).find(([, mapped]) => mapped === conversationId)?.[0];
+  let threadId = mappedThread ?? config.lastThreads[conversationId];
+  let channelId = threadId ?? config.channelId;
+  let messageAlreadyPosted = false;
+
+  if (!threadId && config.channelType !== null && isDiscordForumType(config.channelType)) {
+    const post = await api.createThread({
+      channelId: config.channelId,
+      name: conversationId === config.conversationId ? "Coworker" : conversationId.slice(0, 100),
+      forum: true,
+      message: input.message,
+    });
+    threadId = post.id;
+    channelId = post.id;
+    messageAlreadyPosted = true;
+    input.database.updateDiscordIntegration({
+      config: {
+        threads: { ...config.threads, [post.id]: conversationId },
+        lastThreads: { ...config.lastThreads, [conversationId]: post.id },
+      },
+    });
+  }
 
   const files: Array<{
     name: string;
@@ -88,9 +106,9 @@ export async function sendCoworkerDiscordMessage(input: {
     files.push({ name, data, mimeType: photoMime ?? "application/octet-stream", sentAs });
   }
 
-  const api = new DiscordRestApi(token, input.fetchImpl ?? fetch);
-  let messageChunks = 0;
-  for (const chunk of markdownToDiscordChunks(input.message)) {
+  const chunks = markdownToDiscordChunks(input.message);
+  let messageChunks = messageAlreadyPosted ? 1 : 0;
+  for (const chunk of messageAlreadyPosted ? chunks.slice(1) : chunks) {
     await api.sendMessage({ channelId, content: chunk });
     messageChunks += 1;
   }

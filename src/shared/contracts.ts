@@ -441,6 +441,8 @@ export interface DiscordIntegrationStatus {
   threadName?: string | null;
   /** True after a receipt reaction PUT returned 403. */
   receiptReactionDenied?: boolean;
+  /** Last fatal or persistent Gateway failure, surfaced in Settings. */
+  gatewayError?: string;
 }
 
 export const appThemes = ["forest", "ocean", "plum", "clay", "graphite"] as const;

@@ -28,6 +28,7 @@ import {
   discordCredentialKey,
   discordDownloadLimit,
   isDiscordForumType,
+  isDiscordHumanMessage,
   isDiscordThreadType,
   parseDiscordConfig,
   resolveDiscordReceiptEmoji,
@@ -46,6 +47,7 @@ export interface DiscordBridgeHost {
     input: SendConversationMessageInput,
   ): Promise<ConversationDispatchReceipt>;
   createConversation(input: CreateConversationInput): Conversation;
+  updateConversation(id: string, input: { title?: string }): Conversation;
   decideApproval(input: ApprovalDecisionInput): Promise<Approval>;
   cancelTask(id: string): Promise<Task>;
   subscribe(listener: (event: DesktopEvent) => void): () => void;
@@ -139,6 +141,8 @@ export class DiscordBridgeService {
   private readonly approvalNotices = new Map<string, { messageId: string; channelId: string }>();
   private readonly pendingThreadNames = new Map<string, string>();
   private readonly channelCache = new Map<string, DiscordChannel>();
+  private sequenceTimer: ReturnType<typeof setTimeout> | null = null;
+  private pendingSequence: { lastSequence: number | null; sessionId: string | null } | null = null;
 
   constructor(private readonly options: DiscordBridgeOptions) {}
 
@@ -149,13 +153,16 @@ export class DiscordBridgeService {
   async start(): Promise<void> {
     if (this.running) return;
     const integration = this.options.database.getDiscordIntegration();
-    if (!integration || integration.status !== "connected") return;
+    if (!integration || (integration.status !== "connected" && integration.status !== "error")) {
+      return;
+    }
     const token = await this.readToken();
     if (!token) return;
 
     this.config = parseDiscordConfig(integration);
     this.api = new DiscordRestApi(token, this.options.fetchImpl ?? fetch);
     this.running = true;
+    for (const channelId of this.config.refusedChannels) this.refusedChannels.add(channelId);
     this.initializeCursors();
     this.unsubscribe = this.options.host.subscribe((event) => this.handleEvent(event));
     this.gateway = new DiscordGateway({
@@ -164,19 +171,41 @@ export class DiscordBridgeService {
       WebSocketImpl: this.options.WebSocketImpl,
       sessionId: this.config.sessionId,
       lastSequence: this.config.lastSequence,
+      resumeUrl: this.config.resumeUrl,
       handlers: {
-        onReady: (sessionId) => {
-          this.saveConfig({ sessionId }, { notify: false });
-        },
-        onSequence: (lastSequence, sessionId) => {
+        onReady: (sessionId, resumeUrl) => {
           this.saveConfig(
-            { lastSequence, sessionId: sessionId ?? this.config?.sessionId ?? null },
+            { sessionId, resumeUrl: resumeUrl ?? this.config?.resumeUrl ?? null, gatewayError: null },
             { notify: false },
           );
+          const current = this.options.database.getDiscordIntegration();
+          if (current?.status === "error") {
+            this.options.database.updateDiscordIntegration({ status: "connected" });
+            this.options.emit({ type: "entity.changed", entity: "integrations", id: current.id });
+          }
+        },
+        onSequence: (lastSequence, sessionId) => {
+          this.queueSequenceWrite(lastSequence, sessionId);
         },
         onDispatch: (event) => this.handleDispatch(event.t, event.d),
-        onConflict: (reason) => {
-          this.options.database.addActivity({ type: "discord.conflict", summary: reason });
+        onClose: (code, reason) => {
+          if (code === 1000 || code === 1001 || code === 4000) return;
+          this.saveConfig(
+            { gatewayError: reason ? `Discord Gateway closed (${code}): ${reason}` : `Discord Gateway closed (${code}).` },
+            { notify: true },
+          );
+        },
+        onFatal: (code, hint) => {
+          this.saveConfig(
+            {
+              gatewayError: hint,
+              messageContentIntentEnabled: code === 4014 ? false : this.config?.messageContentIntentEnabled ?? null,
+            },
+            { notify: false },
+          );
+          this.options.database.updateDiscordIntegration({ status: "error" });
+          this.options.emit({ type: "entity.changed", entity: "integrations" });
+          this.options.database.addActivity({ type: "discord.gateway_error", summary: hint });
           this.options.emit({ type: "entity.changed", entity: "activity" });
         },
         onError: (scope, error) => this.options.onError?.(scope, error),
@@ -191,7 +220,9 @@ export class DiscordBridgeService {
     this.running = false;
     this.unsubscribe?.();
     this.unsubscribe = null;
+    this.flushSequenceWrite();
     await this.gateway?.stop();
+    this.flushSequenceWrite();
     this.gateway = null;
     await this.outbound.catch(() => undefined);
     this.api = null;
@@ -264,6 +295,7 @@ export class DiscordBridgeService {
       if ((event === "THREAD_CREATE" || event === "THREAD_UPDATE") && isDiscordChannel(data)) {
         this.cacheChannel(data);
         if (data.name) this.pendingThreadNames.set(data.id, data.name);
+        if (event === "THREAD_UPDATE" && data.name) this.renameMappedConversation(data.id, data.name);
         return;
       }
       if (event === "INTERACTION_CREATE" && isDiscordInteraction(data)) {
@@ -298,13 +330,17 @@ export class DiscordBridgeService {
     if (!message.guild_id) return; // DMs are out of v1.
     if (message.author?.bot) return;
     if (message.author?.id && message.author.id === config.botUserId) return;
+    if (!isDiscordHumanMessage(message)) return;
 
     const text = (message.content ?? "").trim();
     const channel = await this.resolveChannel(message.channel_id);
-    const inThread = Boolean(channel && isDiscordThreadType(channel.type));
-    const parentId = inThread ? (channel?.parent_id ?? null) : message.channel_id;
+    const knownThread = Boolean(config.threads[message.channel_id] || message.thread);
+    const inThread = Boolean((channel && isDiscordThreadType(channel.type)) || knownThread);
+    const parentId = inThread
+      ? (channel?.parent_id ?? message.thread?.parent_id ?? config.channelId)
+      : message.channel_id;
 
-    if (config.pairingCode && text === config.pairingCode) {
+    if (config.pairingCode && text.toUpperCase() === config.pairingCode.toUpperCase()) {
       if (config.channelId === null) {
         await this.completePairing(message, channel);
         return;
@@ -319,11 +355,11 @@ export class DiscordBridgeService {
     }
 
     if (config.channelId === null || config.guildId === null) {
-      await this.refuseUnpairedChannel(message.channel_id);
+      await this.refuseUnpairedChannel(message.channel_id, text);
       return;
     }
     if (message.guild_id !== config.guildId || parentId !== config.channelId) {
-      await this.refuseUnpairedChannel(message.channel_id);
+      await this.refuseUnpairedChannel(message.channel_id, text);
       return;
     }
 
@@ -331,7 +367,7 @@ export class DiscordBridgeService {
       return;
     }
 
-    if (text.startsWith("/stop")) {
+    if (text === "/stop" || text.startsWith("/stop ")) {
       await this.handleStopCommand(message, inThread ? message.channel_id : undefined);
       return;
     }
@@ -489,15 +525,35 @@ export class DiscordBridgeService {
     }
   }
 
-  private async refuseUnpairedChannel(channelId: string): Promise<void> {
+  private looksLikePairingAttempt(text: string): boolean {
+    const config = this.config;
+    if (!config) return false;
+    const compact = text.replace(/\s/g, "");
+    if (config.pairingCode && compact.toUpperCase() === config.pairingCode.toUpperCase()) return true;
+    if (/^[0-9A-Fa-f]{16}$/.test(compact)) return true;
+    if (/^[A-Za-z0-9_-]{8,32}$/.test(compact)) return true;
+    if (config.botUserId && text.includes(`<@${config.botUserId}>`)) return true;
+    if (config.botUsername && new RegExp(`@${config.botUsername}\\b`, "i").test(text)) return true;
+    return false;
+  }
+
+  private persistRefusedChannel(channelId: string): void {
     if (this.refusedChannels.has(channelId)) return;
     this.refusedChannels.add(channelId);
+    const refused = [...new Set([...(this.config?.refusedChannels ?? []), channelId])].slice(-256);
+    this.saveConfig({ refusedChannels: refused }, { notify: false });
+  }
+
+  private async refuseUnpairedChannel(channelId: string, text: string): Promise<void> {
+    if (this.refusedChannels.has(channelId)) return;
+    this.persistRefusedChannel(channelId);
     this.options.database.addActivity({
       type: "discord.refused",
       summary:
         "Refused a Discord message from an unpaired channel — post the pairing code from Settings → Integrations in the channel or thread you want",
     });
     this.options.emit({ type: "entity.changed", entity: "activity" });
+    if (!this.looksLikePairingAttempt(text)) return;
     await this.sendPlain(
       channelId,
       "This bot is private. To connect, invite it from Coworker's Settings → Integrations, then post the pairing code shown there in this channel or thread.",
@@ -741,13 +797,14 @@ export class DiscordBridgeService {
     if (!config || !this.api) return;
     const user = interaction.member?.user ?? interaction.user;
     const channelId = interaction.channel_id ?? interaction.message?.channel_id;
-    const answer = async (type: number, content?: string) => {
+    const answer = async (type: number, content?: string, ephemeral = false) => {
       try {
         await this.api?.answerInteraction({
           interactionId: interaction.id,
           token: interaction.token,
           type,
           content,
+          ephemeral,
         });
       } catch (error) {
         this.options.onError?.("discord.approval", error);
@@ -759,18 +816,19 @@ export class DiscordBridgeService {
       !this.channelIsPaired(channelId, interaction.guild_id) ||
       user?.bot
     ) {
-      await answer(4, "This channel isn't paired with Coworker.");
+      await answer(4, "This channel isn't paired with Coworker.", true);
       return;
     }
     const match = interaction.data?.custom_id?.match(/^apr:([\w-]+):(approve|reject|always|edit)$/);
     if (!match) {
-      await answer(4, "This action isn't supported.");
+      await answer(4, "This action isn't supported.", true);
       return;
     }
     const [, approvalId, action] = match as unknown as [string, string, string];
+    await answer(6);
     const release = this.tryBeginMutation();
     if (!release) {
-      await answer(4, "The app is briefly busy creating a backup. Try again in a moment.");
+      await this.sendPlain(channelId, "The app is briefly busy creating a backup. Try again in a moment.");
       return;
     }
     try {
@@ -778,11 +836,12 @@ export class DiscordBridgeService {
       const proposal = workspaceTextApproval(pending);
       if (action === "edit") {
         if (!proposal) throw new Error("This approval does not support text editing.");
-        await answer(6);
         const prompt = await this.api.sendMessage({
           channelId,
           content: `Edit & approve: ${pending.summary}\n\nReply to this message with the replacement text. Sending your reply approves that exact text. Reply /cancel to keep the original proposal pending. For longer text, use the desktop editor.`,
-          messageReference: { message_id: interaction.message?.id ?? pending.id },
+          ...(interaction.message?.id
+            ? { messageReference: { message_id: interaction.message.id } }
+            : {}),
         });
         this.saveConfig(
           {
@@ -817,7 +876,6 @@ export class DiscordBridgeService {
           : action === "always"
             ? `Approved — ${this.linkedCoworkerName()} won't ask again for this action.`
             : "Approved.";
-      await answer(7);
       if (interaction.message) {
         try {
           await this.api.editMessage({
@@ -831,10 +889,21 @@ export class DiscordBridgeService {
       }
     } catch (error) {
       this.options.onError?.("discord.approval", error);
-      await answer(
-        4,
-        error instanceof Error ? error.message.slice(0, 180) : "The approval could not be decided.",
-      );
+      const detail =
+        error instanceof Error ? error.message.slice(0, 180) : "The approval could not be decided.";
+      if (interaction.message) {
+        try {
+          await this.api.editMessage({
+            channelId,
+            messageId: interaction.message.id,
+            content: detail,
+          });
+        } catch (editError) {
+          this.options.onError?.("discord.approval", editError);
+        }
+      } else {
+        await this.sendPlain(channelId, detail);
+      }
     } finally {
       release();
     }
@@ -1042,6 +1111,7 @@ export class DiscordBridgeService {
           emoji,
         });
         next[clientId] = { ...ref, reactedAt: new Date().toISOString() };
+        delete next[clientId];
         changed = true;
       } catch (error) {
         this.options.onError?.("discord.reaction", error);
@@ -1059,32 +1129,48 @@ export class DiscordBridgeService {
   }
 
   private startRun(runId: string, conversationId: string, taskId: string): void {
-    this.enqueueOutbound(async () => {
-      if (this.runBuffers.has(runId)) return;
-      const target = await this.outboundTarget(conversationId, taskId);
-      if (!target) return;
-      for (const [staleRunId, stale] of [...this.runBuffers]) {
-        if (staleRunId !== runId && stale.taskId === taskId) {
-          this.finalizeRun(staleRunId, false);
-        }
+    if (this.runBuffers.has(runId)) return;
+    for (const [staleRunId, stale] of [...this.runBuffers]) {
+      if (staleRunId !== runId && stale.taskId === taskId) {
+        this.finalizeRun(staleRunId, false);
       }
-      const now = Date.now();
-      const buffer: DiscordRunBuffer = {
-        taskId,
-        conversationId,
-        text: "",
-        lastActivityAt: now,
-        targetChannelId: target,
-        typingTimer: null,
-        stopTimer: null,
-        stopRequested: false,
-        pendingSeparator: false,
-        finalized: false,
-      };
-      this.runBuffers.set(runId, buffer);
+    }
+    const buffer: DiscordRunBuffer = {
+      taskId,
+      conversationId,
+      text: "",
+      lastActivityAt: Date.now(),
+      targetChannelId: this.syncOutboundTarget(conversationId, taskId) ?? "",
+      typingTimer: null,
+      stopTimer: null,
+      stopRequested: false,
+      pendingSeparator: false,
+      finalized: false,
+    };
+    this.runBuffers.set(runId, buffer);
+    this.enqueueOutbound(async () => {
+      if (this.runBuffers.get(runId) !== buffer || buffer.finalized) return;
+      if (!buffer.targetChannelId) {
+        const target = await this.outboundTarget(conversationId, taskId);
+        if (!target) return;
+        buffer.targetChannelId = target;
+      }
       this.scheduleTyping(runId, buffer);
       await this.pushTyping(buffer);
     });
+  }
+
+  /** Thread or parent channel when no REST call is required (forums may need a new post). */
+  private syncOutboundTarget(conversationId: string, taskId?: string): string | null {
+    const config = this.config;
+    if (!config?.channelId) return null;
+    const mappedThread = this.threadForConversation(conversationId);
+    if (mappedThread) return mappedThread;
+    const last = this.replyThreadForTask(conversationId, taskId);
+    if (last) return last;
+    if (conversationId !== config.conversationId) return null;
+    if (config.channelType !== null && isDiscordForumType(config.channelType)) return null;
+    return config.channelId;
   }
 
   private scheduleTyping(runId: string, buffer: DiscordRunBuffer): void {
@@ -1122,11 +1208,18 @@ export class DiscordBridgeService {
     this.runBuffers.delete(runId);
     const text = buffer.text.trim() ? buffer.text : stopped ? "Stopped." : "";
     if (!text) return;
-    this.enqueueOutbound(() =>
-      stopped && !buffer.text.trim()
-        ? this.sendPlain(buffer.targetChannelId, text)
-        : this.sendMarkdown(buffer.targetChannelId, text),
-    );
+    this.enqueueOutbound(async () => {
+      if (!buffer.targetChannelId) {
+        const target = await this.outboundTarget(buffer.conversationId, buffer.taskId);
+        if (!target) return;
+        buffer.targetChannelId = target;
+      }
+      if (stopped && !buffer.text.trim()) {
+        await this.sendPlain(buffer.targetChannelId, text);
+        return;
+      }
+      await this.sendMarkdown(buffer.targetChannelId, text);
+    });
   }
 
   private async outboundTarget(
@@ -1137,8 +1230,18 @@ export class DiscordBridgeService {
     if (!config || !config.channelId) return null;
     const mappedThread = this.threadForConversation(conversationId);
     if (mappedThread) return mappedThread;
+    const last = this.replyThreadForTask(conversationId, taskId);
+    if (last) return last;
     if (conversationId !== config.conversationId) return null;
-    return this.replyThreadForTask(conversationId, taskId) ?? config.channelId;
+    if (config.channelType !== null && isDiscordForumType(config.channelType)) {
+      try {
+        const conversation = this.options.database.getConversation(conversationId);
+        return (await this.createOutboundThread(conversation)) ?? null;
+      } catch {
+        return null;
+      }
+    }
+    return config.channelId;
   }
 
   private replyThreadForTask(conversationId: string, taskId?: string): string | undefined {
@@ -1178,7 +1281,13 @@ export class DiscordBridgeService {
       channelId =
         this.lastInboundThread.get(conversationId) ??
         this.config?.lastThreads[conversationId] ??
-        config.channelId;
+        null;
+      if (!channelId && config.channelType !== null && isDiscordForumType(config.channelType)) {
+        channelId = (await this.createOutboundThread(conversation)) ?? null;
+        if (!channelId) return;
+      } else if (!channelId) {
+        channelId = config.channelId;
+      }
     }
 
     if (!this.cursors.has(conversationId)) this.cursors.set(conversationId, "");
@@ -1303,6 +1412,40 @@ export class DiscordBridgeService {
     } catch {
       return null;
     }
+  }
+
+  private renameMappedConversation(threadId: string, title: string): void {
+    const conversationId = this.config?.threads[threadId];
+    if (!conversationId) return;
+    try {
+      this.options.host.updateConversation(conversationId, { title });
+    } catch (error) {
+      this.options.onError?.("discord.thread", error);
+    }
+  }
+
+  private queueSequenceWrite(lastSequence: number | null, sessionId: string | null): void {
+    this.pendingSequence = { lastSequence, sessionId };
+    if (this.sequenceTimer) return;
+    this.sequenceTimer = setTimeout(() => {
+      this.sequenceTimer = null;
+      this.flushSequenceWrite();
+    }, 2_000);
+    this.sequenceTimer.unref?.();
+  }
+
+  private flushSequenceWrite(): void {
+    if (this.sequenceTimer) {
+      clearTimeout(this.sequenceTimer);
+      this.sequenceTimer = null;
+    }
+    const pending = this.pendingSequence;
+    this.pendingSequence = null;
+    if (!pending || !this.config) return;
+    this.saveConfig(
+      { lastSequence: pending.lastSequence, sessionId: pending.sessionId },
+      { notify: false },
+    );
   }
 
   private saveConfig(

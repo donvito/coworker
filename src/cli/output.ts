@@ -59,13 +59,13 @@ function formatDiscord(result: DiscordIntegrationStatus): string {
   const { integration, inviteUrl, pairingCode, intentSettingsUrl } = result;
   if (!integration) return "Discord is not configured.";
   const { config } = integration;
-  const connected = integration.status === "connected";
-  const paired = connected && config.guildId && config.channelId;
+  const configured = integration.status === "connected" || integration.status === "error";
+  const paired = Boolean(config.guildId && config.channelId);
   const lines = [
-    `Discord: ${connected && !paired ? "connected, waiting to pair" : discordState(result)}`,
+    `Discord: ${configured && !paired && integration.status === "connected" ? "connected, waiting to pair" : discordState(result)}`,
     `Bot: ${cell(config.botUsername)}`,
   ];
-  if (connected && !paired) {
+  if (configured && !paired) {
     if (inviteUrl) lines.push(`Invite: ${inviteUrl}`);
     if (pairingCode) lines.push(`Pairing code: ${pairingCode}`);
     lines.push("Post that code in the Discord channel or thread you want.");
@@ -80,6 +80,7 @@ function formatDiscord(result: DiscordIntegrationStatus): string {
       lines.push(`Thread: ${cell(result.threadName ?? config.pairedThreadName)}`);
     }
   }
+  if (result.gatewayError) lines.push(`Gateway: ${result.gatewayError}`);
   return lines.join("\n");
 }
 

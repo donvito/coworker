@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { DesktopAppService } from "@main/app/app-service";
 import { CoworkerDatabase } from "@main/db/database";
 import { bundledDiscordMessagingSkill } from "@main/integrations/skills";
+import { modelSupportsImageInput } from "@main/integrations/model-catalog";
 import {
   discordCredentialKey,
   discordInvitePermissions,
@@ -58,7 +59,15 @@ async function waitFor(predicate: () => boolean, description: string): Promise<v
 type Listener = (event: Event) => void;
 
 /** In-memory REST + Gateway double. The bridge talks to it through fetch and WebSocket. */
-function fakeDiscord(options: { intentEnabled?: boolean } = {}) {
+function fakeDiscord(
+  options: {
+    intentEnabled?: boolean;
+    heartbeatInterval?: number;
+    ackHeartbeats?: boolean;
+    reactionStatus?: number;
+    message429Remaining?: number;
+  } = {},
+) {
   const calls: Array<{ method: string; path: string; body: Record<string, unknown> }> = [];
   const files = new Map<string, Uint8Array>();
   const channels = new Map<string, Record<string, unknown>>([
@@ -87,6 +96,8 @@ function fakeDiscord(options: { intentEnabled?: boolean } = {}) {
   class FakeWebSocket {
     readyState = 0;
     readonly url: string;
+    lastCloseCode: number | null = null;
+    readonly sentOps: number[] = [];
     private readonly listeners = new Map<string, Listener[]>();
 
     constructor(url: string) {
@@ -96,7 +107,10 @@ function fakeDiscord(options: { intentEnabled?: boolean } = {}) {
         this.readyState = 1;
         this.emit("open", {});
         this.emit("message", {
-          data: JSON.stringify({ op: 10, d: { heartbeat_interval: 45_000 } }),
+          data: JSON.stringify({
+            op: 10,
+            d: { heartbeat_interval: options.heartbeatInterval ?? 45_000 },
+          }),
         });
       });
     }
@@ -109,6 +123,7 @@ function fakeDiscord(options: { intentEnabled?: boolean } = {}) {
 
     send(data: string) {
       const payload = JSON.parse(data) as { op?: number };
+      if (typeof payload.op === "number") this.sentOps.push(payload.op);
       if (payload.op === 2 || payload.op === 6) {
         queueMicrotask(() => {
           this.emit("message", {
@@ -116,16 +131,33 @@ function fakeDiscord(options: { intentEnabled?: boolean } = {}) {
               op: 0,
               t: payload.op === 6 ? "RESUMED" : "READY",
               s: (sequence += 1),
-              d: { session_id: "sess-1", user: { id: "99", username: "coworker-bot" } },
+              d: {
+                session_id: "sess-1",
+                resume_gateway_url: "wss://gateway-resume.test",
+                user: { id: "99", username: "coworker-bot" },
+              },
             }),
           });
         });
       }
+      if (payload.op === 1 && options.ackHeartbeats !== false) {
+        queueMicrotask(() => this.emit("message", { data: JSON.stringify({ op: 11 }) }));
+      }
     }
 
     close(code = 1000, reason = "") {
+      this.lastCloseCode = code;
       this.readyState = 3;
       this.emit("close", { code, reason });
+    }
+
+    closeFromServer(code: number, reason = "") {
+      this.readyState = 3;
+      this.emit("close", { code, reason });
+    }
+
+    dispatchOpcode(op: number, d: unknown = null) {
+      this.emit("message", { data: JSON.stringify({ op, d, s: (sequence += 1) }) });
     }
 
     dispatch(event: string, data: Record<string, unknown>) {
@@ -198,6 +230,13 @@ function fakeDiscord(options: { intentEnabled?: boolean } = {}) {
     }
     const messageMatch = path.match(/^\/channels\/(\d+)\/messages$/);
     if (method === "POST" && messageMatch) {
+      if (options.message429Remaining) {
+        options.message429Remaining -= 1;
+        return new Response(JSON.stringify({ retry_after: 0.01, message: "rate limited" }), {
+          status: 429,
+          headers: { "Content-Type": "application/json", "Retry-After": "0.01" },
+        });
+      }
       return respond({
         id: String((messageSeq += 1)),
         channel_id: messageMatch[1],
@@ -207,7 +246,11 @@ function fakeDiscord(options: { intentEnabled?: boolean } = {}) {
     if (method === "PATCH" && /\/messages\/\d+$/.test(path)) {
       return respond({ id: path.split("/").at(-1), content: body.content });
     }
-    if (method === "PUT" && path.includes("/reactions/")) return respond(undefined, 204);
+    if (method === "PUT" && path.includes("/reactions/")) {
+      const status = options.reactionStatus ?? 204;
+      if (status !== 204) return respond({ message: "Missing Permissions" }, status);
+      return respond(undefined, 204);
+    }
     if (method === "POST" && path.includes("/interactions/")) return respond(undefined, 204);
     return respond({});
   }) as typeof fetch;
@@ -225,12 +268,17 @@ function fakeDiscord(options: { intentEnabled?: boolean } = {}) {
           call.method === method && (suffix === undefined || call.path.endsWith(suffix) || call.path.includes(suffix)),
       );
     },
+    sockets,
+    lastSocket() {
+      return sockets.at(-1);
+    },
     pushMessage(input: {
       channelId: string;
       content?: string;
       guildId?: string | null;
       authorId?: string;
       bot?: boolean;
+      type?: number;
       attachments?: Array<{
         id: string;
         filename: string;
@@ -247,6 +295,7 @@ function fakeDiscord(options: { intentEnabled?: boolean } = {}) {
         id: String((messageSeq += 1)),
         channel_id: input.channelId,
         guild_id: input.guildId === null ? undefined : (input.guildId ?? "10"),
+        type: input.type ?? 0,
         author: {
           id: input.authorId ?? "7",
           username: "melvin",
@@ -293,7 +342,15 @@ function fakeDiscord(options: { intentEnabled?: boolean } = {}) {
   };
 }
 
-async function setup(options: { intentEnabled?: boolean } = {}) {
+async function setup(
+  options: {
+    intentEnabled?: boolean;
+    heartbeatInterval?: number;
+    ackHeartbeats?: boolean;
+    reactionStatus?: number;
+    message429Remaining?: number;
+  } = {},
+) {
   const root = await mkdtemp(join(tmpdir(), "coworker-discord-"));
   temporaryPaths.push(root);
   const database = new CoworkerDatabase(join(root, "coworker.db"));
@@ -508,10 +565,8 @@ describe("discord bridge", () => {
 
     const before = context.fake.sent("POST", "/messages").length;
     context.fake.pushMessage({ channelId: "999", content: "other channel", guildId: "10" });
-    await waitFor(
-      () => context.fake.sent("POST", "/messages").length > before,
-      "the other-channel refusal",
-    );
+    await new Promise((resolveWait) => setTimeout(resolveWait, 80));
+    expect(context.fake.sent("POST", "/messages").length).toBe(before);
     expect(
       context.database
         .listConversationMessages(conversationId)
@@ -554,7 +609,7 @@ describe("discord bridge", () => {
     await waitFor(() => context.fake.sent("PUT", "/reactions/").length === 1, "the receipt reaction");
     const reaction = context.fake.sent("PUT", "/reactions/")[0]!;
     expect(decodeURIComponent(reaction.path)).toContain("👀");
-    expect(refs()[0]!.reactedAt).toBeDefined();
+    await waitFor(() => refs().length === 0, "pruned inbound ref");
 
     context.emit({
       type: "agent.event",
@@ -848,6 +903,11 @@ describe("discord bridge", () => {
   it("moves the bot to another coworker and keeps the paired channel", async () => {
     const context = await setup();
     await connectAndPair(context);
+    context.fake.pushMessage({ channelId: "200", content: "thread for ava" });
+    await waitFor(
+      () => Object.keys(parseDiscordConfig(context.database.getDiscordIntegration()!).threads).length > 0,
+      "ava thread map",
+    );
     const sarah = context.database.createCoworker(
       {
         name: "Sarah",
@@ -864,6 +924,8 @@ describe("discord bridge", () => {
     expect(config.coworkerId).toBe(sarah.id);
     expect(config.channelId).toBe("100");
     expect(config.guildId).toBe("10");
+    expect(config.threads).toEqual({});
+    expect(config.lastThreads).toEqual({});
     expect(context.database.getCoworker(sarah.id).enabledTools).toContain("discord.send");
     expect(context.database.getCoworker(context.ava.id).enabledTools).not.toContain("discord.send");
     await waitFor(
@@ -893,5 +955,352 @@ describe("discord bridge", () => {
     expect(await context.credentials.has(discordCredentialKey)).toBe(true);
     await context.service.disconnectDiscord();
     expect(await context.credentials.has(discordCredentialKey)).toBe(false);
+  });
+
+  it("stops reconnecting on 4014 and surfaces a Settings gateway error", async () => {
+    const context = await setup();
+    await context.service.configureDiscord({ botToken: testToken, coworkerId: context.ava.id });
+    await waitFor(() => context.fake.sent("GET", "/gateway").length === 1, "first identify");
+    await new Promise((resolveWait) => setTimeout(resolveWait, 30));
+    context.fake.lastSocket()!.closeFromServer(4014, "Disallowed intent(s)");
+    await waitFor(() => context.service.discordStatus().integration?.status === "error", "fatal status");
+    expect(context.service.discordStatus().gatewayError).toMatch(/Message Content Intent/i);
+    await new Promise((resolveWait) => setTimeout(resolveWait, 200));
+    expect(context.fake.sent("GET", "/gateway").length).toBe(1);
+  });
+
+  it("backs off after a drop instead of tight-looping IDENTIFY", async () => {
+    const context = await setup();
+    await context.service.configureDiscord({ botToken: testToken, coworkerId: context.ava.id });
+    await waitFor(() => context.fake.sent("GET", "/gateway").length === 1, "first identify");
+    await new Promise((resolveWait) => setTimeout(resolveWait, 30));
+    context.fake.lastSocket()!.closeFromServer(1006);
+    await new Promise((resolveWait) => setTimeout(resolveWait, 250));
+    expect(context.fake.sent("GET", "/gateway").length).toBe(1);
+  });
+
+  it("closes and resumes when a heartbeat ACK is missing", async () => {
+    const context = await setup({ heartbeatInterval: 40, ackHeartbeats: false });
+    await context.service.configureDiscord({ botToken: testToken, coworkerId: context.ava.id });
+    await waitFor(() => context.fake.lastSocket()?.sentOps.includes(2), "identify");
+    await waitFor(
+      () => context.fake.sockets.some((socket) => socket.lastCloseCode === 4000),
+      "missing ACK close",
+    );
+  });
+
+  it("wakes with a resumable close and does not log a second-instance conflict", async () => {
+    const context = await setup();
+    await connectAndPair(context);
+    const before = context.database.listActivity().filter((item) => item.type === "discord.conflict");
+    await context.service.discord.wake();
+    await waitFor(() => context.fake.sockets.length >= 2, "wake reconnect");
+    expect(context.fake.sockets[0]!.lastCloseCode).toBe(4000);
+    await waitFor(
+      () => context.fake.lastSocket()?.sentOps.includes(6),
+      "resume after wake",
+    );
+    expect(context.database.listActivity().filter((item) => item.type === "discord.conflict")).toEqual(
+      before,
+    );
+  });
+
+  it("re-identifies after an invalid session without a conflict activity", async () => {
+    const context = await setup();
+    await connectAndPair(context);
+    const before = context.database.listActivity().filter((item) => item.type === "discord.conflict");
+    context.fake.lastSocket()!.dispatchOpcode(9, false);
+    await waitFor(() => context.fake.sockets.length >= 2, "invalid-session reconnect");
+    await waitFor(
+      () => context.fake.sockets.some((socket) => socket.sentOps.includes(2) && socket !== context.fake.sockets[0]),
+      "fresh identify",
+    );
+    expect(context.database.listActivity().filter((item) => item.type === "discord.conflict")).toEqual(
+      before,
+    );
+  });
+
+  it("pairs a forum post and never posts to the forum channel itself", async () => {
+    const context = await setup();
+    await connectAndPair(context, { channelId: "301" });
+    const config = parseDiscordConfig(context.database.getDiscordIntegration()!);
+    expect(config.channelId).toBe("300");
+    expect(config.channelType).toBe(15);
+    const coworker = context.database.getCoworker(context.ava.id);
+    context.database.updateCoworker(context.ava.id, {
+      policies: { ...coworker.policies, "discord.send": "automatic" },
+    });
+    const task = context.database.createTask({
+      coworkerId: context.ava.id,
+      title: "Send to Discord",
+      input: "send it",
+      threadId: `coworker:${context.ava.id}`,
+    });
+    await context.service.tools.request({
+      task,
+      coworker: context.database.getCoworker(context.ava.id),
+      toolCallId: "forum-send",
+      toolName: "discord.send",
+      arguments: { message: "forum hello" },
+    });
+    expect(context.fake.sent("POST", "/threads").length).toBeGreaterThan(0);
+    expect(context.fake.sent("POST", "/channels/300/messages")).toHaveLength(0);
+  });
+
+  it("ignores system messages and does not answer them", async () => {
+    const context = await setup();
+    await connectAndPair(context);
+    const before = context.fake.sent("POST", "/messages").length;
+    context.fake.pushMessage({ channelId: "100", content: "", type: 18 });
+    await new Promise((resolveWait) => setTimeout(resolveWait, 80));
+    expect(context.fake.sent("POST", "/messages").length).toBe(before);
+    expect(
+      context.database
+        .listConversationMessages(`coworker:${context.ava.id}`)
+        .some((message) => message.id.startsWith("discord:")),
+    ).toBe(false);
+  });
+
+  it("imports inbound photos for vision models and degrades otherwise", async () => {
+    const context = await setup();
+    await connectAndPair(context);
+    const visionModel = [
+      "claude-sonnet-4-5",
+      "claude-opus-4-5",
+      "claude-haiku-4-5",
+      "claude-3-7-sonnet",
+    ].find((id) => modelSupportsImageInput("anthropic", id));
+    expect(visionModel).toBeDefined();
+    context.database.updateCoworker(context.ava.id, {
+      modelProvider: "anthropic",
+      modelName: visionModel!,
+    });
+    const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, ...new Array(64).fill(0)]);
+    context.fake.registerFile("photo-1", jpeg);
+    context.fake.pushMessage({
+      channelId: "100",
+      content: "look at this",
+      attachments: [
+        { id: "photo-1", filename: "shot.jpg", size: jpeg.byteLength, content_type: "image/jpeg" },
+      ],
+    });
+    await waitFor(
+      () => context.database.listImageAttachments(context.ava.id).length === 1,
+      "the photo attachment",
+    );
+    expect(context.database.listImageAttachments(context.ava.id)[0]!.mimeType).toBe("image/jpeg");
+
+    context.database.updateCoworker(context.ava.id, {
+      modelProvider: "demo",
+      modelName: "faux-1",
+    });
+    context.fake.registerFile("photo-2", jpeg);
+    context.fake.pushMessage({
+      channelId: "100",
+      content: "caption survives",
+      attachments: [
+        { id: "photo-2", filename: "shot2.jpg", size: jpeg.byteLength, content_type: "image/jpeg" },
+      ],
+    });
+    await waitFor(
+      () =>
+        context.database
+          .listConversationMessages(`coworker:${context.ava.id}`)
+          .some((message) => message.content === "caption survives"),
+      "caption without image",
+    );
+    expect(
+      context.fake.sent("POST", "/messages").some((call) => String(call.body.content).includes("can't view photos")),
+    ).toBe(true);
+  });
+
+  it("edits and approves a memory item by reply, and cancels with /cancel", async () => {
+    const context = await setup();
+    await connectAndPair(context);
+    const approval = await proposeMemory(context);
+    context.emit({ type: "entity.changed", entity: "approvals", id: approval.id });
+    await waitFor(
+      () =>
+        context.fake
+          .sent("POST", "/messages")
+          .some((call) => JSON.stringify(call.body.components ?? {}).includes(`apr:${approval.id}:edit`)),
+      "edit button",
+    );
+    const inbound = vi.spyOn(context.service, "sendConversationMessage");
+    context.fake.pushInteraction({
+      channelId: "100",
+      customId: `apr:${approval.id}:edit`,
+      messageId: "5",
+    });
+    const edits = () => parseDiscordConfig(context.database.getDiscordIntegration()!).approvalEdits;
+    await waitFor(() => Object.values(edits()).some((item) => item.approvalId === approval.id), "edit prompt");
+    const promptId = Object.keys(edits())[0]!;
+    context.fake.pushMessage({
+      channelId: "100",
+      content: "/cancel",
+      referencedMessageId: promptId,
+    });
+    await waitFor(() => Object.values(edits()).some((item) => item.cancelled), "cancelled");
+    expect(context.database.getApproval(approval.id).status).toBe("PENDING");
+    context.fake.pushInteraction({
+      channelId: "100",
+      customId: `apr:${approval.id}:edit`,
+      messageId: "5",
+    });
+    await waitFor(() => Object.keys(edits()).length >= 1, "second edit prompt");
+    const promptId2 = Object.keys(edits()).at(-1)!;
+    context.fake.pushMessage({
+      channelId: "100",
+      content: "- Reporting currency: EUR.\n",
+      referencedMessageId: promptId2,
+    });
+    await waitFor(() => context.database.getApproval(approval.id).status === "EDITED", "edited");
+    expect(inbound).not.toHaveBeenCalled();
+  });
+
+  it("applies Always allow and ignores unpaired-channel interactions", async () => {
+    const context = await setup();
+    await connectAndPair(context);
+    const task = context.database.createTask({
+      coworkerId: context.ava.id,
+      title: "Ping me",
+      input: "ping",
+      threadId: `coworker:${context.ava.id}`,
+    });
+    const result = await context.service.tools.request({
+      task,
+      coworker: context.database.getCoworker(context.ava.id),
+      toolCallId: "always-1",
+      toolName: "discord.send",
+      arguments: { message: "later" },
+    });
+    expect(result.kind).toBe("approval");
+    if (result.kind !== "approval") return;
+    context.emit({ type: "entity.changed", entity: "approvals", id: result.approval.id });
+    await waitFor(
+      () =>
+        context.fake
+          .sent("POST", "/messages")
+          .some((call) => JSON.stringify(call.body.components ?? {}).includes(`apr:${result.approval.id}:always`)),
+      "always button",
+    );
+    context.fake.pushInteraction({
+      channelId: "999",
+      customId: `apr:${result.approval.id}:approve`,
+    });
+    await new Promise((resolveWait) => setTimeout(resolveWait, 80));
+    expect(context.database.getApproval(result.approval.id).status).toBe("PENDING");
+    context.fake.pushInteraction({
+      channelId: "100",
+      customId: `apr:${result.approval.id}:always`,
+      messageId: "5",
+    });
+    await waitFor(() => context.database.getApproval(result.approval.id).status === "APPROVED", "always approved");
+    expect(context.database.getCoworker(context.ava.id).policies["discord.send"]).toBe("automatic");
+  });
+
+  it("finalizes a partial /stop reply", async () => {
+    const context = await setup();
+    await connectAndPair(context);
+    const cancel = vi
+      .spyOn(context.service, "cancelTask")
+      .mockResolvedValue({} as Awaited<ReturnType<DesktopAppService["cancelTask"]>>);
+    const base = {
+      coworkerId: context.ava.id,
+      conversationId: `coworker:${context.ava.id}`,
+      runId: "run-stop-partial",
+      taskId: "task-stop-partial",
+    };
+    context.emit({ type: "agent.event", ...base, event: { type: EventType.RUN_STARTED } as never });
+    context.emit({
+      type: "agent.event",
+      ...base,
+      event: { type: EventType.TEXT_MESSAGE_CONTENT, delta: "Half" } as never,
+    });
+    await waitFor(() => context.fake.sent("POST", "/typing").length > 0, "typing");
+    context.fake.pushMessage({ channelId: "100", content: "/stop" });
+    await waitFor(() => cancel.mock.calls.length === 1, "cancelled");
+    expect(cancel).toHaveBeenCalledWith("task-stop-partial");
+    expect(
+      context.database
+        .listConversationMessages(`coworker:${context.ava.id}`)
+        .some((message) => message.content.includes("/stop")),
+    ).toBe(false);
+    context.emit({
+      type: "agent.event",
+      ...base,
+      event: { type: EventType.RUN_ERROR, message: "Stopped", code: "RUN_ABORTED" } as never,
+    });
+    await waitFor(
+      () => context.fake.sent("POST", "/messages").some((call) => String(call.body.content).includes("Half")),
+      "partial reply",
+    );
+  });
+
+  it("records receiptReactionDenied when the reaction PUT is 403", async () => {
+    const context = await setup({ reactionStatus: 403 });
+    await connectAndPair(context);
+    context.fake.pushMessage({ channelId: "100", content: "please look" });
+    await waitFor(
+      () =>
+        Object.values(parseDiscordConfig(context.database.getDiscordIntegration()!).inboundMessages).length === 1,
+      "inject",
+    );
+    const taskId = Object.values(
+      parseDiscordConfig(context.database.getDiscordIntegration()!).inboundMessages,
+    )[0]!.taskId!;
+    context.emit({
+      type: "agent.event",
+      coworkerId: context.ava.id,
+      conversationId: `coworker:${context.ava.id}`,
+      runId: "run-403",
+      taskId,
+      event: { type: EventType.RUN_STARTED } as never,
+    });
+    await waitFor(() => context.service.discordStatus().receiptReactionDenied === true, "denied hint");
+  });
+
+  it("renames a mapped conversation when the Discord thread title changes", async () => {
+    const context = await setup();
+    await connectAndPair(context, { channelId: "200" });
+    const conversationId = parseDiscordConfig(context.database.getDiscordIntegration()!).threads["200"]!;
+    context.fake.lastSocket()!.dispatch("THREAD_UPDATE", {
+      id: "200",
+      type: 11,
+      guild_id: "10",
+      name: "renamed research",
+      parent_id: "100",
+    });
+    await waitFor(
+      () => context.database.getConversation(conversationId).title === "renamed research",
+      "thread rename",
+    );
+  });
+
+  it("retries a 429 and still delivers the finished reply", async () => {
+    const context = await setup({ message429Remaining: 1 });
+    await connectAndPair(context);
+    const conversationId = `coworker:${context.ava.id}`;
+    context.emit({
+      type: "entity.changed",
+      entity: "conversations",
+      id: conversationId,
+    });
+    context.database.addMessage({
+      id: "desktop-1",
+      conversationId,
+      coworkerId: context.ava.id,
+      role: "user",
+      content: "typed on desktop",
+      createdAt: new Date().toISOString(),
+    } as never);
+    context.emit({ type: "entity.changed", entity: "conversations", id: conversationId });
+    await waitFor(
+      () =>
+        context.fake
+          .sent("POST", "/messages")
+          .some((call) => String(call.body.content).includes("typed on desktop")),
+      "retried mirror",
+    );
   });
 });

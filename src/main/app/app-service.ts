@@ -86,6 +86,7 @@ import {
   discordCredentialKey,
   discordIntentSettingsUrl,
   discordInviteUrl,
+  isDiscordForumType,
   messageContentIntentEnabled,
   mintDiscordPairingCode,
   parseDiscordConfig,
@@ -1367,15 +1368,18 @@ export class DesktopAppService {
       pairedThreadName: sameBot ? previous?.pairedThreadName ?? null : null,
       pairedUserId: sameBot ? previous?.pairedUserId ?? null : null,
       pairingCode: (sameBot && previous?.pairingCode) || mintDiscordPairingCode(),
-      threads: sameBot && sameCoworker ? previous?.threads ?? {} : sameBot ? previous?.threads ?? {} : {},
-      lastThreads: sameBot ? previous?.lastThreads ?? {} : {},
-      inboundMessages: sameBot ? previous?.inboundMessages ?? {} : {},
+      threads: sameBot && sameCoworker ? previous?.threads ?? {} : {},
+      lastThreads: sameBot && sameCoworker ? previous?.lastThreads ?? {} : {},
+      inboundMessages: sameBot && sameCoworker ? previous?.inboundMessages ?? {} : {},
       receiptEmoji: previous?.receiptEmoji ?? "👀",
       receiptReactionDenied: sameBot ? previous?.receiptReactionDenied ?? false : false,
       sessionId: sameBot ? previous?.sessionId ?? null : null,
       lastSequence: sameBot ? previous?.lastSequence ?? null : null,
+      resumeUrl: sameBot ? previous?.resumeUrl ?? null : null,
       messageContentIntentEnabled: intentEnabled,
       approvalEdits: sameBot && sameCoworker ? previous?.approvalEdits ?? {} : {},
+      refusedChannels: sameBot ? previous?.refusedChannels ?? [] : [],
+      gatewayError: null,
     };
     const integration = this.database.upsertDiscordIntegration({
       name: me.username,
@@ -1396,10 +1400,21 @@ export class DesktopAppService {
       this.emit({ type: "entity.changed", entity: "activity" });
       if (config.channelId) {
         try {
-          await api.sendMessage({
-            channelId: config.channelId,
-            content: `This channel now goes to ${coworker.name}${previousName ? ` (previously ${previousName})` : ""}. No re-pairing needed — just send a message.`,
-          });
+          const handoff = `This channel now goes to ${coworker.name}${previousName ? ` (previously ${previousName})` : ""}. No re-pairing needed — just send a message.`;
+          if (config.channelType !== null && isDiscordForumType(config.channelType)) {
+            if (config.pairedThreadId) {
+              await api.sendMessage({ channelId: config.pairedThreadId, content: handoff });
+            } else {
+              await api.createThread({
+                channelId: config.channelId,
+                name: coworker.name,
+                forum: true,
+                message: handoff,
+              });
+            }
+          } else {
+            await api.sendMessage({ channelId: config.channelId, content: handoff });
+          }
         } catch (error) {
           void this.options.applicationLogger?.error("discord.relink-notice", error);
         }
@@ -1413,7 +1428,7 @@ export class DesktopAppService {
 
   discordStatus(): DiscordIntegrationStatus {
     const integration = this.database.getDiscordIntegration();
-    if (!integration || integration.status !== "connected") {
+    if (!integration) {
       return {
         integration,
         inviteUrl: null,
@@ -1423,16 +1438,18 @@ export class DesktopAppService {
     }
     const config = parseDiscordConfig(integration);
     const paired = Boolean(config.guildId && config.channelId);
+    const configured = integration.status === "connected" || integration.status === "error";
     return {
       integration,
-      inviteUrl: discordInviteUrl(config.applicationId),
-      pairingCode: paired ? null : config.pairingCode || null,
-      intentSettingsUrl: discordIntentSettingsUrl(config.applicationId),
+      inviteUrl: configured ? discordInviteUrl(config.applicationId) : null,
+      pairingCode: configured && !paired ? config.pairingCode || null : null,
+      intentSettingsUrl: configured ? discordIntentSettingsUrl(config.applicationId) : null,
       messageContentIntentEnabled: config.messageContentIntentEnabled ?? undefined,
       guildName: config.guildName,
       channelName: config.channelName,
       threadName: config.pairedThreadName,
       receiptReactionDenied: config.receiptReactionDenied || undefined,
+      gatewayError: config.gatewayError || undefined,
     };
   }
 

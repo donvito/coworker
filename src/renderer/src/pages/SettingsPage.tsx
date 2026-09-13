@@ -1427,7 +1427,9 @@ export function SettingsPage({
                   channelName?: string | null;
                   pairedThreadName?: string | null;
                 };
-                const discordConnected = discordIntegration?.status === "connected";
+                const discordConnected =
+                  discordIntegration?.status === "connected" ||
+                  discordIntegration?.status === "error";
                 const discordPaired = Boolean(discordConfig.guildId && discordConfig.channelId);
                 const linkedCoworker = coworkers.find(
                   (candidate) => candidate.id === discordConfig.coworkerId,
@@ -1472,9 +1474,12 @@ export function SettingsPage({
                             {discordPaired && threadLabel ? ` · ${threadLabel}` : ""}
                           </strong>
                           <small>
-                            {discordPaired
-                              ? "Paired — anyone in that channel or its threads can talk"
-                              : "Not paired — invite the bot, then paste the code"}
+                            {discordIntegration?.status === "error"
+                              ? discordStatus?.gatewayError ??
+                                "Discord Gateway is not connected"
+                              : discordPaired
+                                ? "Paired — anyone in that channel or its threads can talk"
+                                : "Not paired — invite the bot, then paste the code"}
                           </small>
                         </div>
                         <div className="discord-connection-actions">
@@ -1553,6 +1558,25 @@ export function SettingsPage({
                           </p>
                         ) : null}
                       </div>
+                    ) : null}
+
+                    {discordStatus?.gatewayError ? (
+                      <p className="discord-intent-warning" role="alert">
+                        {discordStatus.gatewayError}
+                        {discordStatus.intentSettingsUrl &&
+                        /Message Content Intent/i.test(discordStatus.gatewayError) ? (
+                          <>
+                            {" "}
+                            <a
+                              href={discordStatus.intentSettingsUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              Open Developer Portal
+                            </a>
+                          </>
+                        ) : null}
+                      </p>
                     ) : null}
 
                     {discordConnected && discordPaired ? (
