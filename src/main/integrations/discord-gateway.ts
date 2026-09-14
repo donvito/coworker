@@ -83,14 +83,29 @@ export interface DiscordGatewayOptions {
   sessionId?: string | null;
   lastSequence?: number | null;
   resumeUrl?: string | null;
+  /** How long a requested close may take before the socket is force-terminated. */
+  closeTimeoutMs?: number;
 }
 
 const maxBackoffMs = 60_000;
 const minReconnectMs = 1_000;
 const invalidSessionMinMs = 1_000;
 const invalidSessionMaxMs = 5_000;
+export const discordDefaultCloseTimeoutMs = 5_000;
 /** Client close that keeps the session resumable. Discord invalidates 1000/1001. */
 export const discordResumableCloseCode = 4000;
+
+/**
+ * One Gateway WebSocket plus the state needed to finish it exactly once. A
+ * dead peer never answers the close handshake, so a close may be completed
+ * by the timeout in `teardownSocket` rather than by the socket's own event.
+ */
+interface GatewayConnection {
+  socket: WebSocket;
+  closed: boolean;
+  closeTimer: ReturnType<typeof setTimeout> | null;
+  onClosed: (code: number, reason: string) => void;
+}
 
 function delay(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
@@ -116,7 +131,7 @@ function delay(ms: number, signal?: AbortSignal): Promise<void> {
  * two connected instances against one bot until an out-of-band lock exists.
  */
 export class DiscordGateway {
-  private socket: WebSocket | null = null;
+  private connection: GatewayConnection | null = null;
   private running = false;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private heartbeatStartTimer: ReturnType<typeof setTimeout> | null = null;
@@ -236,7 +251,39 @@ export class DiscordGateway {
         finish(error);
         return;
       }
-      this.socket = socket;
+      const connection: GatewayConnection = {
+        socket,
+        closed: false,
+        closeTimer: null,
+        onClosed: (code, reason) => {
+          if (connection.closed) return;
+          connection.closed = true;
+          if (connection.closeTimer) {
+            clearTimeout(connection.closeTimer);
+            connection.closeTimer = null;
+          }
+          if (this.connection === connection) {
+            this.clearHeartbeat();
+            this.connection = null;
+          }
+          this.options.handlers.onClose?.(code, reason);
+          if (discordFatalCloseCodes.has(code)) {
+            finish(new DiscordFatalCloseError(code, discordGatewayErrorHint(code)));
+            return;
+          }
+          if (this.expectInvalidSession) {
+            this.expectInvalidSession = false;
+            finish(new DiscordInvalidSessionError());
+            return;
+          }
+          if (code !== 1000 && code !== 1001 && code !== discordResumableCloseCode) {
+            finish(new DiscordReconnectError(code));
+            return;
+          }
+          finish();
+        },
+      };
+      this.connection = connection;
       this.identified = false;
       signal?.addEventListener("abort", onAbort, { once: true });
       if (!this.running || signal?.aborted) {
@@ -248,6 +295,7 @@ export class DiscordGateway {
         // HELLO arrives as the first payload; identify after that.
       });
       socket.addEventListener("message", (event) => {
+        if (connection.closed) return;
         void this.handlePayload(String((event as MessageEvent).data)).catch((error) => {
           this.options.handlers.onError?.("discord.gateway", error);
         });
@@ -257,23 +305,7 @@ export class DiscordGateway {
       });
       socket.addEventListener("close", (event) => {
         const close = event as CloseEvent;
-        this.clearHeartbeat();
-        this.socket = null;
-        this.options.handlers.onClose?.(close.code, close.reason ?? "");
-        if (discordFatalCloseCodes.has(close.code)) {
-          finish(new DiscordFatalCloseError(close.code, discordGatewayErrorHint(close.code)));
-          return;
-        }
-        if (this.expectInvalidSession) {
-          this.expectInvalidSession = false;
-          finish(new DiscordInvalidSessionError());
-          return;
-        }
-        if (close.code !== 1000 && close.code !== 1001 && close.code !== discordResumableCloseCode) {
-          finish(new DiscordReconnectError(close.code));
-          return;
-        }
-        finish();
+        connection.onClosed(close.code, close.reason ?? "");
       });
     });
   }
@@ -406,24 +438,51 @@ export class DiscordGateway {
   }
 
   private send(payload: unknown): void {
-    if (!this.socket || this.socket.readyState !== 1) return;
+    const socket = this.connection?.socket;
+    if (!socket || socket.readyState !== 1) return;
     try {
-      this.socket.send(JSON.stringify(payload));
+      socket.send(JSON.stringify(payload));
     } catch (error) {
       this.options.handlers.onError?.("discord.gateway", error);
     }
   }
 
+  /**
+   * Ask the peer to close, then guarantee the connection finishes: a dead TCP
+   * peer (the case behind missed heartbeat ACKs) never completes the close
+   * handshake, which used to leave a zombie socket and the bot offline until
+   * the process restarted. After `closeTimeoutMs` the socket is terminated
+   * and the close is completed locally so the loop reconnects.
+   */
   private teardownSocket(code: number, reason: string): void {
     this.clearHeartbeat();
-    const socket = this.socket;
-    this.socket = null;
-    if (!socket) return;
+    const connection = this.connection;
+    this.connection = null;
+    if (!connection || connection.closed) return;
     try {
-      socket.close(code, reason);
+      connection.socket.close(code, reason);
     } catch {
       // Already closing.
     }
+    if (connection.closed) return;
+    const timeoutMs = this.options.closeTimeoutMs ?? discordDefaultCloseTimeoutMs;
+    connection.closeTimer = setTimeout(() => {
+      connection.closeTimer = null;
+      if (connection.closed) return;
+      this.options.handlers.onError?.(
+        "discord.gateway",
+        new Error(
+          `Discord Gateway close (${code}: ${reason}) was not acknowledged within ${timeoutMs} ms; terminating the socket`,
+        ),
+      );
+      try {
+        (connection.socket as { terminate?: () => void }).terminate?.();
+      } catch {
+        // Nothing left to release.
+      }
+      connection.onClosed(code, reason);
+    }, timeoutMs);
+    connection.closeTimer.unref?.();
   }
 }
 

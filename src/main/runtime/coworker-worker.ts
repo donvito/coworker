@@ -40,8 +40,14 @@ import {
   clearEchoedReasoningField,
   withOpenRouterReasoningCompat,
 } from "./openrouter-reasoning";
+import { defaultStreamIdleTimeoutMs, withIdleStreamWatchdog } from "./stream-watchdog";
 
 if (!parentPort) throw new Error("Coworker worker must run inside a worker thread");
+
+const streamIdleTimeoutMs = (() => {
+  const override = Number(process.env.COWORKER_STREAM_IDLE_TIMEOUT_MS);
+  return Number.isFinite(override) && override > 0 ? override : defaultStreamIdleTimeoutMs;
+})();
 
 interface ActiveRun {
   taskId: string;
@@ -609,15 +615,19 @@ Use this profile for the coworker's current name, role, and description. It take
       tools,
       messages: [],
     },
-    streamFn: (activeModel, context, options) =>
-      runtimeModels.streamSimple(activeModel, context, {
-        ...options,
-        // Pi's provider default can wait up to ten minutes. A bounded timeout and
-        // retry delay make an unavailable/rate-limited OpenRouter route fail visibly.
-        timeoutMs: 90_000,
-        maxRetries: 2,
-        maxRetryDelayMs: 10_000,
-      }),
+    streamFn: withIdleStreamWatchdog(
+      (activeModel, context, options) =>
+        runtimeModels.streamSimple(activeModel, context, {
+          ...options,
+          // Pi's provider default can wait up to ten minutes. A bounded timeout and
+          // retry delay make an unavailable/rate-limited OpenRouter route fail visibly.
+          // timeoutMs only covers the wait for headers; the watchdog covers the body.
+          timeoutMs: 90_000,
+          maxRetries: 2,
+          maxRetryDelayMs: 10_000,
+        }),
+      { idleTimeoutMs: streamIdleTimeoutMs },
+    ),
     sessionId: workerConfig.coworker.id,
     toolExecution: "sequential",
   });

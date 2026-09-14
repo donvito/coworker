@@ -120,6 +120,7 @@ export interface DesktopAppServiceOptions {
     fetchImpl?: typeof fetch;
     WebSocketImpl?: DiscordWebSocketConstructor;
     typingKeepAliveMs?: number;
+    gatewayCloseTimeoutMs?: number;
   };
 }
 
@@ -178,6 +179,7 @@ export class DesktopAppService {
       {
         createSchedule: (input) => this.createSchedule(input),
         browser: this.browser,
+        registerDiscordThread: (mapping) => this.discord.registerConversationThread(mapping),
       },
       {
         dataPath: options.dataPath,
@@ -221,6 +223,7 @@ export class DesktopAppService {
       fetchImpl: options.discord?.fetchImpl,
       WebSocketImpl: options.discord?.WebSocketImpl,
       typingKeepAliveMs: options.discord?.typingKeepAliveMs,
+      gatewayCloseTimeoutMs: options.discord?.gatewayCloseTimeoutMs,
     });
   }
 
@@ -1357,6 +1360,7 @@ export class DesktopAppService {
       botUsername: me.username,
       botUserId: me.id,
       applicationId,
+      botRoleId: sameBot ? previous?.botRoleId ?? null : null,
       coworkerId: coworker.id,
       conversationId: `coworker:${coworker.id}`,
       guildId: sameBot ? previous?.guildId ?? null : null,
@@ -1378,6 +1382,7 @@ export class DesktopAppService {
       resumeUrl: sameBot ? previous?.resumeUrl ?? null : null,
       messageContentIntentEnabled: intentEnabled,
       approvalEdits: sameBot && sameCoworker ? previous?.approvalEdits ?? {} : {},
+      approvalNotices: sameBot && sameCoworker ? previous?.approvalNotices ?? {} : {},
       refusedChannels: sameBot ? previous?.refusedChannels ?? [] : [],
       gatewayError: null,
     };
@@ -1461,6 +1466,7 @@ export class DesktopAppService {
         guildId: null,
         channelId: null,
         channelType: null,
+        botRoleId: null,
         guildName: null,
         channelName: null,
         pairedThreadId: null,
@@ -1471,6 +1477,7 @@ export class DesktopAppService {
         lastThreads: {},
         inboundMessages: {},
         approvalEdits: {},
+        approvalNotices: {},
         receiptReactionDenied: false,
       },
     });
