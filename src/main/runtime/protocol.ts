@@ -2,6 +2,7 @@ import type { BaseEvent } from "@ag-ui/core";
 import type { ImageContent } from "@earendil-works/pi-ai";
 import type { Coworker } from "@shared/contracts";
 import type { WorkspaceTextDocument } from "@shared/workspace-context";
+import type { RequestContext } from "@shared/request-context";
 
 export interface WorkerCoworkerConfig {
   coworker: Pick<
@@ -33,6 +34,7 @@ export type MainToWorkerMessage =
       runId: string;
       threadId: string;
       input: string;
+      requestContext?: RequestContext;
       workspaceContext?: WorkspaceTextDocument[];
       images?: ImageContent[];
       threadMessages?: unknown[];

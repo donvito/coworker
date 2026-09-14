@@ -36,6 +36,7 @@ export interface CoworkerEvalExpectation {
 export interface CoworkerEvalInput {
   name: string;
   prompt: string;
+  incomingChannel?: "discord" | "telegram" | "local";
   enabledTools?: string[];
   bundledSkillNames?: string[];
   policies?: Record<string, ToolPolicy>;
@@ -239,10 +240,17 @@ export const coworkerHarness = createHarness<CoworkerEvalInput, CoworkerEvalOutp
       scheduler = new SchedulerService(database, (task) => {
         manager?.enqueueTask(task.coworkerId);
       });
+      const conversation = input.incomingChannel
+        ? database.createConversation({ coworkerId: coworker.id }) : undefined;
+      const sourceMessage = conversation ? database.addMessage({
+        conversationId: conversation.id, coworkerId: null, authorName: "You",
+        taskId: null, role: "user", content: input.prompt, mentionedCoworkerIds: [],
+      }, `${input.incomingChannel}:eval-message`) : undefined;
       const task = database.createTask({
         coworkerId: coworker.id,
         title: input.name,
         input: input.prompt,
+        ...(sourceMessage ? { threadId: conversation!.id, sourceMessageId: sourceMessage.id, persistUserMessage: false } : {}),
       });
       manager.enqueueTask(coworker.id);
       await waitForOutcome(

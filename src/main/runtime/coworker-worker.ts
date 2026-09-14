@@ -19,6 +19,7 @@ import { formatGrantedFolders } from "@shared/folder-access-prompt";
 import { formatModelSelectableSkills } from "@shared/pi-skill-prompt";
 import { toolNamesForSkills } from "@shared/skill-capabilities";
 import { formatWorkspaceContext } from "@shared/workspace-context";
+import { formatRequestContext } from "@shared/request-context";
 import {
   documentFormatClarification,
   hasExplicitDocumentFormat,
@@ -1057,7 +1058,11 @@ async function runTask(message: Extract<MainToWorkerMessage, { type: "run" }>): 
     approval: null,
   };
   try {
-    agent.state.systemPrompt = [baseSystemPrompt, formatWorkspaceContext(message.workspaceContext ?? [])].filter(Boolean).join("\n\n");
+    agent.state.systemPrompt = [
+      baseSystemPrompt,
+      formatWorkspaceContext(message.workspaceContext ?? []),
+      formatRequestContext(message.requestContext),
+    ].filter(Boolean).join("\n\n");
     if (message.checkpoint?.length) {
       agent.state.messages = restoreMessages(message.checkpoint);
     } else {
