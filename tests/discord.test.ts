@@ -1101,10 +1101,30 @@ describe("discord bridge", { timeout: 20_000 }, () => {
       coworker: context.database.getCoworker(context.ava.id),
       toolCallId: "forum-send",
       toolName: "discord.send",
-      arguments: { message: "forum hello" },
+      arguments: { message: "x".repeat(4500) },
     });
     expect(context.fake.sent("POST", "/threads").length).toBeGreaterThan(0);
     expect(context.fake.sent("POST", "/channels/300/messages")).toHaveLength(0);
+    const posts = context.fake.sent("POST", "/channels/300/threads");
+    const starter = (posts.at(-1)!.body.message as { content: string }).content;
+    const threadId = Object.entries(mappedThreads(context.database)).find(([, id]) => id === task.threadId)![0];
+    const delivered = [starter, ...context.fake.sent("POST", `/channels/${threadId}/messages`).map((call) => String(call.body.content))];
+    expect(delivered.every((chunk) => chunk.length <= 2000)).toBe(true);
+    expect(delivered.join("")).toBe("x".repeat(4500));
+  });
+
+  it("does not create a forum post when an attachment cannot be read", async () => {
+    const context = await setup();
+    await connectAndPair(context, { channelId: "301" });
+    const coworker = context.database.getCoworker(context.ava.id);
+    const task = context.database.createTask({ coworkerId: coworker.id, title: "Send file", input: "send file" });
+    const before = context.fake.sent("POST", "/threads").length;
+    await expect(context.service.tools.request({
+      task, coworker: { ...coworker, policies: { ...coworker.policies, "discord.send": "automatic" } },
+      toolCallId: "invalid-forum-attachment", toolName: "discord.send",
+      arguments: { message: "Here is the file", attachments: ["missing.pdf"] },
+    })).rejects.toThrow();
+    expect(context.fake.sent("POST", "/threads")).toHaveLength(before);
   });
 
   it("ignores system messages and does not answer them", async () => {

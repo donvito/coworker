@@ -69,24 +69,6 @@ export async function sendCoworkerDiscordMessage(input: {
   let channelId = threadId ?? config.channelId;
   let messageAlreadyPosted = false;
 
-  if (!threadId && config.channelType !== null && isDiscordForumType(config.channelType)) {
-    const post = await api.createThread({
-      channelId: config.channelId,
-      name: conversationId === config.conversationId ? "Coworker" : conversationId.slice(0, 100),
-      forum: true,
-      message: input.message,
-    });
-    threadId = post.id;
-    channelId = post.id;
-    messageAlreadyPosted = true;
-    input.database.updateDiscordIntegration({
-      config: {
-        threads: { ...config.threads, [post.id]: conversationId },
-        lastThreads: { ...config.lastThreads, [conversationId]: post.id },
-      },
-    });
-  }
-
   const files: Array<{
     name: string;
     data: Buffer;
@@ -107,6 +89,26 @@ export async function sendCoworkerDiscordMessage(input: {
   }
 
   const chunks = markdownToDiscordChunks(input.message);
+  // Prepare all local inputs before creating a forum post, which is itself
+  // a visible delivery. Its starter message obeys the same size limit.
+  if (!threadId && config.channelType !== null && isDiscordForumType(config.channelType)) {
+    const post = await api.createThread({
+      channelId: config.channelId,
+      name: conversationId === config.conversationId ? "Coworker" : conversationId.slice(0, 100),
+      forum: true,
+      message: chunks[0],
+    });
+    threadId = post.id;
+    channelId = post.id;
+    messageAlreadyPosted = true;
+    input.database.updateDiscordIntegration({
+      config: {
+        threads: { ...config.threads, [post.id]: conversationId },
+        lastThreads: { ...config.lastThreads, [conversationId]: post.id },
+      },
+    });
+  }
+
   let messageChunks = messageAlreadyPosted ? 1 : 0;
   for (const chunk of messageAlreadyPosted ? chunks.slice(1) : chunks) {
     await api.sendMessage({ channelId, content: chunk });
