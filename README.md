@@ -10,10 +10,11 @@ AI agents for your work, running on your own computer.
 ![Local-first](https://img.shields.io/badge/local--first-yes-2ea44f)
 ![No subscription](https://img.shields.io/badge/subscription-none-2ea44f)
 ![Telegram](https://img.shields.io/badge/Telegram-supported-26A5E4?logo=telegram&logoColor=white)
+![Discord](https://img.shields.io/badge/Discord-supported-5865F2?logo=discord&logoColor=white)
 
 ![Coworker chat](docs/images/coworker-chat.png)
 
-Coworker is a local-first desktop app for independent AI coworkers. There is **no subscription**. The app runs on **your computer**, talks to **local models** or keys you bring, learns new **skills**, keeps a **scheduler**, pauses on **approvals**, and can meet you on **Telegram**.
+Coworker is a local-first desktop app for independent AI coworkers. There is **no subscription**. The app runs on **your computer**, talks to **local models** or keys you bring, learns new **skills**, keeps a **scheduler**, pauses on **approvals**, and can meet you on **Telegram** or **Discord**.
 
 [More screenshots](docs/screenshots.md) · [What it can do](docs/features.md)
 
@@ -24,10 +25,11 @@ Coworker is a local-first desktop app for independent AI coworkers. There is **n
 - **Local models** — point it at [Ollama](https://ollama.com) or [LM Studio](https://lmstudio.ai) and inference never leaves your machine.
 - **Bring your own keys** — Anthropic, OpenAI, Google, OpenRouter, or any OpenAI-compatible endpoint. Credentials stay in OS-backed storage.
 - **Skills** — coworkers learn new capabilities from Agent Skills. Upload a `SKILL.md`, add an HTTPS URL, or paste a skill link into chat.
-- **Memory** — coworkers can propose useful facts and preferences to remember across conversations. Approve, edit, or reject each proposal in chat or Telegram; manage saved Markdown in the desktop app or CLI.
+- **Memory** — coworkers can propose useful facts and preferences to remember across conversations. Approve, edit, or reject each proposal in chat, Telegram, or Discord; manage saved Markdown in the desktop app or CLI.
 - **Scheduler** — persistent cron and one-time jobs, in plain language, with crash recovery.
-- **Approvals** — consequential actions pause until you approve or reject them, in the app or from Telegram.
+- **Approvals** — consequential actions pause until you approve or reject them, in the app or from Telegram or Discord.
 - **Telegram** — pair a private chat and message a coworker from your phone. Replies, files, and approval buttons stay in sync with the desktop.
+- **Discord** — pair a server channel (or a thread in it) by posting a pairing code. @mention the bot in that channel to start a thread; existing threads stay their own conversations. Replies, files, 👀 receipts, and approval buttons stay in sync. Telegram can stay connected at the same time.
 
 ## Download
 
@@ -58,7 +60,7 @@ Scripts, tests, evals, and packaging: [Development](docs/development.md)
 
 ## Terminal and headless mode
 
-Run Coworker without a window or tray while workers, schedules, and Telegram stay active. The CLI shares the desktop's profile and credentials, and installed macOS/Windows apps can start automatically at user login.
+Run Coworker without a window or tray while workers, schedules, Telegram, and Discord stay active. The CLI shares the desktop's profile and credentials, and installed macOS/Windows apps can start automatically at user login.
 
 ```sh
 coworker start
@@ -72,7 +74,7 @@ See the [terminal and headless guide](docs/cli.md) for CLI installation, command
 
 Tell a coworker, “Remember that I prefer invoice totals in SGD.” Its saved facts live in a separate `MEMORY.md` in its workspace and load on every new turn, across conversations and scheduled work. You can ask it to correct or forget an entry, too.
 
-The memory skill also lets the model suggest durable preferences you share naturally. Every proposed change requires your approval. The chat card shows the item with **Approve**, **Edit**, and **Reject** controls. Telegram shows the same text and supports approval buttons or editing by reply. Nothing is saved while a proposal is pending.
+The memory skill also lets the model suggest durable preferences you share naturally. Every proposed change requires your approval. The chat card shows the item with **Approve**, **Edit**, and **Reject** controls. Telegram and Discord show the same text and support approval buttons or editing by reply. Nothing is saved while a proposal is pending.
 
 To edit saved memory directly, right-click the coworker in the chat sidebar, open its settings, edit **Saved memory (Markdown)**, and click **Save memory**. These user-operated edits save directly, as do the terminal commands:
 

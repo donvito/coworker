@@ -99,6 +99,14 @@ describe("terminal command contracts", () => {
     });
   });
 
+  it("configures Discord with a token supplied out of band", async () => {
+    const command = parseCommand(["discord", "configure", "coworker-1", "--token-stdin"]);
+    await expect(remoteCommand(command, "TESTTESTTESTTESTTEST.TEST1.TESTTESTTESTTESTTESTTEST")).resolves.toEqual({
+      method: "discord.configure",
+      args: [{ coworkerId: "coworker-1", botToken: "TESTTESTTESTTESTTEST.TEST1.TESTTESTTESTTESTTESTTEST" }],
+    });
+  });
+
   it("maps schedule flags and JSON patches to existing schemas without inventing defaults", async () => {
     const root = await temporary();
     const file = join(root, "schedule.json");

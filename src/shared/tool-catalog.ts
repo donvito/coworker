@@ -157,6 +157,14 @@ export const toolCatalog = [
     risk: "high",
     defaultPolicy: "approval",
   },
+  {
+    name: "discord.send",
+    label: "Send Discord message",
+    description:
+      "Send a message, and optionally workspace files, to the user's paired Discord channel or thread through the connected Discord bot.",
+    risk: "high",
+    defaultPolicy: "approval",
+  },
 ] as const satisfies readonly ToolCatalogEntry[];
 
 export type ToolName = (typeof toolCatalog)[number]["name"];

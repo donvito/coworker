@@ -1,6 +1,6 @@
 ---
 name: telegram-messaging
-description: Send a message or deliver files to the user's Telegram through the connected Telegram bot. Use when the user asks to receive something on Telegram or on their phone, or asks to be messaged, reminded, or sent a file there. Do not use for ordinary conversation replies, which already reach Telegram automatically, or for sending email.
+description: Send requested messages or files to Telegram when explicitly selected as the destination, or when delivery has no explicit destination and incoming request metadata identifies Telegram as the current channel. Do not use for ordinary conversation replies, delivery to Discord or email, or unspecified delivery from local (desktop or CLI) or missing channel metadata. A paired integration or a request for phone delivery alone does not select Telegram.
 ---
 
 # Telegram messaging
@@ -9,11 +9,20 @@ Use the `telegram.send` tool to proactively deliver a message or files to the us
 
 ## When to use it
 
-- The user asks to receive a file, report, or summary "on Telegram" or "on my phone".
+- The user asks to receive a file, report, or summary "on Telegram".
+- The user asks "send it to me", "send it here", or requests file delivery without naming a destination, and incoming request metadata says `channel: telegram`.
 - The user asks to be pinged or notified on Telegram when work finishes.
 - A scheduled task's instructions say results should go to Telegram.
 
 Do not call it for a normal reply in a conversation: the app already mirrors conversation replies to Telegram. Only call it when delivery to Telegram is itself the requested action.
+
+## Select the destination
+
+- An explicit destination in the request or scheduled task instructions overrides the incoming channel. If it selects Discord, email, or another destination, do not use `telegram.send`.
+- With no explicit destination, "send it to me", "send it here", and file delivery default to the current incoming channel identified by request metadata (`discord`, `telegram`, or `local`). Use this skill for that default only when the channel is `telegram`.
+- A connected or paired integration indicates availability, not the intended destination. "On my phone" alone does not identify a provider.
+- For `local` (desktop or CLI), provide the local artifact using the current interface. If the destination is unspecified and no current channel supports the requested delivery, ask where to send it before calling a messaging tool. Missing or null channel metadata is not a reason to choose a paired provider.
+- If delivery fails, report the failure and keep the selected destination. Do not switch providers unless the user explicitly chooses another destination.
 
 ## How to use it
 

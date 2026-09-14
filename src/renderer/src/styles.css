@@ -32,6 +32,9 @@
   --telegram-ink: #2a6f97;
   --telegram-soft: #e3f0f7;
   --telegram-line: #c4dcea;
+  --discord-ink: #4e5d94;
+  --discord-soft: #e8ebf7;
+  --discord-line: #c5cce8;
   --ink-detail: #374940;
   --ink-muted: #77847e;
   --ink-faint: #819089;
@@ -154,6 +157,9 @@
   --telegram-ink: #9dcfea;
   --telegram-soft: #243b4a;
   --telegram-line: #426078;
+  --discord-ink: #b5bff0;
+  --discord-soft: #2a2f4a;
+  --discord-line: #4a5380;
   --ink-muted: #a0aca6;
   --ink-faint: #95a39b;
   --code-surface: #111914;
@@ -7053,6 +7059,124 @@ button.floor-activity-row:hover {
 }
 
 .telegram-steps {
+  display: grid;
+  max-width: 560px;
+  margin: 0 0 14px;
+  padding-left: 20px;
+  gap: 4px;
+  color: var(--ink-soft);
+  font-size: 12.5px;
+}
+
+.discord-connection {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  background: var(--white);
+  border: 1px solid var(--line);
+  border-radius: 11px;
+}
+
+.discord-connection-identity {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.discord-connection-identity strong {
+  overflow: hidden;
+  font-size: 13.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.discord-connection-identity small {
+  color: var(--ink-soft);
+  font-size: 11px;
+}
+
+.discord-connection-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 8px;
+}
+
+.discord-link-badge {
+  color: var(--discord-ink) !important;
+  background: var(--discord-soft) !important;
+  border-color: var(--discord-line) !important;
+}
+
+.discord-pairing {
+  max-width: 560px;
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  background: var(--discord-soft);
+  border: 1px solid var(--discord-line);
+  border-radius: 11px;
+}
+
+.discord-pairing strong {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 13px;
+}
+
+.discord-pairing p {
+  margin: 10px 0 0;
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
+.discord-pairing-steps {
+  margin: 0 0 10px;
+  padding-left: 18px;
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
+.discord-pairing-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.discord-pairing-code {
+  font-size: 22px;
+  font-weight: 720;
+  letter-spacing: 0.04em;
+  user-select: all;
+}
+
+.discord-relink-warning {
+  margin: 0;
+  padding: 9px 12px;
+  color: var(--amber-text);
+  font-size: 12px;
+  line-height: 1.5;
+  background: var(--amber-soft);
+  border: 1px solid var(--amber-line);
+  border-radius: 10px;
+}
+
+.discord-hint {
+  max-width: 560px;
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
+.discord-intent-warning {
+  max-width: 560px;
+  color: var(--amber-text);
+  font-size: 12px;
+}
+
+.discord-steps {
   display: grid;
   max-width: 560px;
   margin: 0 0 14px;

@@ -335,7 +335,7 @@ async function start(): Promise<void> {
           appPath: app.getAppPath(), packaged: app.isPackaged },
         mode: headless ? "headless" : "desktop", version: app.getVersion(), startedAt,
         uptimeSeconds: Math.floor((Date.now() - Date.parse(startedAt)) / 1000),
-        services: { scheduler: "running", workers: activeService.database.listCoworkers().map(({ id, runtimeStatus }) => ({ id, status: runtimeStatus })), telegram: activeService.telegramStatus() },
+        services: { scheduler: "running", workers: activeService.database.listCoworkers().map(({ id, runtimeStatus }) => ({ id, status: runtimeStatus })), telegram: activeService.telegramStatus(), discord: activeService.discordStatus() },
       };
       if (method === "stop") {
         // Reply before shutdown closes the transport. Close drains outstanding commands.
@@ -369,6 +369,7 @@ async function start(): Promise<void> {
   powerMonitor.on("resume", () => {
     void service?.scheduler.wake();
     void service?.telegram.wake();
+    void service?.discord.wake();
   });
 }
 

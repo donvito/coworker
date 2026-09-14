@@ -7,6 +7,8 @@ import {
   EmptyState,
   PageHeader,
   StatusLabel,
+  DiscordLinkBadge,
+  discordLinkedCoworkerId,
   TelegramLinkBadge,
   telegramLinkedCoworkerId,
 } from "../components/Primitives";
@@ -244,6 +246,9 @@ export function HomePage({
                     />
                     {telegramLinkedCoworkerId(snapshot.integrations) === coworker.id ? (
                       <TelegramLinkBadge compact />
+                    ) : null}
+                    {discordLinkedCoworkerId(snapshot.integrations) === coworker.id ? (
+                      <DiscordLinkBadge compact />
                     ) : null}
                     <span className="floor-card-action">
                       <Icon name="arrow" />

@@ -28,6 +28,10 @@ const definitions: Record<string, { args: [number, number]; flags: string[]; usa
   "telegram configure": { args: [1, 1], flags: ["token-stdin", "prompt-token"], usage: "telegram configure COWORKER_ID [--prompt-token | --token-stdin]" },
   "telegram unpair": { args: [0, 0], flags: [], usage: "telegram unpair" },
   "telegram disconnect": { args: [0, 0], flags: [], usage: "telegram disconnect" },
+  "discord status": { args: [0, 0], flags: [], usage: "discord status" },
+  "discord configure": { args: [1, 1], flags: ["token-stdin", "prompt-token"], usage: "discord configure COWORKER_ID [--prompt-token | --token-stdin]" },
+  "discord unpair": { args: [0, 0], flags: [], usage: "discord unpair" },
+  "discord disconnect": { args: [0, 0], flags: [], usage: "discord disconnect" },
   "activity list": { args: [0, 0], flags: ["limit"], usage: "activity list [--limit N]" },
   "models providers": { args: [0, 0], flags: [], usage: "models providers" },
   "models list": { args: [1, 1], flags: [], usage: "models list PROVIDER" },
@@ -146,6 +150,7 @@ export async function remoteCommand(command: CliCommand, apiKey?: string, curren
   const simple: Record<string, string> = {
     "models providers": "models.providers", "models list": ipc.integrationsListModels,
     "telegram status": "telegram.status", "telegram unpair": "telegram.unpair", "telegram disconnect": "telegram.disconnect",
+    "discord status": "discord.status", "discord unpair": "discord.unpair", "discord disconnect": "discord.disconnect",
     "startup status": "startup.status", "startup disable": "startup.disable",
     "models endpoints remove": ipc.integrationsRemoveModelEndpoint,
     "coworkers list": ipc.coworkersList, "coworkers show": "coworkers.show", "coworkers remove": ipc.coworkersRemove,
@@ -173,6 +178,7 @@ export async function remoteCommand(command: CliCommand, apiKey?: string, curren
     name === "models configure" ? ipc.integrationsConfigureModel : ipc.integrationsAddModelEndpoint,
     { provider: args[0], name: values.name, baseUrl: values["base-url"], defaultModelName: values.model, endpointName: values["endpoint-name"], apiKey });
   if (name === "telegram configure") return request("telegram.configure", { coworkerId: args[0], botToken: apiKey });
+  if (name === "discord configure") return request("discord.configure", { coworkerId: args[0], botToken: apiKey });
   if (name === "models default") return args.length ? request(ipc.integrationsConfigureModel,
     { provider: args[0], defaultModelName: args[1] }) : request(ipc.getSettings);
   if (name === "models credentials remove") return request(ipc.integrationsRemoveCredential, `model:${args[0]}`);

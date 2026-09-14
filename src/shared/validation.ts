@@ -357,6 +357,18 @@ export const configureTelegramSchema = z.object({
   coworkerId: identifier,
 });
 
+export const configureDiscordSchema = z.object({
+  botToken: z
+    .string()
+    .trim()
+    .regex(
+      /^[\w-]{20,}\.[\w-]{5,}\.[\w-]{20,}$/,
+      "That does not look like a Discord bot token",
+    )
+    .optional(),
+  coworkerId: identifier,
+});
+
 export const installSkillUrlSchema = z.object({
   url: z.string().trim().url().max(2_048),
   coworkerId: identifier.optional(),

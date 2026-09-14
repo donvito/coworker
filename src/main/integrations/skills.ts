@@ -10,6 +10,7 @@ export const bundledDocumentAuthoringSkillId = "bundled:document-authoring";
 export const bundledTeamChannelSkillId = "bundled:team-channel-collaboration";
 export const bundledFolderAccessSkillId = "bundled:folder-access";
 export const bundledTelegramMessagingSkillId = "bundled:telegram-messaging";
+export const bundledDiscordMessagingSkillId = "bundled:discord-messaging";
 export const bundledBrowserControlSkillId = "bundled:browser-control";
 
 export interface PackagedSkillResource {
@@ -243,6 +244,11 @@ export const bundledTelegramMessagingSkill = loadBundledSkill(
   bundledTelegramMessagingSkillId,
 );
 
+export const bundledDiscordMessagingSkill = loadBundledSkill(
+  "discord-messaging",
+  bundledDiscordMessagingSkillId,
+);
+
 export const bundledBrowserControlSkill = loadBundledSkill(
   "browser-control",
   bundledBrowserControlSkillId,
@@ -256,6 +262,7 @@ export const bundledSkills = [
   bundledTeamChannelSkill,
   bundledFolderAccessSkill,
   bundledTelegramMessagingSkill,
+  bundledDiscordMessagingSkill,
   bundledBrowserControlSkill,
 ] as const;
 

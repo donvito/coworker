@@ -17,6 +17,7 @@ export const defaultEnabledBundledSkillNames = new Set([
   "team-channel-collaboration",
   "folder-access",
   "telegram-messaging",
+  "discord-messaging",
 ]);
 
 export function toolNamesForSkills(skills: Iterable<{ name: string }>): string[] {

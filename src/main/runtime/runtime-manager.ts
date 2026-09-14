@@ -15,6 +15,7 @@ import type {
 } from "./protocol";
 import type { ProviderErrorSink } from "./provider-error-logger";
 import { loadWorkspaceContext } from "@main/tools/workspace-text";
+import { requestContextForTask } from "@shared/request-context";
 
 interface RuntimeRecord {
   coworkerId: string;
@@ -417,6 +418,7 @@ export class CoworkerRuntimeManager {
         runId: task.runId,
         threadId: task.threadId,
         input: task.input,
+        requestContext: requestContextForTask(task),
         workspaceContext,
         images,
         threadMessages,

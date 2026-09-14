@@ -26,7 +26,7 @@ Coworker is a local-first Electron app for independent AI coworkers. Each cowork
 - Ask a coworker to remember, show, correct, or forget saved facts and preferences through the bundled `coworker-memory` skill
 - The model can suggest durable preferences and ongoing project facts you share naturally; every model-proposed change requires approval
 - Inline chat cards show the proposed item and let you approve, edit, or reject it
-- Telegram shows the full proposal with approval buttons and an edit-by-reply option
+- Telegram and Discord show the full proposal with approval buttons and an edit-by-reply option
 - Memory loads at the start of every turn, including scheduled work; edits apply on the next turn
 - Edit or clear memory in coworker settings or with `coworker memory show`, `set`, and `clear`
 - An 8,000-character limit and revision checks to protect against conflicting app writes
@@ -64,6 +64,20 @@ Pair a private Telegram chat and message a coworker from your phone.
 - Documents and photos move both ways
 - Approvals arrive as buttons you can tap
 - `/stop` cancels in-flight work and keeps the partial reply in both places
+
+## Discord
+
+Pair one Discord server channel (or a thread/forum post in it) and message a coworker from Discord. Telegram can stay connected at the same time.
+
+- Invite the bot, then paste the pairing code in the channel or thread you want — that is the only pairing action
+- Threads and forum posts become their own desktop conversations
+- In the paired parent channel, ordinary chatter is ignored; any human can @mention the bot to start a thread (named from the message) and talk there. Messages in that thread continue without another mention
+- Other guild channels are ignored
+- The bot reacts 👀 after it has injected the message and the coworker run has started
+- Replies finish as Discord markdown (typing while they work; no live draft stream)
+- Documents and photos move both ways into `discord-inbox/`
+- Approvals arrive as buttons you can tap; reply to the edit prompt to approve replacement text
+- `/stop` cancels in-flight work
 
 ## Platform
 

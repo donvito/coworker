@@ -411,7 +411,7 @@ export const integrations = sqliteTable(
   "integrations",
   {
     id: text("id").primaryKey(),
-    type: text("type", { enum: ["email", "telegram"] }).notNull(),
+    type: text("type", { enum: ["email", "telegram", "discord"] }).notNull(),
     name: text("name").notNull(),
     mode: text("mode", { enum: ["local-outbox", "resend", "bot"] }).notNull(),
     status: text("status", { enum: ["connected", "disconnected", "error"] }).notNull(),
@@ -421,7 +421,7 @@ export const integrations = sqliteTable(
     updatedAt: text("updated_at").notNull(),
   },
   (table) => [
-    check("integrations_type_check", sql`${table.type} in ('email', 'telegram')`),
+    check("integrations_type_check", sql`${table.type} in ('email', 'telegram', 'discord')`),
     check(
       "integrations_mode_check",
       sql`${table.mode} in ('local-outbox', 'resend', 'bot')`,

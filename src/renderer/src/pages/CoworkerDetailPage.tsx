@@ -592,7 +592,7 @@ export function CoworkerDetailPage({
     [coworker.id, displayConversationId, historyVersion],
   );
 
-  // When a message arrives from Telegram into another conversation of this
+  // When a message arrives from Telegram or Discord into another conversation of this
   // coworker, follow it so the exchange stays on screen — unless a reply is
   // actively streaming in the current view.
   const { lastEvent } = useAppData();
