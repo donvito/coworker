@@ -82,6 +82,28 @@ export interface DiscordGuild {
   name: string;
 }
 
+export interface DiscordRole {
+  id: string;
+  name: string;
+  managed?: boolean;
+  tags?: { bot_id?: string };
+}
+
+/**
+ * The bot's own integration role: Discord creates one managed role per bot
+ * with `tags.bot_id` set, named after the application. Members often @mention
+ * that role instead of the user, so it must count as a bot mention.
+ */
+export function findDiscordBotRole(
+  roles: DiscordRole[],
+  botUserId: string,
+  applicationId?: string,
+): DiscordRole | null {
+  const ids = new Set([botUserId, applicationId].filter((id): id is string => Boolean(id)));
+  if (ids.size === 0) return null;
+  return roles.find((role) => role.tags?.bot_id && ids.has(role.tags.bot_id)) ?? null;
+}
+
 export interface DiscordAttachment {
   id: string;
   filename: string;
@@ -109,6 +131,8 @@ export interface DiscordMessage {
   message_reference?: DiscordMessageReference;
   thread?: DiscordChannel;
   components?: DiscordMessageComponent[];
+  mentions?: DiscordUser[];
+  mention_roles?: string[];
 }
 
 /** DEFAULT (0) and REPLY (19). System messages (pins, thread-created, joins) are ignored. */
@@ -116,16 +140,44 @@ export function isDiscordHumanMessage(message: DiscordMessage): boolean {
   return message.type === 0 || message.type === 19;
 }
 
-export function messageMentionsDiscordBot(content: string, botUserId: string): boolean {
-  if (!botUserId) return false;
-  return content.includes(`<@${botUserId}>`) || content.includes(`<@!${botUserId}>`);
+export function messageMentionsDiscordBot(
+  content: string,
+  botUserId: string,
+  botRoleId?: string | null,
+): boolean {
+  if (botUserId && (content.includes(`<@${botUserId}>`) || content.includes(`<@!${botUserId}>`))) {
+    return true;
+  }
+  return Boolean(botRoleId) && content.includes(`<@&${botRoleId}>`);
 }
 
-export function stripDiscordBotMentions(content: string, botUserId: string): string {
-  if (!botUserId) return content.trim();
-  const escaped = botUserId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+/** Content plus the structured `mentions` / `mention_roles` arrays Discord sends alongside it. */
+export function discordMessageMentionsBot(
+  message: Pick<DiscordMessage, "content" | "mentions" | "mention_roles">,
+  botUserId: string,
+  botRoleId?: string | null,
+): boolean {
+  if (messageMentionsDiscordBot(message.content ?? "", botUserId, botRoleId)) return true;
+  if (botUserId && message.mentions?.some((user) => user.id === botUserId)) return true;
+  return Boolean(botRoleId) && (message.mention_roles ?? []).includes(botRoleId!);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+export function stripDiscordBotMentions(
+  content: string,
+  botUserId: string,
+  botRoleId?: string | null,
+): string {
+  if (!botUserId && !botRoleId) return content.trim();
+  const patterns = [
+    ...(botUserId ? [`<@!?${escapeRegExp(botUserId)}>`] : []),
+    ...(botRoleId ? [`<@&${escapeRegExp(botRoleId)}>`] : []),
+  ];
   return content
-    .replace(new RegExp(`<@!?${escaped}>`, "g"), " ")
+    .replace(new RegExp(patterns.join("|"), "g"), " ")
     .replace(/[ \t]+\n/g, "\n")
     .replace(/[ \t]{2,}/g, " ")
     .trim();
@@ -182,11 +234,19 @@ export interface DiscordApprovalEditRequest {
   cancelled?: boolean;
 }
 
+/** The button message posted for a pending approval, keyed by approval id. */
+export interface DiscordApprovalNotice {
+  messageId: string;
+  channelId: string;
+}
+
 /** Config JSON stored on the singleton `discord` integration row. */
 export interface DiscordIntegrationConfig {
   botUsername: string;
   botUserId: string;
   applicationId: string;
+  /** The bot's managed role in the paired guild; mentioning it counts as mentioning the bot. */
+  botRoleId: string | null;
   coworkerId: string;
   conversationId: string;
   guildId: string | null;
@@ -208,8 +268,22 @@ export interface DiscordIntegrationConfig {
   resumeUrl: string | null;
   messageContentIntentEnabled: boolean | null;
   approvalEdits: Record<string, DiscordApprovalEditRequest>;
+  /** Pending-approval button messages, persisted so a restart neither re-posts nor loses them. */
+  approvalNotices: Record<string, DiscordApprovalNotice>;
   refusedChannels: string[];
   gatewayError: string | null;
+}
+
+function parseApprovalNotices(value: unknown): Record<string, DiscordApprovalNotice> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const result: Record<string, DiscordApprovalNotice> = {};
+  for (const [approvalId, item] of Object.entries(value as Record<string, unknown>)) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+    const notice = item as Partial<DiscordApprovalNotice>;
+    if (typeof notice.messageId !== "string" || typeof notice.channelId !== "string") continue;
+    result[approvalId] = { messageId: notice.messageId, channelId: notice.channelId };
+  }
+  return result;
 }
 
 function parseInboundMessages(
@@ -252,6 +326,7 @@ export function parseDiscordConfig(integration: Integration): DiscordIntegration
     botUsername: typeof config.botUsername === "string" ? config.botUsername : "",
     botUserId: typeof config.botUserId === "string" ? config.botUserId : "",
     applicationId: typeof config.applicationId === "string" ? config.applicationId : "",
+    botRoleId: typeof config.botRoleId === "string" ? config.botRoleId : null,
     coworkerId: typeof config.coworkerId === "string" ? config.coworkerId : "",
     conversationId: typeof config.conversationId === "string" ? config.conversationId : "",
     guildId: typeof config.guildId === "string" ? config.guildId : null,
@@ -285,6 +360,7 @@ export function parseDiscordConfig(integration: Integration): DiscordIntegration
         ? config.messageContentIntentEnabled
         : null,
     approvalEdits: parseApprovalEdits(config.approvalEdits),
+    approvalNotices: parseApprovalNotices(config.approvalNotices),
     refusedChannels: Array.isArray(config.refusedChannels)
       ? config.refusedChannels.filter((item): item is string => typeof item === "string")
       : [],
@@ -474,6 +550,10 @@ export class DiscordRestApi {
 
   getGuild(guildId: string): Promise<DiscordGuild> {
     return this.request<DiscordGuild>("GET", `/guilds/${guildId}`);
+  }
+
+  getGuildRoles(guildId: string): Promise<DiscordRole[]> {
+    return this.request<DiscordRole[]>("GET", `/guilds/${guildId}/roles`);
   }
 
   sendMessage(input: {

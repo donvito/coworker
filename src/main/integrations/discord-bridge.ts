@@ -22,20 +22,23 @@ import { resolveWorkspacePath } from "@main/tools/workspace-path";
 import { resolveWorkspaceOutputPath } from "@main/tools/workspace-text";
 import { markdownToDiscordChunks, plainTextChunks } from "./discord-format";
 import { DiscordGateway, isDiscordChannel, isDiscordInteraction, isDiscordMessage } from "./discord-gateway";
+import { recordDiscordThreadMapping, type DiscordThreadMapping } from "./discord-send";
 import {
   DiscordApiError,
   DiscordRestApi,
   discordCredentialKey,
   discordDownloadLimit,
+  discordMessageMentionsBot,
   discordThreadTitleFromText,
+  findDiscordBotRole,
   isDiscordForumType,
   isDiscordHumanMessage,
   isDiscordThreadType,
-  messageMentionsDiscordBot,
   parseDiscordConfig,
   resolveDiscordReceiptEmoji,
   stripDiscordBotMentions,
   type DiscordApprovalEditRequest,
+  type DiscordApprovalNotice,
   type DiscordChannel,
   type DiscordInboundMessageRef,
   type DiscordIntegrationConfig,
@@ -66,11 +69,13 @@ export interface DiscordBridgeOptions {
   fetchImpl?: typeof fetch;
   WebSocketImpl?: DiscordWebSocketConstructor;
   typingKeepAliveMs?: number;
+  gatewayCloseTimeoutMs?: number;
 }
 
 const maxBackoffIdleMs = 10 * 60_000;
 const typingKeepAliveMs = 8_000;
 const stoppedFallbackMs = 5_000;
+const botRoleLookupCooldownMs = 60_000;
 
 interface DiscordRunBuffer {
   taskId: string;
@@ -140,13 +145,12 @@ export class DiscordBridgeService {
   private readonly threadFailureLogged = new Set<string>();
   private readonly inboundThreadOrigins = new Map<string, string>();
   private readonly lastInboundThread = new Map<string, string>();
-  private readonly notifiedApprovals = new Set<string>();
-  private readonly approvalNotices = new Map<string, { messageId: string; channelId: string }>();
   private readonly pendingThreadNames = new Map<string, string>();
   private readonly channelCache = new Map<string, DiscordChannel>();
   private readonly threadCreatesInFlight = new Map<string, Promise<string | null>>();
   private sequenceTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingSequence: { lastSequence: number | null; sessionId: string | null } | null = null;
+  private botRoleLookupAt = 0;
 
   constructor(private readonly options: DiscordBridgeOptions) {}
 
@@ -176,6 +180,7 @@ export class DiscordBridgeService {
       sessionId: this.config.sessionId,
       lastSequence: this.config.lastSequence,
       resumeUrl: this.config.resumeUrl,
+      closeTimeoutMs: this.options.gatewayCloseTimeoutMs,
       handlers: {
         onReady: (sessionId, resumeUrl) => {
           this.saveConfig(
@@ -186,6 +191,11 @@ export class DiscordBridgeService {
           if (current?.status === "error") {
             this.options.database.updateDiscordIntegration({ status: "connected" });
             this.options.emit({ type: "entity.changed", entity: "integrations", id: current.id });
+          }
+          const guildId = this.config?.guildId;
+          if (guildId && this.config?.botRoleId === null) {
+            this.botRoleLookupAt = 0;
+            void this.resolveBotRole(guildId);
           }
         },
         onSequence: (lastSequence, sessionId) => {
@@ -250,9 +260,8 @@ export class DiscordBridgeService {
     this.threadFailureLogged.clear();
     this.inboundThreadOrigins.clear();
     this.lastInboundThread.clear();
-    this.notifiedApprovals.clear();
-    this.approvalNotices.clear();
     this.pendingThreadNames.clear();
+    this.botRoleLookupAt = 0;
     this.channelCache.clear();
     this.threadCreatesInFlight.clear();
   }
@@ -268,6 +277,24 @@ export class DiscordBridgeService {
   async restart(): Promise<void> {
     await this.stop();
     await this.start();
+  }
+
+  /**
+   * Record a thread↔conversation mapping created outside the bridge (for
+   * example a forum post opened by the `discord.send` tool). The bridge is the
+   * single writer of `threads`/`lastThreads`, so the in-memory copy and the
+   * stored config stay in step and later replies reuse the same thread.
+   */
+  registerConversationThread(mapping: DiscordThreadMapping): void {
+    if (this.config) {
+      if (this.config.threads[mapping.threadId] === mapping.conversationId) return;
+      this.saveConfig({
+        threads: { ...this.config.threads, [mapping.threadId]: mapping.conversationId },
+        lastThreads: { ...this.config.lastThreads, [mapping.conversationId]: mapping.threadId },
+      });
+      return;
+    }
+    recordDiscordThreadMapping(this.options.database, mapping);
   }
 
   private async readToken(): Promise<string | null> {
@@ -385,8 +412,12 @@ export class DiscordBridgeService {
 
     if (!inThread) {
       if (config.channelType !== null && isDiscordForumType(config.channelType)) return;
-      if (!messageMentionsDiscordBot(message.content ?? "", config.botUserId)) return;
-      const stripped = stripDiscordBotMentions(message.content ?? "", config.botUserId);
+      if (!(await this.mentionsBot(message))) return;
+      const stripped = stripDiscordBotMentions(
+        message.content ?? "",
+        config.botUserId,
+        this.config?.botRoleId,
+      );
       const threadId = await this.ensureMentionThread(message, stripped);
       if (!threadId) return;
       if (stripped === "/stop" || stripped.startsWith("/stop ")) {
@@ -401,6 +432,40 @@ export class DiscordBridgeService {
     }
 
     await this.injectInbound(message, channel);
+  }
+
+  /**
+   * User mention, or a mention of the bot's managed role. The role id is
+   * resolved lazily the first time a role mention arrives before it is known.
+   */
+  private async mentionsBot(message: DiscordMessage): Promise<boolean> {
+    const config = this.config;
+    if (!config) return false;
+    if (discordMessageMentionsBot(message, config.botUserId, config.botRoleId)) return true;
+    if (config.botRoleId !== null || !config.guildId) return false;
+    const roleMentions = message.mention_roles ?? [];
+    if (roleMentions.length === 0 && !/<@&\d+>/.test(message.content ?? "")) return false;
+    await this.resolveBotRole(config.guildId);
+    return discordMessageMentionsBot(message, config.botUserId, this.config?.botRoleId);
+  }
+
+  private async resolveBotRole(guildId: string): Promise<void> {
+    const config = this.config;
+    if (!config || !this.api) return;
+    if (Date.now() - this.botRoleLookupAt < botRoleLookupCooldownMs) return;
+    this.botRoleLookupAt = Date.now();
+    try {
+      const role = findDiscordBotRole(
+        await this.api.getGuildRoles(guildId),
+        config.botUserId,
+        config.applicationId,
+      );
+      if (role && role.id !== this.config?.botRoleId) {
+        this.saveConfig({ botRoleId: role.id }, { notify: false });
+      }
+    } catch (error) {
+      this.options.onError?.("discord.roles", error);
+    }
   }
 
   private async injectInbound(
@@ -420,6 +485,7 @@ export class DiscordBridgeService {
     const textContent = stripDiscordBotMentions(
       options.content ?? message.content ?? "",
       config.botUserId,
+      config.botRoleId,
     );
     const combined = [textContent, documentNote].filter(Boolean).join("\n\n");
     const replyChannel = replyThreadId ?? message.channel_id;
@@ -636,6 +702,8 @@ export class DiscordBridgeService {
       pairedThreadName: threadName,
     };
     this.saveConfig(patch);
+    this.botRoleLookupAt = 0;
+    await this.resolveBotRole(message.guild_id);
     if (inThread) {
       const conversation = this.createThreadConversation(
         threadName || titleFromText(message.content ?? "") || `Discord thread ${message.channel_id}`,
@@ -691,6 +759,7 @@ export class DiscordBridgeService {
     // Single token only — do not treat ordinary sentences (e.g. "other channel") as codes.
     if (/^[A-Za-z0-9_-]{8,32}$/.test(trimmed)) return true;
     if (config.botUserId && text.includes(`<@${config.botUserId}>`)) return true;
+    if (config.botRoleId && text.includes(`<@&${config.botRoleId}>`)) return true;
     if (config.botUsername && new RegExp(`@${config.botUsername}\\b`, "i").test(text)) return true;
     return false;
   }
@@ -859,6 +928,12 @@ export class DiscordBridgeService {
     }
   }
 
+  /**
+   * Post button notices for pending approvals that have none yet and retire
+   * notices whose approval was decided elsewhere. Notices live in the stored
+   * config, so a restart reconciles against the same messages instead of
+   * posting duplicates.
+   */
   private async syncApprovals(): Promise<void> {
     const config = this.config;
     if (!config || !config.channelId || !this.api) return;
@@ -866,7 +941,7 @@ export class DiscordBridgeService {
     for (const approval of this.options.database.listApprovals("PENDING")) {
       if (approval.coworkerId !== config.coworkerId) continue;
       pendingIds.add(approval.id);
-      if (this.notifiedApprovals.has(approval.id)) continue;
+      if (this.config?.approvalNotices[approval.id]) continue;
       let channelId: string | null = null;
       try {
         const task = this.options.database.getTask(approval.taskId);
@@ -929,15 +1004,14 @@ export class DiscordBridgeService {
           content: chunks.at(-1)!,
           components: buttons,
         });
-        this.notifiedApprovals.add(approval.id);
-        this.approvalNotices.set(approval.id, { messageId: notice.id, channelId });
+        this.rememberApprovalNotice(approval.id, { messageId: notice.id, channelId });
       } catch (error) {
         this.options.onError?.("discord.approval", error);
       }
     }
-    for (const [approvalId, notice] of [...this.approvalNotices]) {
+    for (const [approvalId, notice] of Object.entries(this.config?.approvalNotices ?? {})) {
       if (pendingIds.has(approvalId)) continue;
-      this.approvalNotices.delete(approvalId);
+      this.forgetApprovalNotice(approvalId);
       try {
         await this.api.editMessage({
           channelId: notice.channelId,
@@ -1026,7 +1100,7 @@ export class DiscordBridgeService {
         this.options.emit({ type: "entity.changed", entity: "coworkers", id: coworker.id });
       }
       const decision = action === "reject" ? "reject" : "approve";
-      this.approvalNotices.delete(approvalId);
+      this.forgetApprovalNotice(approvalId);
       const approval = await this.options.host.decideApproval({ approvalId, decision });
       const outcome =
         decision === "reject"
@@ -1065,6 +1139,20 @@ export class DiscordBridgeService {
     } finally {
       release();
     }
+  }
+
+  private rememberApprovalNotice(approvalId: string, notice: DiscordApprovalNotice): void {
+    if (!this.config) return;
+    this.saveConfig(
+      { approvalNotices: { ...this.config.approvalNotices, [approvalId]: notice } },
+      { notify: false },
+    );
+  }
+
+  private forgetApprovalNotice(approvalId: string): void {
+    if (!this.config || !this.config.approvalNotices[approvalId]) return;
+    const { [approvalId]: _removed, ...rest } = this.config.approvalNotices;
+    this.saveConfig({ approvalNotices: rest }, { notify: false });
   }
 
   private channelIsPaired(channelId: string, guildId: string | undefined): boolean {
@@ -1143,12 +1231,19 @@ export class DiscordBridgeService {
         throw new Error("Reply with replacement text only, or /cancel. Nothing has been approved.");
       }
       const payload = editedWorkspaceTextPayload(pending, message.content);
-      const approved = await this.options.host.decideApproval({
-        approvalId: pending.id,
-        decision: "edit",
-        payload,
-      });
-      this.approvalNotices.delete(approved.id);
+      const notice = this.config?.approvalNotices[pending.id];
+      this.forgetApprovalNotice(pending.id);
+      let approved: Approval;
+      try {
+        approved = await this.options.host.decideApproval({
+          approvalId: pending.id,
+          decision: "edit",
+          payload,
+        });
+      } catch (error) {
+        if (notice) this.rememberApprovalNotice(pending.id, notice);
+        throw error;
+      }
       try {
         await this.api.editMessage({
           channelId: request.noticeChannelId,

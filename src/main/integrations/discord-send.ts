@@ -21,6 +21,22 @@ const photoMimeTypes: Record<string, string> = {
   ".gif": "image/gif",
 };
 
+/** Merge one thread↔conversation mapping into the stored config, re-reading it first. */
+export function recordDiscordThreadMapping(
+  database: CoworkerDatabase,
+  mapping: DiscordThreadMapping,
+): void {
+  const integration = database.getDiscordIntegration();
+  if (!integration) return;
+  const current = parseDiscordConfig(integration);
+  database.updateDiscordIntegration({
+    config: {
+      threads: { ...current.threads, [mapping.threadId]: mapping.conversationId },
+      lastThreads: { ...current.lastThreads, [mapping.conversationId]: mapping.threadId },
+    },
+  });
+}
+
 export interface DiscordSendResult {
   delivered: true;
   channelId: string;
@@ -29,10 +45,20 @@ export interface DiscordSendResult {
   attachments: Array<{ name: string; bytes: number; sentAs: "photo" | "document" }>;
 }
 
+export interface DiscordThreadMapping {
+  threadId: string;
+  conversationId: string;
+}
+
 /**
  * Executes the coworker's `discord.send` tool: delivers a markdown message
  * and optional workspace files to the paired Discord channel, targeting the
  * thread mapped to the task's conversation when one exists.
+ *
+ * When a forum post has to be created, the new thread↔conversation mapping is
+ * handed to `registerThread` so the running bridge (the owner of the thread
+ * map) records it in memory and on disk. Without a bridge the mapping is
+ * merged into the stored config directly.
  */
 export async function sendCoworkerDiscordMessage(input: {
   database: CoworkerDatabase;
@@ -42,6 +68,7 @@ export async function sendCoworkerDiscordMessage(input: {
   message: string;
   attachments?: string[];
   fetchImpl?: typeof fetch;
+  registerThread?: (mapping: DiscordThreadMapping) => void;
 }): Promise<DiscordSendResult> {
   const integration = input.database.getDiscordIntegration();
   if (!integration || integration.status !== "connected") {
@@ -101,12 +128,12 @@ export async function sendCoworkerDiscordMessage(input: {
     threadId = post.id;
     channelId = post.id;
     messageAlreadyPosted = true;
-    input.database.updateDiscordIntegration({
-      config: {
-        threads: { ...config.threads, [post.id]: conversationId },
-        lastThreads: { ...config.lastThreads, [conversationId]: post.id },
-      },
-    });
+    const mapping = { threadId: post.id, conversationId };
+    if (input.registerThread) {
+      input.registerThread(mapping);
+    } else {
+      recordDiscordThreadMapping(input.database, mapping);
+    }
   }
 
   let messageChunks = messageAlreadyPosted ? 1 : 0;

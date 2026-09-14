@@ -23,7 +23,10 @@ import type { CredentialStore } from "@main/security/credential-store";
 import { readDocumentText } from "@main/integrations/document-text";
 import { createEmailDraft, sendEmail, type EmailPayload } from "@main/integrations/email";
 import { sendCoworkerTelegramMessage } from "@main/integrations/telegram-send";
-import { sendCoworkerDiscordMessage } from "@main/integrations/discord-send";
+import {
+  sendCoworkerDiscordMessage,
+  type DiscordThreadMapping,
+} from "@main/integrations/discord-send";
 import { resolveSharedFolderPath } from "./shared-folders";
 import { resolveWorkspacePath } from "./workspace-path";
 import { editWorkspaceText, prepareWorkspaceTextMutation, readWorkspaceText, resolveWorkspaceOutputPath, writeWorkspaceText } from "./workspace-text";
@@ -244,6 +247,8 @@ export type ToolGatewayResult =
 export interface ToolGatewayActions {
   createSchedule?: (input: CreateScheduleInput) => Schedule;
   browser?: BrowserAutomationService;
+  /** Hands forum posts opened by `discord.send` to the bridge that owns the thread map. */
+  registerDiscordThread?: (mapping: DiscordThreadMapping) => void;
 }
 
 function normalizeEmailPayload(input: z.infer<(typeof schemas)["email.send"]>): EmailPayload {
@@ -1010,6 +1015,7 @@ export class ToolGateway {
           message: args.message,
           attachments: args.attachments,
           fetchImpl: this.options.discordFetch,
+          registerThread: this.actions.registerDiscordThread,
         });
       }
       default:
