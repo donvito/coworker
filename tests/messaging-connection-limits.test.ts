@@ -135,3 +135,15 @@ describe("one Telegram and one Discord connection per coworker", () => {
     await expect(configure(provider, ava!.id, undefined, second.id)).rejects.toThrow(/token.*required/i);
   });
 });
+
+it("keeps an unpaired Telegram bot's pairing link available during a polling error", async () => {
+  const { coworkers: [ava], configure, db, service } = await setup();
+  const configured = await configure("telegram", ava!.id, 1);
+  const original = service.telegramStatus(configured.integration.id).pairingLink;
+  expect(original).toContain("start=");
+  db.updateTelegramIntegration({ status: "error", config: { connectionError: "Temporary polling error" } }, configured.integration.id);
+  expect(service.telegramStatus(configured.integration.id).pairingLink).toBe(original);
+  expect(service.telegramStatus()[0]!.pairingLink).toBe(original);
+  await service.disconnectTelegram(configured.integration.id);
+  expect(service.telegramStatus(configured.integration.id).pairingLink).toBeNull();
+});

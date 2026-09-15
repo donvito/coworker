@@ -1311,7 +1311,7 @@ export class DesktopAppService {
     if (!integrationId) return this.database.listTelegramIntegrations().map((item) => this.telegramStatus(item.id));
     const integration = this.database.getTelegramIntegration(integrationId);
     if (!integration) throw new Error("The selected Telegram connection was not found");
-    if (integration.status !== "connected") return { integration, pairingLink: null };
+    if (integration.status !== "connected" && integration.status !== "error") return { integration, pairingLink: null };
     const config = parseTelegramConfig(integration);
     return {
       integration,
