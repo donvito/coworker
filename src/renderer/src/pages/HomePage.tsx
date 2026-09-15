@@ -8,9 +8,9 @@ import {
   PageHeader,
   StatusLabel,
   DiscordLinkBadge,
-  discordLinkedCoworkerId,
+  discordConnectionCount,
   TelegramLinkBadge,
-  telegramLinkedCoworkerId,
+  telegramConnectionCount,
 } from "../components/Primitives";
 
 const countWords = [
@@ -244,11 +244,11 @@ export function HomePage({
                       coworker={coworker}
                       modelEndpoints={snapshot.modelEndpoints}
                     />
-                    {telegramLinkedCoworkerId(snapshot.integrations) === coworker.id ? (
-                      <TelegramLinkBadge compact />
+                    {telegramConnectionCount(snapshot.integrations, coworker.id) > 0 ? (
+                      <TelegramLinkBadge compact count={telegramConnectionCount(snapshot.integrations, coworker.id)} />
                     ) : null}
-                    {discordLinkedCoworkerId(snapshot.integrations) === coworker.id ? (
-                      <DiscordLinkBadge compact />
+                    {discordConnectionCount(snapshot.integrations, coworker.id) > 0 ? (
+                      <DiscordLinkBadge compact count={discordConnectionCount(snapshot.integrations, coworker.id)} />
                     ) : null}
                     <span className="floor-card-action">
                       <Icon name="arrow" />

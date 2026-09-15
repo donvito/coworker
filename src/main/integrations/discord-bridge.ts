@@ -1,3 +1,4 @@
+import { BridgeManager } from "./bridge-manager";
 import { readFile, writeFile } from "node:fs/promises";
 import { basename, posix } from "node:path";
 import { EventType } from "@ag-ui/core";
@@ -58,6 +59,9 @@ export interface DiscordBridgeHost {
 }
 
 export interface DiscordBridgeOptions {
+  /** Integration row this bridge owns. Omitted for legacy singleton callers. */
+  integrationId?: string;
+  credentialKey?: string;
   database: CoworkerDatabase;
   credentials: CredentialStore;
   host: DiscordBridgeHost;
@@ -128,7 +132,15 @@ export class DiscordBridgeService {
   private running = false;
   private api: DiscordRestApi | null = null;
   private gateway: DiscordGateway | null = null;
-  private config: DiscordIntegrationConfig | null = null;
+  private configurationLoaded = false;
+
+  // Proactive sends also add thread mappings. Read routing from the shared
+  // database so inbound events always reuse the conversation they created.
+  private get config(): DiscordIntegrationConfig | null {
+    if (!this.configurationLoaded) return null;
+    const integration = this.options.database.getDiscordIntegration(this.options.integrationId);
+    return integration ? parseDiscordConfig(integration) : null;
+  }
   private unsubscribe: (() => void) | null = null;
   private outbound: Promise<void> = Promise.resolve();
   private readonly injectedMessageIds = new Set<string>();
@@ -141,6 +153,7 @@ export class DiscordBridgeService {
   private readonly inboundThreadOrigins = new Map<string, string>();
   private readonly lastInboundThread = new Map<string, string>();
   private readonly notifiedApprovals = new Set<string>();
+  private readonly inboundOperations = new Set<Promise<void>>();
   private readonly approvalNotices = new Map<string, { messageId: string; channelId: string }>();
   private readonly pendingThreadNames = new Map<string, string>();
   private readonly channelCache = new Map<string, DiscordChannel>();
@@ -156,42 +169,43 @@ export class DiscordBridgeService {
 
   async start(): Promise<void> {
     if (this.running) return;
-    const integration = this.options.database.getDiscordIntegration();
+    const integration = this.options.database.getDiscordIntegration(this.options.integrationId);
     if (!integration || (integration.status !== "connected" && integration.status !== "error")) {
       return;
     }
     const token = await this.readToken();
     if (!token) return;
 
-    this.config = parseDiscordConfig(integration);
+    const config = parseDiscordConfig(integration);
+    this.configurationLoaded = true;
     this.api = new DiscordRestApi(token, this.options.fetchImpl ?? fetch);
     this.running = true;
-    for (const channelId of this.config.refusedChannels) this.refusedChannels.add(channelId);
+    for (const channelId of config.refusedChannels) this.refusedChannels.add(channelId);
     this.initializeCursors();
     this.unsubscribe = this.options.host.subscribe((event) => this.handleEvent(event));
     this.gateway = new DiscordGateway({
       token,
       api: this.api,
       WebSocketImpl: this.options.WebSocketImpl,
-      sessionId: this.config.sessionId,
-      lastSequence: this.config.lastSequence,
-      resumeUrl: this.config.resumeUrl,
+      sessionId: config.sessionId,
+      lastSequence: config.lastSequence,
+      resumeUrl: config.resumeUrl,
       handlers: {
         onReady: (sessionId, resumeUrl) => {
           this.saveConfig(
             { sessionId, resumeUrl: resumeUrl ?? this.config?.resumeUrl ?? null, gatewayError: null },
             { notify: false },
           );
-          const current = this.options.database.getDiscordIntegration();
+          const current = this.options.database.getDiscordIntegration(this.options.integrationId);
           if (current?.status === "error") {
-            this.options.database.updateDiscordIntegration({ status: "connected" });
+            this.options.database.updateDiscordIntegration({ status: "connected" }, this.options.integrationId);
             this.options.emit({ type: "entity.changed", entity: "integrations", id: current.id });
           }
         },
         onSequence: (lastSequence, sessionId) => {
           this.queueSequenceWrite(lastSequence, sessionId);
         },
-        onDispatch: (event) => this.handleDispatch(event.t, event.d),
+        onDispatch: (event) => this.dispatch(event.t, event.d),
         onClose: (code, reason) => {
           if (code === 1000 || code === 1001 || code === 4000) return;
           this.saveConfig(
@@ -207,7 +221,7 @@ export class DiscordBridgeService {
             },
             { notify: false },
           );
-          this.options.database.updateDiscordIntegration({ status: "error" });
+          this.options.database.updateDiscordIntegration({ status: "error" }, this.options.integrationId);
           this.options.emit({ type: "entity.changed", entity: "integrations" });
           this.options.database.addActivity({ type: "discord.gateway_error", summary: hint });
           this.options.emit({ type: "entity.changed", entity: "activity" });
@@ -226,6 +240,7 @@ export class DiscordBridgeService {
     this.unsubscribe = null;
     this.flushSequenceWrite();
     await this.gateway?.stop();
+    await Promise.allSettled([...this.inboundOperations]);
     this.flushSequenceWrite();
     if (this.config) {
       this.saveConfig(
@@ -236,7 +251,7 @@ export class DiscordBridgeService {
     this.gateway = null;
     await this.outbound.catch(() => undefined);
     this.api = null;
-    this.config = null;
+    this.configurationLoaded = false;
     for (const buffer of this.runBuffers.values()) {
       if (buffer.typingTimer) clearTimeout(buffer.typingTimer);
       if (buffer.stopTimer) clearTimeout(buffer.stopTimer);
@@ -272,7 +287,7 @@ export class DiscordBridgeService {
 
   private async readToken(): Promise<string | null> {
     try {
-      return await this.options.credentials.get(discordCredentialKey);
+      return await this.options.credentials.get(this.options.database.getDiscordIntegration(this.options.integrationId)?.credentialKey ?? this.options.credentialKey ?? discordCredentialKey);
     } catch (error) {
       this.options.onError?.("discord.credentials", error);
       return null;
@@ -283,7 +298,7 @@ export class DiscordBridgeService {
     const config = this.config;
     if (!config?.coworkerId) return;
     for (const conversation of this.options.database.listConversations(config.coworkerId)) {
-      if (conversation.kind !== "direct") continue;
+      if (conversation.kind !== "direct" || !this.ownsConversation(conversation.id)) continue;
       const messages = this.options.database.listConversationMessages(conversation.id);
       this.seedCursor(conversation.id, messages);
     }
@@ -295,6 +310,14 @@ export class DiscordBridgeService {
     for (const message of messages) {
       if (message.createdAt >= latest) this.mirroredMessageIds.add(message.id);
     }
+  }
+
+  private dispatch(event: string, data: unknown): Promise<void> {
+    if (!this.running) return Promise.resolve();
+    const operation = this.handleDispatch(event, data);
+    this.inboundOperations.add(operation);
+    void operation.finally(() => this.inboundOperations.delete(operation)).catch(() => undefined);
+    return operation;
   }
 
   private async handleDispatch(event: string, data: unknown): Promise<void> {
@@ -432,7 +455,7 @@ export class DiscordBridgeService {
       return;
     }
 
-    const clientMessageId = `discord:${message.id}`;
+    const clientMessageId = `discord:${this.options.integrationId ?? "legacy"}:${message.id}`;
     this.injectedMessageIds.add(clientMessageId);
     if (replyThreadId) {
       this.inboundThreadOrigins.set(clientMessageId, replyThreadId);
@@ -440,7 +463,7 @@ export class DiscordBridgeService {
       if (config.lastThreads[conversationId] !== replyThreadId) {
         this.saveConfig(
           {
-            lastThreads: { ...config.lastThreads, [conversationId]: replyThreadId },
+            lastThreads: { [conversationId]: replyThreadId },
           },
           { notify: false },
         );
@@ -587,8 +610,8 @@ export class DiscordBridgeService {
     const conversation = this.createThreadConversation(title);
     if (!conversation) return;
     this.saveConfig({
-      threads: { ...this.config.threads, [thread.id]: conversation.id },
-      lastThreads: { ...this.config.lastThreads, [conversation.id]: thread.id },
+      threads: { [thread.id]: conversation.id },
+      lastThreads: { [conversation.id]: thread.id },
     });
   }
 
@@ -642,8 +665,8 @@ export class DiscordBridgeService {
       );
       if (conversation) {
         this.saveConfig({
-          threads: { ...this.config!.threads, [message.channel_id]: conversation.id },
-          lastThreads: { ...this.config!.lastThreads, [conversation.id]: message.channel_id },
+          threads: { [message.channel_id]: conversation.id },
+          lastThreads: { [conversation.id]: message.channel_id },
         });
       }
     }
@@ -736,7 +759,7 @@ export class DiscordBridgeService {
     const conversation = this.createThreadConversation(title);
     if (!conversation) return config.conversationId;
     this.saveConfig({
-      threads: { ...config.threads, [message.channel_id]: conversation.id },
+      threads: { [message.channel_id]: conversation.id },
     });
     return conversation.id;
   }
@@ -796,7 +819,7 @@ export class DiscordBridgeService {
         const coworker = this.options.database.getCoworker(this.config.coworkerId);
         const bytes = await this.api.downloadAttachment(document.url);
         const fileName = safeInboxFileName(document.filename, `file-${document.id}`);
-        const relativePath = posix.join("discord-inbox", `${document.id}-${fileName}`);
+        const relativePath = posix.join("discord-inbox", this.options.integrationId ?? "legacy", `${document.id}-${fileName}`);
         const absolutePath = await resolveWorkspaceOutputPath(coworker.workspacePath, relativePath);
         await writeFile(absolutePath, bytes, { mode: 0o600 });
         notes.push(`(File received via Discord and saved in the workspace at ${relativePath})`);
@@ -1082,11 +1105,18 @@ export class DiscordBridgeService {
     return undefined;
   }
 
+  private ownsConversation(conversationId: string): boolean {
+    const config = this.config;
+    return Boolean(config && (config.conversationId === conversationId || Object.values(config.threads).includes(conversationId)));
+  }
+
   private pendingDiscordApproval(id: string): Approval {
     const approval = this.options.database.getApproval(id);
     if (approval.coworkerId !== this.config?.coworkerId) {
       throw new Error("This approval belongs to another coworker.");
     }
+    const task = this.options.database.getTask(approval.taskId);
+    if (!this.ownsConversation(task.threadId)) throw new Error("This approval belongs to another bot connection.");
     if (approval.status !== "PENDING") throw new Error("This approval has already been decided.");
     return approval;
   }
@@ -1191,7 +1221,7 @@ export class DiscordBridgeService {
   private handleAgentEvent(event: Extract<DesktopEvent, { type: "agent.event" }>): void {
     const config = this.config;
     if (!config || !config.channelId) return;
-    if (event.coworkerId !== config.coworkerId) return;
+    if (event.coworkerId !== config.coworkerId || !this.ownsConversation(event.conversationId)) return;
     const live = this.runBuffers.get(event.runId);
     if (live) live.lastActivityAt = Date.now();
     const type = event.event.type;
@@ -1321,7 +1351,7 @@ export class DiscordBridgeService {
   /** Thread or parent channel when no REST call is required (forums may need a new post). */
   private syncOutboundTarget(conversationId: string, taskId?: string): string | null {
     const config = this.config;
-    if (!config?.channelId) return null;
+    if (!config?.channelId || !this.ownsConversation(conversationId)) return null;
     const mappedThread = this.threadForConversation(conversationId);
     if (mappedThread) return mappedThread;
     const last = this.replyThreadForTask(conversationId, taskId);
@@ -1385,7 +1415,7 @@ export class DiscordBridgeService {
     taskId?: string,
   ): Promise<string | null> {
     const config = this.config;
-    if (!config || !config.channelId) return null;
+    if (!config || !config.channelId || !this.ownsConversation(conversationId)) return null;
     const mappedThread = this.threadForConversation(conversationId);
     if (mappedThread) return mappedThread;
     const last = this.replyThreadForTask(conversationId, taskId);
@@ -1426,15 +1456,12 @@ export class DiscordBridgeService {
     } catch {
       return;
     }
-    if (conversation.kind !== "direct") return;
+    if (conversation.kind !== "direct" || !this.ownsConversation(conversationId)) return;
     if (!conversation.memberIds.includes(config.coworkerId)) return;
     if (conversation.archivedAt) return;
 
     let channelId = this.threadForConversation(conversationId);
-    if (!channelId && conversationId !== config.conversationId) {
-      channelId = await this.createOutboundThread(conversation);
-      if (!channelId) return;
-    }
+    if (!channelId && conversationId !== config.conversationId) return;
     if (!channelId) {
       channelId =
         this.lastInboundThread.get(conversationId) ?? this.config?.lastThreads[conversationId];
@@ -1475,7 +1502,7 @@ export class DiscordBridgeService {
       });
       this.cacheChannel(thread);
       this.saveConfig({
-        threads: { ...config.threads, [thread.id]: conversation.id },
+        threads: { [thread.id]: conversation.id },
       });
       return thread.id;
     } catch (error) {
@@ -1608,10 +1635,17 @@ export class DiscordBridgeService {
     patch: Partial<DiscordIntegrationConfig>,
     options: { notify?: boolean } = {},
   ): void {
-    if (!this.config) return;
-    this.config = { ...this.config, ...patch };
+    const current = this.config;
+    if (!current) return;
+    // Routing patches contain additions, never stale copies of complete maps.
+    // Lifecycle resets clear maps after this bridge has been stopped.
+    const merged = {
+      ...patch,
+      ...(patch.threads ? { threads: { ...current.threads, ...patch.threads } } : {}),
+      ...(patch.lastThreads ? { lastThreads: { ...current.lastThreads, ...patch.lastThreads } } : {}),
+    };
     try {
-      this.options.database.updateDiscordIntegration({ config: patch });
+      this.options.database.updateDiscordIntegration({ config: merged }, this.options.integrationId);
     } catch (error) {
       this.options.onError?.("discord.config", error);
       return;
@@ -1619,5 +1653,16 @@ export class DiscordBridgeService {
     if (options.notify !== false) {
       this.options.emit({ type: "entity.changed", entity: "integrations" });
     }
+  }
+}
+
+/** Owns an independent runtime for every Discord connection. */
+export class DiscordBridgeManager extends BridgeManager<DiscordBridgeService> {
+  constructor(options: Omit<DiscordBridgeOptions, "integrationId" | "credentialKey"> & { credentialKeyFor?: (id: string) => string }) {
+    super({
+      list: () => options.database.listDiscordIntegrations(),
+      create: integration => new DiscordBridgeService({ ...options, onError: (scope, error) => options.onError?.(`${scope}.${integration.id}`, error), integrationId: integration.id, credentialKey: integration.credentialKey ?? options.credentialKeyFor?.(integration.id) }),
+      onError: (id, error) => options.onError?.(`discord.connection.${id}`, error),
+    });
   }
 }

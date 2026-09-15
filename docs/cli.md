@@ -177,11 +177,13 @@ Configure the bot without exposing its token in shell history:
 coworker telegram configure COWORKER_ID --prompt-token
 # or: printf '%s' "$TELEGRAM_BOT_TOKEN" | coworker telegram configure COWORKER_ID --token-stdin
 coworker telegram status
-coworker telegram unpair
-coworker telegram disconnect
+coworker telegram unpair --integration-id INTEGRATION_ID
+coworker telegram disconnect --integration-id INTEGRATION_ID
 ```
 
 The token is entered through hidden terminal input or stdin and is stored using the same OS-backed credential store as the desktop. After configuring, send the pairing link/code to the bot and confirm `Pairing: paired` before sending work. `unpair` keeps the bot configured but requires pairing again; `disconnect` removes the Telegram connection.
+
+Configure without `--integration-id` adds a bot when the coworker has no active Telegram connection. A coworker may have one active Telegram connection; to edit or move an existing bot, use `coworker telegram configure COWORKER_ID --integration-id INTEGRATION_ID`. Omit the token to retain its current credential. Get integration IDs from `coworker telegram status`. Connections on different coworkers have independent pairing and conversations.
 
 `telegram configure`, `telegram unpair`, and `telegram status` print the pairing link while waiting for pairing. Once paired, they show the chat ID instead. The main `status` command distinguishes an unconfigured Telegram integration from connected, disconnected, and error states.
 
@@ -193,11 +195,13 @@ Configure the bot without exposing its token in shell history:
 coworker discord configure COWORKER_ID --prompt-token
 # or: printf '%s' "$DISCORD_BOT_TOKEN" | coworker discord configure COWORKER_ID --token-stdin
 coworker discord status
-coworker discord unpair
-coworker discord disconnect
+coworker discord unpair --integration-id INTEGRATION_ID
+coworker discord disconnect --integration-id INTEGRATION_ID
 ```
 
 The token is entered through hidden terminal input or stdin and is stored using the same OS-backed credential store as the desktop. After configuring, invite the bot with the printed URL (leave the pre-selected permissions as-is), turn on Message Content Intent if the printed portal link says so, and post the pairing code in the Discord channel or thread you want. Confirm the status shows the guild and `#channel` before sending work. In a paired text channel, @mention the bot to start a thread; ordinary parent-channel chatter is ignored. `unpair` keeps the bot configured, issues a new code, and requires pairing again; `disconnect` removes the Discord connection and deletes the token.
+
+Configure without `--integration-id` adds a bot when the coworker has no active Discord connection. A coworker may have one active Discord connection; to edit or move an existing bot, use `coworker discord configure COWORKER_ID --integration-id INTEGRATION_ID`. Omit the token to retain its current credential. Get integration IDs from `coworker discord status`. Connections on different coworkers have independent pairing and conversations.
 
 `discord configure`, `discord unpair`, and `discord status` print the invite URL, pairing code, and Message Content Intent link while waiting for pairing. Once paired, they show the coworker, guild, and `#channel` (plus a thread name if you paired from one). The main `status` command distinguishes an unconfigured Discord integration from connected, disconnected, and error states. Telegram and Discord may both be connected.
 

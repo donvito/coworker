@@ -363,6 +363,7 @@ const parameterSchemas: Record<string, ReturnType<typeof Type.Object>> = {
           "Workspace-relative paths of files to attach. Create the files first; photos up to 10 MB, other files up to 50 MB.",
       }),
     ),
+    integrationId: Type.Optional(Type.String({ description: "Connection id from the current request context; required when multiple Telegram connections are available." })),
   }),
   "discord.send": Type.Object({
     message: Type.String({
@@ -374,6 +375,7 @@ const parameterSchemas: Record<string, ReturnType<typeof Type.Object>> = {
           "Workspace-relative paths of files to attach. Create the files first; photos up to 10 MB, other files up to 25 MB.",
       }),
     ),
+    integrationId: Type.Optional(Type.String({ description: "Connection id from the current request context; required when multiple Discord connections are available." })),
   }),
 };
 

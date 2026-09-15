@@ -27,6 +27,7 @@ import { Icon } from "../components/Icon";
 import { ModelSelector } from "../components/ModelSelector";
 import { PageHeader } from "../components/Primitives";
 import { readableError } from "../lib/errors";
+import { MessagingConnections } from "../components/MessagingConnections";
 
 export type SettingsTab =
   | "general"
@@ -86,11 +87,8 @@ export function SettingsPage({
   const [globalInstructions, setGlobalInstructions] = useState(
     settings.globalOperatingInstructions,
   );
-  const [telegramStatus, setTelegramStatus] = useState<TelegramIntegrationStatus | null>(null);
-  const [telegramCoworkerChoice, setTelegramCoworkerChoice] = useState<string | null>(null);
-  const [discordStatus, setDiscordStatus] = useState<DiscordIntegrationStatus | null>(null);
-  const [discordCoworkerChoice, setDiscordCoworkerChoice] = useState<string | null>(null);
-  const [discordCodeCopied, setDiscordCodeCopied] = useState(false);
+  const [telegramStatuses, setTelegramStatuses] = useState<TelegramIntegrationStatus[]>([]);
+  const [discordStatuses, setDiscordStatuses] = useState<DiscordIntegrationStatus[]>([]);
   const [confirmingArchivedDelete, setConfirmingArchivedDelete] = useState<string | null>(null);
 
   const knownProviderCards = remoteModelProviderDefinitions.filter(
@@ -171,14 +169,12 @@ export function SettingsPage({
 
   useEffect(() => {
     if (tab !== "integrations") return;
-    void window.coworker.integrations
-      .telegramStatus()
-      .then(setTelegramStatus)
-      .catch(() => setTelegramStatus(null));
-    void window.coworker.integrations
-      .discordStatus()
-      .then(setDiscordStatus)
-      .catch(() => setDiscordStatus(null));
+    void window.coworker.integrations.telegramStatus()
+      .then(setTelegramStatuses)
+      .catch(() => setTelegramStatuses([]));
+    void window.coworker.integrations.discordStatus()
+      .then(setDiscordStatuses)
+      .catch(() => setDiscordStatuses([]));
     // Refetches whenever a snapshot refresh reports integration changes, so
     // pairing completed from Telegram or Discord appears without a manual reload.
   }, [tab, integrations]);
@@ -374,156 +370,32 @@ export function SettingsPage({
     }
   }
 
-  async function configureTelegram(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const data = new FormData(form);
-    setWorking(true);
-    setNotice(null);
-    try {
-      const chosenCoworkerId = String(data.get("coworkerId") || "");
-      const status = await window.coworker.integrations.configureTelegram({
-        botToken: String(data.get("botToken") || "") || undefined,
-        coworkerId: chosenCoworkerId,
-      });
-      setTelegramStatus(status);
-      setTelegramCoworkerChoice(null);
-      form.reset();
-      await onChanged();
-      const chosenName = coworkers.find(
-        (candidate) => candidate.id === chosenCoworkerId,
-      )?.name;
-      setNoticeKind("success");
-      setNotice(
-        status.pairingLink
-          ? "Telegram bot connected. One required step left: pair your chat with the link or code below."
-          : `Telegram bot connected — messages go to ${chosenName ?? "your coworker"}.`,
-      );
-    } catch (configureError) {
-      setNoticeKind("error");
-      setNotice(
-        configureError instanceof Error ? configureError.message : String(configureError),
-      );
-    } finally {
-      setWorking(false);
-    }
+  async function saveTelegramConnection(input: { integrationId?: string; botToken?: string; coworkerId: string }) {
+    const status = await window.coworker.integrations.configureTelegram(input);
+    setTelegramStatuses((current) => current.some((item) => item.integration.id === status.integration.id) ? current.map((item) => item.integration.id === status.integration.id ? status : item) : [...current, status]);
+    await onChanged();
   }
 
-  async function unpairTelegram() {
-    setWorking(true);
-    setNotice(null);
-    try {
-      setTelegramStatus(await window.coworker.integrations.unpairTelegram());
-      await onChanged();
-      setNoticeKind("success");
-      setNotice("Telegram chat unpaired. Open the new pairing link to pair again.");
-    } catch (unpairError) {
-      setNoticeKind("error");
-      setNotice(unpairError instanceof Error ? unpairError.message : String(unpairError));
-    } finally {
-      setWorking(false);
-    }
+  async function saveDiscordConnection(input: { integrationId?: string; botToken?: string; coworkerId: string }) {
+    const status = await window.coworker.integrations.configureDiscord(input);
+    setDiscordStatuses((current) => current.some((item) => item.integration.id === status.integration.id) ? current.map((item) => item.integration.id === status.integration.id ? status : item) : [...current, status]);
+    await onChanged();
   }
 
-  async function configureDiscord(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const data = new FormData(form);
-    setWorking(true);
-    setNotice(null);
-    try {
-      const chosenCoworkerId = String(data.get("coworkerId") || "");
-      const status = await window.coworker.integrations.configureDiscord({
-        botToken: String(data.get("botToken") || "") || undefined,
-        coworkerId: chosenCoworkerId,
-      });
-      setDiscordStatus(status);
-      setDiscordCoworkerChoice(null);
-      form.reset();
-      await onChanged();
-      const chosenName = coworkers.find(
-        (candidate) => candidate.id === chosenCoworkerId,
-      )?.name;
-      setNoticeKind("success");
-      setNotice(
-        status.pairingCode
-          ? "Discord bot connected. One step left: invite the bot, then paste the pairing code."
-          : `Discord bot connected — messages go to ${chosenName ?? "your coworker"}.`,
-      );
-    } catch (configureError) {
-      setNoticeKind("error");
-      setNotice(
-        configureError instanceof Error ? configureError.message : String(configureError),
-      );
-    } finally {
-      setWorking(false);
-    }
+  async function refreshMessagingStatuses() {
+    const [telegram, discord] = await Promise.all([window.coworker.integrations.telegramStatus(), window.coworker.integrations.discordStatus()]);
+    setTelegramStatuses(telegram);
+    setDiscordStatuses(discord);
+    await onChanged();
   }
 
-  async function unpairDiscord() {
-    setWorking(true);
-    setNotice(null);
-    try {
-      setDiscordStatus(await window.coworker.integrations.unpairDiscord());
-      await onChanged();
-      setNoticeKind("success");
-      setNotice("Discord channel unpaired. Invite is unchanged — paste the new code to pair again.");
-    } catch (unpairError) {
-      setNoticeKind("error");
-      setNotice(unpairError instanceof Error ? unpairError.message : String(unpairError));
-    } finally {
-      setWorking(false);
-    }
+  async function runMessagingAction(action: () => Promise<unknown>) {
+    setWorking(true); setNotice(null);
+    try { await action(); await refreshMessagingStatuses(); setNoticeKind("success"); setNotice("Messaging connection updated."); }
+    catch (error) { setNoticeKind("error"); setNotice(error instanceof Error ? error.message : String(error)); throw error; }
+    finally { setWorking(false); }
   }
 
-  async function disconnectDiscord() {
-    setWorking(true);
-    setNotice(null);
-    try {
-      await window.coworker.integrations.disconnectDiscord();
-      setDiscordStatus(await window.coworker.integrations.discordStatus());
-      await onChanged();
-      setNoticeKind("success");
-      setNotice("Discord bot disconnected and its token removed.");
-    } catch (disconnectError) {
-      setNoticeKind("error");
-      setNotice(
-        disconnectError instanceof Error ? disconnectError.message : String(disconnectError),
-      );
-    } finally {
-      setWorking(false);
-    }
-  }
-
-  async function copyDiscordPairingCode(code: string) {
-    try {
-      await window.coworker.app.copyText(code);
-      setDiscordCodeCopied(true);
-      window.setTimeout(() => setDiscordCodeCopied(false), 1500);
-    } catch (copyError) {
-      setNoticeKind("error");
-      setNotice(copyError instanceof Error ? copyError.message : String(copyError));
-    }
-  }
-
-  async function disconnectTelegram() {
-    setWorking(true);
-    setNotice(null);
-    try {
-      await window.coworker.integrations.disconnectTelegram();
-      setTelegramStatus(await window.coworker.integrations.telegramStatus());
-      await onChanged();
-      setNoticeKind("success");
-      setNotice("Telegram bot disconnected and its token removed.");
-    } catch (disconnectError) {
-      setNoticeKind("error");
-      setNotice(
-        disconnectError instanceof Error ? disconnectError.message : String(disconnectError),
-      );
-    } finally {
-      setWorking(false);
-    }
-  }
 
   async function configureWebSearch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -1238,420 +1110,19 @@ export function SettingsPage({
                 </div>
               </form>
 
-              <h2 className="integration-divider">Telegram bot</h2>
-              {(() => {
-                const telegramIntegration =
-                  telegramStatus?.integration ??
-                  integrations.find((item) => item.type === "telegram") ??
-                  null;
-                const telegramConfig = (telegramIntegration?.config ?? {}) as {
-                  botUsername?: string;
-                  coworkerId?: string;
-                  chatId?: number | null;
-                  threadsEnabled?: boolean;
-                };
-                const telegramConnected = telegramIntegration?.status === "connected";
-                const telegramPaired =
-                  typeof telegramConfig.chatId === "number" && telegramConfig.chatId !== null;
-                const linkedCoworker = coworkers.find(
-                  (candidate) => candidate.id === telegramConfig.coworkerId,
-                );
-                const pairingCode = telegramStatus?.pairingLink?.split("start=")[1];
-                const chosenCoworkerId =
-                  telegramCoworkerChoice ?? telegramConfig.coworkerId ?? coworkers[0]?.id;
-                const chosenCoworker =
-                  coworkers.find((candidate) => candidate.id === chosenCoworkerId) ?? null;
-                const relinking = Boolean(
-                  telegramConnected &&
-                    linkedCoworker &&
-                    chosenCoworker &&
-                    chosenCoworker.id !== linkedCoworker.id,
-                );
-                return (
-                  <>
-                    <p>
-                      Chat with one coworker from Telegram — messages mirror both ways.
-                    </p>
+              <MessagingConnections
+                coworkers={coworkers}
+                telegram={telegramStatuses}
+                discord={discordStatuses}
+                working={working}
+                onTelegramConfigure={(input) => runMessagingAction(() => saveTelegramConnection(input))}
+                onDiscordConfigure={(input) => runMessagingAction(() => saveDiscordConnection(input))}
+                onTelegramUnpair={(id) => runMessagingAction(() => window.coworker.integrations.unpairTelegram(id))}
+                onTelegramDisconnect={(id) => runMessagingAction(() => window.coworker.integrations.disconnectTelegram(id))}
+                onDiscordUnpair={(id) => runMessagingAction(() => window.coworker.integrations.unpairDiscord(id))}
+                onDiscordDisconnect={(id) => runMessagingAction(() => window.coworker.integrations.disconnectDiscord(id))}
+              />
 
-                    {telegramConnected ? (
-                      <div className="telegram-connection">
-                        <span
-                          aria-hidden="true"
-                          className={
-                            telegramPaired ? "connection-dot connected" : "connection-dot"
-                          }
-                        />
-                        <div className="telegram-connection-identity">
-                          <strong>
-                            {telegramIntegration?.name} ⇄{" "}
-                            {linkedCoworker
-                              ? `${linkedCoworker.name} (${linkedCoworker.role})`
-                              : "no coworker"}
-                          </strong>
-                          <small>
-                            {telegramPaired
-                              ? telegramConfig.threadsEnabled
-                                ? "Paired · Threaded Mode on"
-                                : "Paired"
-                              : "Not paired — messages don't sync yet"}
-                          </small>
-                        </div>
-                        <div className="telegram-connection-actions">
-                          {telegramPaired ? (
-                            <button
-                              type="button"
-                              className="secondary-button"
-                              disabled={working}
-                              onClick={() => void unpairTelegram()}
-                            >
-                              Unpair chat
-                            </button>
-                          ) : null}
-                          <button
-                            type="button"
-                            className="secondary-button"
-                            disabled={working}
-                            onClick={() => void disconnectTelegram()}
-                          >
-                            Disconnect
-                          </button>
-                        </div>
-                      </div>
-                    ) : null}
-
-                    {telegramConnected && telegramStatus?.pairingLink ? (
-                      <div className="telegram-pairing">
-                        <strong>One step left: pair your Telegram chat</strong>
-                        <p>
-                          Open the link and press Start. If nothing happens, send the code
-                          below to the bot as a normal message.
-                        </p>
-                        <div className="telegram-pairing-actions">
-                          <a
-                            className="primary-button"
-                            href={telegramStatus.pairingLink}
-                            target="_blank"
-                            rel="noreferrer"
-                          >
-                            Open in Telegram
-                          </a>
-                          <code>{pairingCode}</code>
-                        </div>
-                      </div>
-                    ) : null}
-
-                    {telegramConnected && telegramPaired ? (
-                      <p className="telegram-hint">
-                        {telegramConfig.threadsEnabled
-                          ? "Each Telegram topic becomes its own conversation here, and each desktop conversation gets its own Telegram topic."
-                          : "Tip: enable Threaded Mode in @BotFather's Mini App (your bot → Thread Settings) to give each conversation its own Telegram topic."}
-                      </p>
-                    ) : null}
-
-                    {!telegramConnected ? (
-                      <ol className="telegram-steps">
-                        <li>
-                          Message{" "}
-                          <a href="https://t.me/botfather" target="_blank" rel="noreferrer">
-                            @BotFather
-                          </a>
-                          , send <code>/newbot</code>, and copy the token it gives you.
-                        </li>
-                        <li>Paste the token below, choose a coworker, and connect.</li>
-                        <li>Pair your Telegram chat with the link that appears.</li>
-                      </ol>
-                    ) : null}
-
-                    <form className="form-stack integration-form" onSubmit={configureTelegram}>
-                      <label>
-                        <span>{telegramConnected ? "Replace bot token (optional)" : "Bot token"}</span>
-                        <input
-                          name="botToken"
-                          type="password"
-                          placeholder={
-                            telegramIntegration
-                              ? "Stored — enter a value to replace"
-                              : "123456789:ABC-DEF…"
-                          }
-                        />
-                      </label>
-                      <label>
-                        <span>Linked coworker</span>
-                        <select
-                          name="coworkerId"
-                          onChange={(event) => setTelegramCoworkerChoice(event.target.value)}
-                          value={chosenCoworkerId}
-                        >
-                          {coworkers.map((candidate) => (
-                            <option key={candidate.id} value={candidate.id}>
-                              {candidate.name} — {candidate.role}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      {relinking ? (
-                        <p className="telegram-relink-warning" role="alert">
-                          This bot currently chats with {linkedCoworker!.name}. Saving moves
-                          it to {chosenCoworker!.name} and disconnects {linkedCoworker!.name}{" "}
-                          from Telegram.
-                          {telegramPaired
-                            ? " Your paired chat carries over — no re-pairing needed."
-                            : ""}
-                        </p>
-                      ) : null}
-                      <div>
-                        <button className="primary-button" disabled={working}>
-                          {telegramConnected
-                            ? relinking
-                              ? `Move bot to ${chosenCoworker?.name}`
-                              : "Save changes"
-                            : "Connect Telegram bot"}
-                        </button>
-                      </div>
-                    </form>
-                  </>
-                );
-              })()}
-
-              <h2 className="integration-divider">Discord bot</h2>
-              {(() => {
-                const discordIntegration =
-                  discordStatus?.integration ??
-                  integrations.find((item) => item.type === "discord") ??
-                  null;
-                const discordConfig = (discordIntegration?.config ?? {}) as {
-                  botUsername?: string;
-                  coworkerId?: string;
-                  guildId?: string | null;
-                  channelId?: string | null;
-                  channelName?: string | null;
-                  pairedThreadName?: string | null;
-                };
-                const discordConnected =
-                  discordIntegration?.status === "connected" ||
-                  discordIntegration?.status === "error";
-                const discordPaired = Boolean(discordConfig.guildId && discordConfig.channelId);
-                const linkedCoworker = coworkers.find(
-                  (candidate) => candidate.id === discordConfig.coworkerId,
-                );
-                const chosenCoworkerId =
-                  discordCoworkerChoice ?? discordConfig.coworkerId ?? coworkers[0]?.id;
-                const chosenCoworker =
-                  coworkers.find((candidate) => candidate.id === chosenCoworkerId) ?? null;
-                const relinking = Boolean(
-                  discordConnected &&
-                    linkedCoworker &&
-                    chosenCoworker &&
-                    chosenCoworker.id !== linkedCoworker.id,
-                );
-                const channelLabel = discordStatus?.channelName ?? discordConfig.channelName;
-                const threadLabel = discordStatus?.threadName ?? discordConfig.pairedThreadName;
-                const intentOff = discordStatus?.messageContentIntentEnabled === false;
-                return (
-                  <>
-                    <p>
-                      Chat with one coworker from a Discord server channel — messages
-                      mirror both ways. Telegram can stay connected at the same time.
-                    </p>
-
-                    {discordConnected ? (
-                      <div className="discord-connection">
-                        <span
-                          aria-hidden="true"
-                          className={
-                            discordPaired ? "connection-dot connected" : "connection-dot"
-                          }
-                        />
-                        <div className="discord-connection-identity">
-                          <strong>
-                            {discordIntegration?.name} ⇄{" "}
-                            {linkedCoworker
-                              ? `${linkedCoworker.name} (${linkedCoworker.role})`
-                              : "no coworker"}
-                            {discordPaired && channelLabel
-                              ? ` in #${channelLabel}`
-                              : ""}
-                            {discordPaired && threadLabel ? ` · ${threadLabel}` : ""}
-                          </strong>
-                          <small>
-                            {discordIntegration?.status === "error"
-                              ? discordStatus?.gatewayError ??
-                                "Discord Gateway is not connected"
-                              : discordPaired
-                                ? "Paired — @mention the bot in the channel to start a thread"
-                                : "Not paired — invite the bot, then paste the code"}
-                          </small>
-                        </div>
-                        <div className="discord-connection-actions">
-                          {discordPaired ? (
-                            <button
-                              type="button"
-                              className="secondary-button"
-                              disabled={working}
-                              onClick={() => void unpairDiscord()}
-                            >
-                              Unpair channel
-                            </button>
-                          ) : null}
-                          <button
-                            type="button"
-                            className="secondary-button"
-                            disabled={working}
-                            onClick={() => void disconnectDiscord()}
-                          >
-                            Disconnect
-                          </button>
-                        </div>
-                      </div>
-                    ) : null}
-
-                    {discordConnected && discordStatus?.pairingCode ? (
-                      <div className="discord-pairing">
-                        <strong>One step left: invite the bot, then paste this code</strong>
-                        <ol className="discord-pairing-steps">
-                          <li>
-                            Invite the bot (leave the pre-selected permissions as-is). If you
-                            paste the code first, nothing happens until you invite and paste
-                            again.
-                          </li>
-                          <li>Paste this in the channel or thread you want.</li>
-                        </ol>
-                        <div className="discord-pairing-actions">
-                          {discordStatus.inviteUrl ? (
-                            <a
-                              className="primary-button"
-                              href={discordStatus.inviteUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                            >
-                              Invite bot to Discord
-                            </a>
-                          ) : null}
-                          <code className="discord-pairing-code">{discordStatus.pairingCode}</code>
-                          <button
-                            type="button"
-                            className="secondary-button"
-                            onClick={() =>
-                              void copyDiscordPairingCode(discordStatus.pairingCode!)
-                            }
-                          >
-                            {discordCodeCopied ? "Copied" : "Copy"}
-                          </button>
-                        </div>
-                        <p>
-                          Messages there go to{" "}
-                          <strong>{linkedCoworker?.name ?? "your coworker"}</strong>.
-                        </p>
-                        {discordStatus.intentSettingsUrl ? (
-                          <p className={intentOff ? "discord-intent-warning" : "discord-hint"}>
-                            {intentOff
-                              ? "Discord says the bot cannot read message content. "
-                              : "If Discord says the bot cannot read message content: "}
-                            <a
-                              href={discordStatus.intentSettingsUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                            >
-                              Turn on Message Content Intent
-                            </a>{" "}
-                            → Privileged Gateway Intents.
-                          </p>
-                        ) : null}
-                      </div>
-                    ) : null}
-
-                    {discordStatus?.gatewayError ? (
-                      <p className="discord-intent-warning" role="alert">
-                        {discordStatus.gatewayError}
-                        {discordStatus.intentSettingsUrl &&
-                        /Message Content Intent/i.test(discordStatus.gatewayError) ? (
-                          <>
-                            {" "}
-                            <a
-                              href={discordStatus.intentSettingsUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                            >
-                              Open Developer Portal
-                            </a>
-                          </>
-                        ) : null}
-                      </p>
-                    ) : null}
-
-                    {discordConnected && discordPaired ? (
-                      <p className="discord-hint">
-                        Mention the bot in the paired channel to start a thread (its own
-                        conversation). Messages in that thread continue without another mention.
-                        Anyone who can see the paired channel can see replies and approvals.
-                        {discordStatus?.receiptReactionDenied
-                          ? " Receipts need Add Reactions and Read Message History — re-invite with the same URL if 👀 is missing."
-                          : ""}
-                      </p>
-                    ) : null}
-
-                    {!discordConnected ? (
-                      <ol className="discord-steps">
-                        <li>
-                          Create a Discord app → Bot → copy the token.
-                        </li>
-                        <li>
-                          You will turn on <strong>Message Content Intent</strong> after
-                          Coworker verifies the token (we’ll link the exact page).
-                        </li>
-                      </ol>
-                    ) : null}
-
-                    <form className="form-stack integration-form" onSubmit={configureDiscord}>
-                      <label>
-                        <span>{discordConnected ? "Replace bot token (optional)" : "Bot token"}</span>
-                        <input
-                          name="botToken"
-                          type="password"
-                          placeholder={
-                            discordIntegration
-                              ? "Stored — enter a value to replace"
-                              : "Paste the bot token"
-                          }
-                        />
-                      </label>
-                      <label>
-                        <span>Linked coworker</span>
-                        <select
-                          name="coworkerId"
-                          onChange={(event) => setDiscordCoworkerChoice(event.target.value)}
-                          value={chosenCoworkerId}
-                        >
-                          {coworkers.map((candidate) => (
-                            <option key={candidate.id} value={candidate.id}>
-                              {candidate.name} — {candidate.role}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      {relinking ? (
-                        <p className="discord-relink-warning" role="alert">
-                          This bot currently chats with {linkedCoworker!.name}. Saving moves
-                          it to {chosenCoworker!.name} and disconnects {linkedCoworker!.name}{" "}
-                          from Discord.
-                          {discordPaired
-                            ? " Your paired channel carries over — no re-pairing needed."
-                            : ""}
-                        </p>
-                      ) : null}
-                      <div>
-                        <button className="primary-button" disabled={working}>
-                          {discordConnected
-                            ? relinking
-                              ? `Move bot to ${chosenCoworker?.name}`
-                              : "Save changes"
-                            : "Connect Discord bot"}
-                        </button>
-                      </div>
-                    </form>
-                  </>
-                );
-              })()}
             </section>
           ) : null}
 

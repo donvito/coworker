@@ -7,6 +7,9 @@ export const discordDocumentUploadLimit = 25 * 1024 * 1024;
 export const discordDownloadLimit = 25 * 1024 * 1024;
 
 export const discordCredentialKey = "integration:discord:bot";
+export function discordCredentialKeyFor(integrationId: string): string {
+  return `${discordCredentialKey}:${integrationId}`;
+}
 
 export const discordDefaultReceiptEmoji = "👀";
 
@@ -182,9 +185,11 @@ export interface DiscordApprovalEditRequest {
   cancelled?: boolean;
 }
 
-/** Config JSON stored on the singleton `discord` integration row. */
+/** Config JSON stored on one Discord bot connection. */
 export interface DiscordIntegrationConfig {
   botUsername: string;
+  /** Paused by the one-connection upgrade until the user chooses a bot. */
+  connectionLimitConflict?: boolean;
   botUserId: string;
   applicationId: string;
   coworkerId: string;

@@ -30,7 +30,17 @@ async function createSafeParent(root: string, parent: string): Promise<void> {
       }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      await mkdir(current);
+      try {
+        await mkdir(current);
+      } catch (creationError) {
+        // Concurrent bot downloads can create the same inbox parent. Recheck
+        // the winner's path before accepting it, including symlink confinement.
+        if ((creationError as NodeJS.ErrnoException).code !== "EEXIST") throw creationError;
+        const stats = await lstat(current);
+        if (!stats.isDirectory() && !stats.isSymbolicLink()) {
+          throw new Error("A workspace parent path is not a directory");
+        }
+      }
     }
 
     const resolved = await realpath(current);

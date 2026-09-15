@@ -1,3 +1,4 @@
+import { withConnectionOperation } from "./connection-operations";
 import { readFile } from "node:fs/promises";
 import { basename, extname } from "node:path";
 import type { CoworkerDatabase } from "@main/db/database";
@@ -12,6 +13,8 @@ import {
   discordPhotoUploadLimit,
   isDiscordForumType,
 } from "./discord";
+import { messagingConversationId, resolveMessagingIntegration, resolvedMessagingThread } from "./integration-selection";
+import type { RequestContext } from "@shared/request-context";
 
 const photoMimeTypes: Record<string, string> = {
   ".jpg": "image/jpeg",
@@ -23,6 +26,7 @@ const photoMimeTypes: Record<string, string> = {
 
 export interface DiscordSendResult {
   delivered: true;
+  integrationId: string;
   channelId: string;
   threadId: string | null;
   messageChunks: number;
@@ -34,16 +38,25 @@ export interface DiscordSendResult {
  * and optional workspace files to the paired Discord channel, targeting the
  * thread mapped to the task's conversation when one exists.
  */
-export async function sendCoworkerDiscordMessage(input: {
+async function sendCoworkerDiscordMessageUnchecked(input: {
   database: CoworkerDatabase;
   credentials: CredentialStore;
   workspacePath: string;
   conversationId: string | null;
+  coworkerId: string;
+  integrationId?: string;
+  integrationName?: string;
+  integrationDestination?: string;
+  integrationBinding?: Record<string, unknown>;
+  requestContext?: RequestContext;
   message: string;
   attachments?: string[];
   fetchImpl?: typeof fetch;
 }): Promise<DiscordSendResult> {
-  const integration = input.database.getDiscordIntegration();
+  const selected = resolveMessagingIntegration({ database: input.database, provider: "discord", coworkerId: input.coworkerId, conversationId: input.conversationId, requestedIntegrationId: input.integrationId, originatingIntegrationId: input.requestContext?.channel === "discord" ? input.requestContext.originatingIntegrationId : undefined });
+  const integration = selected.integration;
+  const currentBinding = { ...selected.binding, resolvedThreadId: resolvedMessagingThread("discord", integration, input.conversationId) };
+  if ((input.integrationName && input.integrationName !== selected.name) || (input.integrationDestination && input.integrationDestination !== selected.destination) || (input.integrationBinding && JSON.stringify(input.integrationBinding) !== JSON.stringify(currentBinding))) throw new Error("The selected Discord connection changed while approval was pending. Ask for approval again.");
   if (!integration || integration.status !== "connected") {
     throw new Error(
       "Discord is not connected. Ask the user to connect it in Settings → Integrations.",
@@ -55,7 +68,7 @@ export async function sendCoworkerDiscordMessage(input: {
       "Discord is connected but no channel is paired yet. Ask the user to post the pairing code from Settings → Integrations.",
     );
   }
-  const token = await input.credentials.get(discordCredentialKey);
+  const token = await input.credentials.get(integration.credentialKey ?? discordCredentialKey);
   if (!token) {
     throw new Error(
       "The Discord bot token is missing. Ask the user to reconnect Discord in Settings → Integrations.",
@@ -63,7 +76,7 @@ export async function sendCoworkerDiscordMessage(input: {
   }
 
   const api = new DiscordRestApi(token, input.fetchImpl ?? fetch);
-  const conversationId = input.conversationId ?? config.conversationId;
+  const conversationId = messagingConversationId("discord", integration, input.conversationId);
   const mappedThread = Object.entries(config.threads).find(([, mapped]) => mapped === conversationId)?.[0];
   let threadId = mappedThread ?? config.lastThreads[conversationId];
   let channelId = threadId ?? config.channelId;
@@ -101,12 +114,14 @@ export async function sendCoworkerDiscordMessage(input: {
     threadId = post.id;
     channelId = post.id;
     messageAlreadyPosted = true;
+    // Inbound Gateway events may add mappings while the REST call is pending.
+    const latest = parseDiscordConfig(input.database.getIntegration(selected.id));
     input.database.updateDiscordIntegration({
       config: {
-        threads: { ...config.threads, [post.id]: conversationId },
-        lastThreads: { ...config.lastThreads, [conversationId]: post.id },
+        threads: { ...latest.threads, [post.id]: conversationId },
+        lastThreads: { ...latest.lastThreads, [conversationId]: post.id },
       },
-    });
+    }, selected.id);
   }
 
   let messageChunks = messageAlreadyPosted ? 1 : 0;
@@ -128,9 +143,22 @@ export async function sendCoworkerDiscordMessage(input: {
 
   return {
     delivered: true,
+    integrationId: selected.id,
     channelId,
     threadId: threadId ?? null,
     messageChunks,
     attachments,
   };
+}
+
+export async function sendCoworkerDiscordMessage(input: Parameters<typeof sendCoworkerDiscordMessageUnchecked>[0]): Promise<DiscordSendResult> {
+  const selected = resolveMessagingIntegration({
+    database: input.database, provider: "discord", coworkerId: input.coworkerId,
+    conversationId: input.conversationId, requestedIntegrationId: input.integrationId,
+    originatingIntegrationId: input.requestContext?.channel === "discord" ? input.requestContext.originatingIntegrationId : undefined,
+  });
+  return withConnectionOperation(input.database, selected.id, () => sendCoworkerDiscordMessageUnchecked({
+    ...input, integrationId: selected.id,
+    integrationBinding: input.integrationBinding ?? { ...selected.binding, resolvedThreadId: resolvedMessagingThread("discord", selected.integration, input.conversationId) },
+  }));
 }

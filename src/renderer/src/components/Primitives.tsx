@@ -151,50 +151,42 @@ export function CoworkerModelBadge({
   );
 }
 
-/** The coworker linked to the connected Telegram bot, if any. */
-export function telegramLinkedCoworkerId(integrations: Integration[]): string | null {
-  const integration = integrations.find(
-    (candidate) => candidate.type === "telegram" && candidate.status === "connected",
-  );
-  const coworkerId = (integration?.config as { coworkerId?: string } | undefined)?.coworkerId;
-  return typeof coworkerId === "string" && coworkerId ? coworkerId : null;
+export function telegramConnectionCount(integrations: Integration[], coworkerId: string): number {
+  return integrations.filter((candidate) => candidate.type === "telegram" && candidate.status === "connected" && (candidate.config as { coworkerId?: string }).coworkerId === coworkerId).length;
 }
 
-export function TelegramLinkBadge({ compact = false }: { compact?: boolean }) {
+export function TelegramLinkBadge({ compact = false, count }: { compact?: boolean; count?: number }) {
+  void count;
   return (
     <span
-      aria-label="Connected to the Telegram bot"
+      aria-label="Telegram connected"
       className={
         compact
           ? "coworker-model-badge compact telegram-link-badge"
           : "coworker-model-badge telegram-link-badge"
       }
-      title="Connected to the Telegram bot"
+      title="Telegram connected"
     >
       <span>Telegram</span>
     </span>
   );
 }
 
-/** The coworker linked to the connected Discord bot, if any. */
-export function discordLinkedCoworkerId(integrations: Integration[]): string | null {
-  const integration = integrations.find(
-    (candidate) => candidate.type === "discord" && candidate.status === "connected",
-  );
-  const coworkerId = (integration?.config as { coworkerId?: string } | undefined)?.coworkerId;
-  return typeof coworkerId === "string" && coworkerId ? coworkerId : null;
+export function discordConnectionCount(integrations: Integration[], coworkerId: string): number {
+  return integrations.filter((candidate) => candidate.type === "discord" && candidate.status === "connected" && (candidate.config as { coworkerId?: string }).coworkerId === coworkerId).length;
 }
 
-export function DiscordLinkBadge({ compact = false }: { compact?: boolean }) {
+export function DiscordLinkBadge({ compact = false, count }: { compact?: boolean; count?: number }) {
+  void count;
   return (
     <span
-      aria-label="Connected to the Discord bot"
+      aria-label="Discord connected"
       className={
         compact
           ? "coworker-model-badge compact discord-link-badge"
           : "coworker-model-badge discord-link-badge"
       }
-      title="Connected to the Discord bot"
+      title="Discord connected"
     >
       <span>Discord</span>
     </span>

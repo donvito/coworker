@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { DesktopAppService } from "@main/app/app-service";
 import { CoworkerDatabase } from "@main/db/database";
 import { modelSupportsImageInput } from "@main/integrations/model-catalog";
-import { parseTelegramConfig, telegramCredentialKey } from "@main/integrations/telegram";
+import { parseTelegramConfig } from "@main/integrations/telegram";
 import type { DesktopEvent } from "@shared/contracts";
 
 const temporaryPaths: string[] = [];
@@ -41,7 +41,7 @@ function credentialStore() {
 }
 
 async function waitFor(predicate: () => boolean, description: string): Promise<void> {
-  const deadline = Date.now() + 20_000;
+  const deadline = Date.now() + 10_000;
   while (Date.now() < deadline) {
     if (predicate()) return;
     await new Promise((resolveWait) => setTimeout(resolveWait, 20));
@@ -64,7 +64,7 @@ interface FakeMessageInput {
 }
 
 /** In-memory Bot API double; the bridge talks to it through fetchImpl. */
-function fakeTelegram(options: { threadsEnabled?: boolean } = {}) {
+function fakeTelegram(options: { threadsEnabled?: boolean; botId?: number } = {}) {
   const updates: Array<Record<string, unknown>> = [];
   const calls: Array<{ method: string; body: Record<string, unknown> }> = [];
   const files = new Map<string, Uint8Array>();
@@ -95,10 +95,10 @@ function fakeTelegram(options: { threadsEnabled?: boolean } = {}) {
     switch (method) {
       case "getMe":
         return respond({
-          id: 42,
+          id: options.botId ?? 42,
           is_bot: true,
           first_name: "Coworker Test",
-          username: "coworker_test_bot",
+          username: options.botId ? `coworker_test_${options.botId}_bot` : "coworker_test_bot",
           has_topics_enabled: options.threadsEnabled === true,
         });
       case "getUpdates": {
@@ -169,6 +169,7 @@ function fakeTelegram(options: { threadsEnabled?: boolean } = {}) {
     },
     push(input: FakeMessageInput): number {
       const updateId = input.updateId ?? (updateSeq += 1);
+      updateSeq = Math.max(updateSeq, updateId);
       updates.push({
         update_id: updateId,
         message: {
@@ -237,13 +238,15 @@ async function setup(options: { threadsEnabled?: boolean; draftKeepAliveMs?: num
     join(root, "ava"),
   );
   const fake = fakeTelegram(options);
+  const secondaryFake = fakeTelegram({ ...options, botId: 43 });
   const credentials = credentialStore();
   const service = new DesktopAppService({
     dataPath: root,
     database,
     credentials,
     telegram: {
-      fetchImpl: fake.fetchImpl,
+      fetchImpl: (input, init) => String(input).includes("/bot54321:")
+        ? secondaryFake.fetchImpl(input, init) : fake.fetchImpl(input, init),
       pollTimeoutSeconds: 0,
       draftKeepAliveMs: options.draftKeepAliveMs,
     },
@@ -252,7 +255,7 @@ async function setup(options: { threadsEnabled?: boolean; draftKeepAliveMs?: num
   const enqueue = vi.spyOn(service.runtime, "enqueueTask").mockImplementation(() => undefined);
   const emit = (event: DesktopEvent) =>
     (service as unknown as { emit(event: DesktopEvent): void }).emit(event);
-  return { root, database, ava, fake, credentials, service, enqueue, emit };
+  return { root, database, ava, fake, secondaryFake, credentials, service, enqueue, emit };
 }
 
 async function connectAndPair(context: Awaited<ReturnType<typeof setup>>) {
@@ -263,7 +266,7 @@ async function connectAndPair(context: Awaited<ReturnType<typeof setup>>) {
   const code = status.pairingLink!.split("start=")[1]!;
   context.fake.push({ chatId: 777, text: `/start ${code}` });
   await waitFor(
-    () => context.service.telegramStatus().pairingLink === null,
+    () => context.service.telegramStatus()[0]!.pairingLink === null,
     "the chat to pair",
   );
   return status;
@@ -273,7 +276,7 @@ async function proposeMemory(context: Awaited<ReturnType<typeof setup>>, newText
   const coworker = context.database.getCoworker(context.ava.id);
   const enabled = context.database.updateCoworker(coworker.id, { enabledTools: [...new Set([...coworker.enabledTools, "files.edit"])] });
   const before = await context.service.readMemory(coworker.id);
-  const task = context.database.createTask({ coworkerId: coworker.id, title: "Remember a preference", input: "Remember my currency", threadId: `coworker:${coworker.id}` });
+  const task = context.database.createTask({ coworkerId: coworker.id, title: "Remember a preference", input: "Remember my currency", threadId: parseTelegramConfig(context.database.getTelegramIntegration()!).conversationId });
   const result = await context.service.tools.request({ task, coworker: enabled, toolName: "files.edit", toolCallId: `memory-${task.id}`, arguments: { path: "MEMORY.md", oldText: "", newText, expectedRevision: before.revision } });
   if (result.kind !== "approval") throw new Error("Memory approval missing");
   context.emit({ type: "entity.changed", entity: "approvals", id: result.approval.id });
@@ -393,7 +396,7 @@ describe("telegram bridge", () => {
           .some((body) => String(body.text).includes("This bot is private")),
       "the refusal reply",
     );
-    expect(context.service.telegramStatus().pairingLink).not.toBeNull();
+    expect(context.service.telegramStatus()[0]!.pairingLink).not.toBeNull();
 
     const code = status.pairingLink!.split("start=")[1]!;
     context.fake.push({ chatId: 777, text: `/start ${code}` });
@@ -404,7 +407,7 @@ describe("telegram bridge", () => {
           .some((body) => String(body.text).startsWith("Connected!")),
       "the pairing confirmation",
     );
-    expect(context.service.telegramStatus().pairingLink).toBeNull();
+    expect(context.service.telegramStatus()[0]!.pairingLink).toBeNull();
   });
 
   it("pairs when the raw pairing code is sent as a plain message", async () => {
@@ -424,8 +427,8 @@ describe("telegram bridge", () => {
           .some((body) => String(body.text).startsWith("Connected!")),
       "the pairing confirmation",
     );
-    expect(context.service.telegramStatus().pairingLink).toBeNull();
-    const config = context.service.telegramStatus().integration?.config as {
+    expect(context.service.telegramStatus()[0]!.pairingLink).toBeNull();
+    const config = context.service.telegramStatus()[0]!.integration?.config as {
       chatId?: number;
     };
     expect(config.chatId).toBe(888);
@@ -447,7 +450,7 @@ describe("telegram bridge", () => {
     );
 
     // Re-configuring the stored bot for Sarah keeps the paired chat.
-    const status = await context.service.configureTelegram({ coworkerId: sarah.id });
+    const status = await context.service.configureTelegram({ integrationId: context.database.getTelegramIntegration()!.id, coworkerId: sarah.id });
     const config = status.integration?.config as {
       coworkerId?: string;
       chatId?: number | null;
@@ -494,7 +497,7 @@ describe("telegram bridge", () => {
     // A Telegram redelivery of the same update must not double-inject.
     context.fake.push({ chatId: 777, text: "Hello from my phone", updateId });
 
-    const conversationId = `coworker:${context.ava.id}`;
+    const conversationId = parseTelegramConfig(context.database.getTelegramIntegration()!).conversationId;
     await waitFor(
       () =>
         context.database
@@ -508,7 +511,7 @@ describe("telegram bridge", () => {
       .listConversationMessages(conversationId)
       .filter((message) => message.content === "Hello from my phone");
     expect(matching).toHaveLength(1);
-    expect(matching[0]!.id).toBe(`telegram:${updateId}`);
+    expect(matching[0]!.id).toBe(`telegram:${context.database.getTelegramIntegration()!.id}:${updateId}`);
     expect(matching[0]!.role).toBe("user");
     expect(context.enqueue).toHaveBeenCalledTimes(1);
   });
@@ -516,7 +519,7 @@ describe("telegram bridge", () => {
   it("mirrors coworker replies to Telegram as HTML and desktop messages without echo", async () => {
     const context = await setup();
     await connectAndPair(context);
-    const conversationId = `coworker:${context.ava.id}`;
+    const conversationId = parseTelegramConfig(context.database.getTelegramIntegration()!).conversationId;
 
     // A message typed in the desktop UI forwards with the desktop label.
     await context.service.sendConversationMessage({
@@ -604,7 +607,7 @@ describe("telegram bridge", () => {
   it("cancels a run from Telegram Stop and finalizes its partial response once", async () => {
     const context = await setup();
     await connectAndPair(context);
-    const conversationId = `coworker:${context.ava.id}`;
+    const conversationId = parseTelegramConfig(context.database.getTelegramIntegration()!).conversationId;
     const cancel = vi
       .spyOn(context.service, "cancelTask")
       .mockResolvedValue({} as Awaited<ReturnType<DesktopAppService["cancelTask"]>>);
@@ -681,7 +684,7 @@ describe("telegram bridge", () => {
   it("stops a run from the /stop command and finalizes its partial answer", async () => {
     const context = await setup();
     await connectAndPair(context);
-    const conversationId = `coworker:${context.ava.id}`;
+    const conversationId = parseTelegramConfig(context.database.getTelegramIntegration()!).conversationId;
     const cancel = vi
       .spyOn(context.service, "cancelTask")
       .mockResolvedValue({} as Awaited<ReturnType<DesktopAppService["cancelTask"]>>);
@@ -756,7 +759,7 @@ describe("telegram bridge", () => {
   it("streams one animated draft across a tool call and posts a single reply", async () => {
     const context = await setup();
     await connectAndPair(context);
-    const conversationId = `coworker:${context.ava.id}`;
+    const conversationId = parseTelegramConfig(context.database.getTelegramIntegration()!).conversationId;
     const base = {
       coworkerId: context.ava.id,
       conversationId,
@@ -810,7 +813,7 @@ describe("telegram bridge", () => {
   it("refreshes a quiet draft so Telegram never expires it mid-run", async () => {
     const context = await setup({ draftKeepAliveMs: 30 });
     await connectAndPair(context);
-    const conversationId = `coworker:${context.ava.id}`;
+    const conversationId = parseTelegramConfig(context.database.getTelegramIntegration()!).conversationId;
     const base = {
       coworkerId: context.ava.id,
       conversationId,
@@ -846,7 +849,7 @@ describe("telegram bridge", () => {
   it("restores the live draft after another message goes out mid-run", async () => {
     const context = await setup();
     await connectAndPair(context);
-    const conversationId = `coworker:${context.ava.id}`;
+    const conversationId = parseTelegramConfig(context.database.getTelegramIntegration()!).conversationId;
     context.emit({
       type: "agent.event",
       coworkerId: context.ava.id,
@@ -922,7 +925,7 @@ describe("telegram bridge", () => {
     expect(attachment.mimeType).toBe("image/jpeg");
     expect(attachment.size).toBe(jpeg.byteLength);
     const message = context.database
-      .listConversationMessages(`coworker:${context.ava.id}`)
+      .listConversationMessages(parseTelegramConfig(context.database.getTelegramIntegration()!).conversationId)
       .find((entry) => entry.content === "look at this");
     expect(message).toBeDefined();
   });
@@ -937,7 +940,7 @@ describe("telegram bridge", () => {
       caption: "caption survives",
       photo: [{ file_id: "photo-2", file_size: jpeg.byteLength }],
     });
-    const conversationId = `coworker:${context.ava.id}`;
+    const conversationId = parseTelegramConfig(context.database.getTelegramIntegration()!).conversationId;
     await waitFor(
       () =>
         context.database
@@ -961,7 +964,7 @@ describe("telegram bridge", () => {
       chatId: 777,
       document: { file_id: "doc-1", file_name: "notes.txt", file_size: 14 },
     });
-    const conversationId = `coworker:${context.ava.id}`;
+    const conversationId = parseTelegramConfig(context.database.getTelegramIntegration()!).conversationId;
     await waitFor(
       () =>
         context.database
@@ -969,7 +972,7 @@ describe("telegram bridge", () => {
           .some((message) => message.content.includes("telegram-inbox/")),
       "the document note",
     );
-    const inbox = join(context.root, "ava", "telegram-inbox");
+    const inbox = join(context.root, "ava", "telegram-inbox", context.database.getTelegramIntegration()!.id);
     const entries = await readdir(inbox);
     expect(entries).toHaveLength(1);
     expect(entries[0]).toContain("notes.txt");
@@ -979,7 +982,7 @@ describe("telegram bridge", () => {
   it("maps Telegram topics to their own conversations and threads replies back", async () => {
     const context = await setup({ threadsEnabled: true });
     await connectAndPair(context);
-    const mainConversation = `coworker:${context.ava.id}`;
+    const mainConversation = parseTelegramConfig(context.database.getTelegramIntegration()!).conversationId;
     const inboundEvents: Array<{ conversationId: string }> = [];
     context.service.subscribe((event) => {
       if (event.type === "conversation.inbound") inboundEvents.push(event);
@@ -1044,7 +1047,7 @@ describe("telegram bridge", () => {
     );
 
     // The coworker's reply routes back into topic 42.
-    const task = context.database.listTasksBySourceMessage(`telegram:${firstUpdate}`)[0]!;
+    const task = context.database.listTasksBySourceMessage(`telegram:${context.database.getTelegramIntegration()!.id}:${firstUpdate}`)[0]!;
     const base = {
       coworkerId: context.ava.id,
       conversationId: researchConversation.id,
@@ -1085,8 +1088,7 @@ describe("telegram bridge", () => {
       "the threaded reply",
     );
 
-    // Outbound: a new desktop conversation still gets its own Telegram topic
-    // with a strict two-way mapping.
+    // An unrelated desktop conversation must not be broadcast to this bot.
     const fresh = context.service.createConversation({
       coworkerId: context.ava.id,
       title: "Quarterly plan",
@@ -1097,36 +1099,9 @@ describe("telegram bridge", () => {
       content: "plan the quarter",
       mentionedCoworkerIds: [],
     });
-    await waitFor(
-      () => context.fake.sent("createForumTopic").length === 1,
-      "the created forum topic",
-    );
-    expect(context.fake.sent("createForumTopic")[0]!.name).toBe("Quarterly plan");
-    await waitFor(
-      () =>
-        context.fake
-          .sent("sendMessage")
-          .some(
-            (body) =>
-              body.text === "You (desktop): plan the quarter" &&
-              typeof body.message_thread_id === "number" &&
-              body.message_thread_id > 100,
-          ),
-      "the mirrored message in the new topic",
-    );
-    const bridgeTopic = context.fake.sent("createForumTopic").length;
-    expect(bridgeTopic).toBe(1);
-    // A Telegram reply inside the bridge-created topic routes to that
-    // conversation, not the main one.
-    const mappedThreadId = 101; // First topic id the fake hands out.
-    context.fake.push({ chatId: 777, text: "inside mapped topic", threadId: mappedThreadId });
-    await waitFor(
-      () =>
-        context.database
-          .listConversationMessages(fresh.id)
-          .some((message) => message.content === "inside mapped topic"),
-      "the reply inside the mapped conversation",
-    );
+    await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+    expect(context.fake.sent("createForumTopic")).toHaveLength(0);
+    expect(context.fake.sent("sendMessage").some(body => String(body.text).includes("plan the quarter"))).toBe(false);
 
     // Untopiced traffic still lands in the main conversation.
     context.fake.push({ chatId: 777, text: "plain message" });
@@ -1207,7 +1182,7 @@ describe("telegram bridge", () => {
       coworkerId: context.ava.id,
       title: "Send the report",
       input: "send it",
-      threadId: `coworker:${context.ava.id}`,
+      threadId: parseTelegramConfig(context.database.getTelegramIntegration()!).conversationId,
     });
 
     const result = await context.service.tools.request({
@@ -1234,7 +1209,7 @@ describe("telegram bridge", () => {
       coworkerId: context.ava.id,
       title: "Ping me",
       input: "ping",
-      threadId: `coworker:${context.ava.id}`,
+      threadId: parseTelegramConfig(context.database.getTelegramIntegration()!).conversationId,
     });
 
     const gated = await context.service.tools.request({
@@ -1249,8 +1224,8 @@ describe("telegram bridge", () => {
       expect(gated.approval.summary).toContain("Send Telegram message");
     }
 
-    await context.service.disconnectTelegram();
-    expect(await context.credentials.has(telegramCredentialKey)).toBe(false);
+    await context.service.disconnectTelegram(context.database.getTelegramIntegration()!.id);
+    expect(await context.credentials.has(context.database.getTelegramIntegration()!.credentialKey!)).toBe(false);
     const coworker = context.database.getCoworker(context.ava.id);
     context.database.updateCoworker(context.ava.id, {
       policies: { ...coworker.policies, "telegram.send": "automatic" },
@@ -1263,7 +1238,7 @@ describe("telegram bridge", () => {
         toolName: "telegram.send",
         arguments: { message: "should fail" },
       }),
-    ).rejects.toThrow(/not connected/i);
+    ).resolves.toMatchObject({ kind: "denied", reason: expect.stringMatching(/not enabled|not connected/i) });
   });
 
   it("announces pending approvals in Telegram and applies button decisions", async () => {
@@ -1273,7 +1248,7 @@ describe("telegram bridge", () => {
       coworkerId: context.ava.id,
       title: "Send the file",
       input: "send it to me",
-      threadId: `coworker:${context.ava.id}`,
+      threadId: parseTelegramConfig(context.database.getTelegramIntegration()!).conversationId,
     });
     const result = await context.service.tools.request({
       task,
@@ -1339,7 +1314,7 @@ describe("telegram bridge", () => {
         coworkerId: context.ava.id,
         title: "Send",
         input: "send",
-        threadId: `coworker:${context.ava.id}`,
+        threadId: parseTelegramConfig(context.database.getTelegramIntegration()!).conversationId,
       });
       const result = await context.service.tools.request({
         task,
@@ -1403,10 +1378,90 @@ describe("telegram bridge", () => {
   it("unpairs with a fresh pairing code and reports status", async () => {
     const context = await setup();
     const before = await connectAndPair(context);
-    const unpaired = await context.service.unpairTelegram();
+    const unpaired = await context.service.unpairTelegram(context.database.getTelegramIntegration()!.id);
     expect(unpaired.pairingLink).not.toBeNull();
     expect(unpaired.pairingLink).not.toBe(before.pairingLink);
     const config = unpaired.integration?.config as { chatId?: number | null };
     expect(config.chatId ?? null).toBeNull();
+  });
+});
+
+describe("multiple Telegram bot connections", { timeout: 20_000 }, () => {
+  it("isolates pairing, overlapping updates, desktop replies, approvals, and disconnects", async () => {
+    const context = await setup();
+    const first = await connectAndPair(context);
+    const neighbor = context.database.createCoworker({ name: "Ben", role: "Assistant", systemPrompt: "Help", modelProvider: "demo", modelName: "faux-1", enabledTools: [] }, join(context.root, "ben"));
+    const second = await context.service.configureTelegram({
+      botToken: "54321:test-token-abcdefghijklmnop",
+      coworkerId: neighbor.id,
+    });
+    const firstId = first.integration.id;
+    const secondId = second.integration.id;
+    expect(firstId).not.toBe(secondId);
+    expect(first.integration.credentialKey).not.toBe(second.integration.credentialKey);
+    expect(context.service.telegramStatus()).toHaveLength(2);
+    context.secondaryFake.push({ chatId: 777, text: `/start ${second.pairingLink!.split("start=")[1]}` });
+    await waitFor(() => context.service.telegramStatus().find(s => s.integration.id === secondId)?.pairingLink === null, "second bot pairing");
+    context.fake.push({ chatId: 777, text: "question for first bot", updateId: 100 });
+    context.secondaryFake.push({ chatId: 777, text: "question for second bot", updateId: 100 });
+    await waitFor(() => context.database.listTasksBySourceMessage(`telegram:${firstId}:100`).length === 1 && context.database.listTasksBySourceMessage(`telegram:${secondId}:100`).length === 1, "independent overlapping update IDs");
+    const firstTask = context.database.listTasksBySourceMessage(`telegram:${firstId}:100`)[0]!;
+    const secondTask = context.database.listTasksBySourceMessage(`telegram:${secondId}:100`)[0]!;
+    expect(firstTask.threadId).not.toBe(secondTask.threadId);
+    expect(context.database.listConversationMessages(firstTask.threadId).some(m => m.content.includes("second bot"))).toBe(false);
+    await context.service.sendConversationMessage({ conversationId: firstTask.threadId, clientMessageId: "first-desktop", content: "private desktop follow-up", mentionedCoworkerIds: [] });
+    await waitFor(() => context.fake.sent("sendMessage").some(body => String(body.text).includes("private desktop follow-up")), "reply on first bot");
+    expect(context.secondaryFake.sent("sendMessage").some(body => String(body.text).includes("private desktop follow-up"))).toBe(false);
+    context.fake.registerFile("shared-file", new TextEncoder().encode("first bot bytes"));
+    context.secondaryFake.registerFile("shared-file", new TextEncoder().encode("second bot bytes"));
+    const document = { file_id: "shared-file", file_name: "shared.txt", file_size: 16 };
+    context.fake.push({ chatId: 777, updateId: 200, document });
+    context.secondaryFake.push({ chatId: 777, updateId: 200, document });
+    await waitFor(() => context.database.listTasksBySourceMessage(`telegram:${firstId}:200`).length === 1 && context.database.listTasksBySourceMessage(`telegram:${secondId}:200`).length === 1, "independent overlapping attachments");
+    expect(await readFile(join(context.root, "ava", "telegram-inbox", firstId, "200-shared.txt"), "utf8")).toBe("first bot bytes");
+    expect(await readFile(join(context.root, "ben", "telegram-inbox", secondId, "200-shared.txt"), "utf8")).toBe("second bot bytes");
+    // A known approval ID on another bot must not authorize the task.
+    const before = await context.service.readMemory(context.ava.id);
+    const coworker = context.database.updateCoworker(context.ava.id, { enabledTools: [...context.database.getCoworker(context.ava.id).enabledTools, "files.edit"] });
+    const approval = await context.service.tools.request({ task: firstTask, coworker, toolName: "files.edit", toolCallId: "multi-memory", arguments: { path: "MEMORY.md", oldText: "", newText: "- First bot preference.\n", expectedRevision: before.revision } });
+    if (approval.kind !== "approval") throw new Error("Expected memory approval");
+    context.emit({ type: "entity.changed", entity: "approvals", id: approval.approval.id });
+    context.secondaryFake.pushCallback({ chatId: 777, data: `apr:${approval.approval.id}:approve` });
+    await waitFor(() => context.secondaryFake.sent("answerCallbackQuery").some(body => /another bot connection|another coworker/i.test(String(body.text))), "foreign approval refusal");
+    expect(context.database.getApproval(approval.approval.id).status).toBe("PENDING");
+    await expect(context.service.configureTelegram({ botToken: "54321:test-token-abcdefghijklmnop", coworkerId: context.ava.id })).rejects.toThrow(/already|duplicate/i);
+    await context.service.disconnectTelegram(firstId);
+    expect(context.service.telegramStatus().find(s => s.integration.id === secondId)?.integration.status).toBe("connected");
+    expect(await context.credentials.has(second.integration.credentialKey!)).toBe(true);
+    expect(context.database.getCoworker(context.ava.id).enabledTools).not.toContain("telegram.send");
+    expect(context.database.getCoworker(neighbor.id).enabledTools).toContain("telegram.send");
+    context.secondaryFake.push({ chatId: 777, text: "still running", updateId: 202 });
+    await waitFor(() => context.database.listTasksBySourceMessage(`telegram:${secondId}:202`).length === 1, "second bot after disconnect");
+  });
+});
+
+
+describe("Telegram connection health", () => {
+  it("reports and recovers one bot's polling failure without changing its neighbor", async () => {
+    const context = await setup();
+    const first = await connectAndPair(context);
+    const neighbor = context.database.createCoworker({ name: "Ben", role: "Assistant", systemPrompt: "Help", modelProvider: "demo", modelName: "faux-1", enabledTools: [] }, join(context.root, "ben"));
+    const second = await context.service.configureTelegram({ botToken: "54321:test-token-abcdefghijklmnop", coworkerId: neighbor.id });
+    const previous = context.fake.fetchImpl;
+    let failing = true;
+    vi.spyOn(context.fake, "fetchImpl").mockImplementation(async (input, init) => {
+      if (failing && String(input).endsWith("/getUpdates")) {
+        return new Response(JSON.stringify({ ok: false, error_code: 401, description: "Unauthorized" }), { status: 401 });
+      }
+      return previous(input, init);
+    });
+    await waitFor(() => context.service.telegramStatus(first.integration.id).integration.status === "error", "first bot error status");
+    expect(context.service.telegramStatus(first.integration.id).integration.config.connectionError).toContain("401");
+    expect(context.service.telegramStatus(second.integration.id).integration.status).toBe("connected");
+    failing = false;
+    await context.service.telegram.wake(first.integration.id);
+    await waitFor(() => context.service.telegramStatus(first.integration.id).integration.status === "connected", "first bot recovery");
+    expect(context.service.telegramStatus(first.integration.id).integration.config.connectionError).toBeNull();
+    expect(context.service.telegramStatus(second.integration.id).integration.status).toBe("connected");
   });
 });

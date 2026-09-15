@@ -64,7 +64,7 @@ it("delivers per-request channel metadata to a reused real worker and preserves 
       const receipt = await service.sendConversationMessage({ conversationId: conversation.id, clientMessageId: id!, content: text!, mentionedCoworkerIds: [] });
       const task = service.database.getTask(receipt.runs[0]!.taskId);
       await waitForTask(task);
-      expect(context()).toEqual({ channel, source: "manual" });
+      expect(context()).toEqual({ channel, source: "manual", eligibleConnections: [] });
       expect(task.input).toBe(text);
     }
     await service.runtime.stop(coworker.id);
@@ -76,11 +76,11 @@ it("delivers per-request channel metadata to a reused real worker and preserves 
     service.database.decideApproval({ approvalId: approval.approval.id, decision: "approve" });
     service.runtime.enqueueTask(coworker.id);
     await waitForTask(task);
-    expect(context()).toEqual({ channel: "discord", source: "manual" });
+    expect(context()).toEqual({ channel: "discord", source: "manual", eligibleConnections: [] });
     const scheduled = service.database.createTask({ coworkerId: coworker.id, title: "Schedule", input: "Say hello", source: "schedule", threadId: conversation.id });
     service.runtime.enqueueTask(coworker.id);
     await waitForTask(scheduled);
-    expect(context()).toEqual({ channel: null, source: "schedule" });
+    expect(context()).toEqual({ channel: null, source: "schedule", eligibleConnections: [] });
     // Application recovery mutates task.source. The saved message identity
     // still identifies the incoming channel for the recovered dispatch.
     for (const channel of ["discord", "telegram", "local"] as const) {
@@ -91,7 +91,7 @@ it("delivers per-request channel metadata to a reused real worker and preserves 
       expect(service.database.recoverInterruptedTasks()).toBe(1);
       service.runtime.enqueueTask(coworker.id);
       await waitForTask(interrupted);
-      expect(context()).toEqual({ channel, source: "recovery" });
+      expect(context()).toEqual({ channel, source: "recovery", eligibleConnections: [] });
     }
   } finally {
     await service.shutdown();

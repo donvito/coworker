@@ -3,12 +3,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EventType } from "@ag-ui/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { sendCoworkerDiscordMessage } from "@main/integrations/discord-send";
 import { DesktopAppService } from "@main/app/app-service";
 import { CoworkerDatabase } from "@main/db/database";
 import { bundledDiscordMessagingSkill } from "@main/integrations/skills";
 import { modelSupportsImageInput } from "@main/integrations/model-catalog";
 import {
-  discordCredentialKey,
   discordInvitePermissions,
   discordThreadTitleFromText,
   messageMentionsDiscordBot,
@@ -73,6 +73,7 @@ type Listener = (event: Event) => void;
 /** In-memory REST + Gateway double. The bridge talks to it through fetch and WebSocket. */
 function fakeDiscord(
   options: {
+    botId?: string;
     intentEnabled?: boolean;
     heartbeatInterval?: number;
     ackHeartbeats?: boolean;
@@ -146,8 +147,8 @@ function fakeDiscord(
               s: (sequence += 1),
               d: {
                 session_id: "sess-1",
-                resume_gateway_url: "wss://gateway-resume.test",
-                user: { id: "99", username: "coworker-bot" },
+                resume_gateway_url: `wss://gateway-resume.test/${options.botId ?? "99"}`,
+                user: { id: options.botId ?? "99", username: "coworker-bot" },
               },
             }),
           });
@@ -213,16 +214,16 @@ function fakeDiscord(
     calls.push({ method, path, body });
 
     if (path === "/users/@me") {
-      return respond({ id: "99", username: "coworker-bot", bot: true });
+      return respond({ id: options.botId ?? "99", username: `coworker-bot-${options.botId ?? "99"}`, bot: true });
     }
     if (path === "/applications/@me") {
       return respond({
-        id: "88",
+        id: options.botId === "98" ? "87" : "88",
         flags: options.intentEnabled === false ? 0 : 1 << 19,
         name: "Coworker",
       });
     }
-    if (path === "/gateway") return respond({ url: "wss://gateway.test" });
+    if (path === "/gateway") return respond({ url: `wss://gateway.test/${options.botId ?? "99"}` });
     if (path === "/guilds/10") return respond({ id: "10", name: "Test Server" });
     const channelMatch = path.match(/^\/channels\/(\d+)$/);
     if (method === "GET" && channelMatch) {
@@ -401,14 +402,18 @@ async function setup(
     join(root, "ava"),
   );
   const fake = fakeDiscord(options);
+  const secondaryFake = fakeDiscord({ ...options, botId: "98" });
   const credentials = credentialStore();
   const service = new DesktopAppService({
     dataPath: root,
     database,
     credentials,
     discord: {
-      fetchImpl: fake.fetchImpl,
-      WebSocketImpl: fake.WebSocketImpl,
+      fetchImpl: (input, init) => new Headers(init?.headers).get("Authorization")?.includes("SECONDSECOND")
+        ? secondaryFake.fetchImpl(input, init) : fake.fetchImpl(input, init),
+      WebSocketImpl: function (url: string) {
+        return new (url.includes("/98") ? secondaryFake.WebSocketImpl : fake.WebSocketImpl)(url);
+      } as unknown as typeof fake.WebSocketImpl,
       typingKeepAliveMs: 50,
     },
   });
@@ -416,7 +421,7 @@ async function setup(
   const enqueue = vi.spyOn(service.runtime, "enqueueTask").mockImplementation(() => undefined);
   const emit = (event: DesktopEvent) =>
     (service as unknown as { emit(event: DesktopEvent): void }).emit(event);
-  return { root, database, ava, fake, credentials, service, enqueue, emit };
+  return { root, database, ava, fake, secondaryFake, credentials, service, enqueue, emit };
 }
 
 async function connectAndPair(
@@ -432,7 +437,7 @@ async function connectAndPair(
   const code = status.pairingCode!;
   context.fake.pushMessage({ channelId: options.channelId ?? "100", content: code });
   await waitFor(
-    () => context.service.discordStatus().pairingCode === null,
+    () => context.service.discordStatus()[0]!.pairingCode === null,
     "the channel to pair",
   );
   return status;
@@ -448,7 +453,7 @@ async function proposeMemory(context: Awaited<ReturnType<typeof setup>>, newText
     coworkerId: coworker.id,
     title: "Remember a preference",
     input: "Remember my currency",
-    threadId: `coworker:${coworker.id}`,
+    threadId: parseDiscordConfig(context.database.getDiscordIntegration()!).conversationId,
   });
   const result = await context.service.tools.request({
     task,
@@ -496,7 +501,7 @@ describe("discord bridge", { timeout: 20_000 }, () => {
     expect(status.intentSettingsUrl).toContain("/applications/88/bot");
     expect(status.messageContentIntentEnabled).toBe(true);
     expect(JSON.stringify(status.integration?.config)).not.toContain(testToken);
-    expect(await context.credentials.get(discordCredentialKey)).toBe(testToken);
+    expect(await context.credentials.get(context.database.getDiscordIntegration()!.credentialKey!)).toBe(testToken);
     expect(context.database.getCoworker(context.ava.id).enabledTools).toContain("discord.send");
     expect(context.database.getCoworker(context.ava.id).policies["discord.send"]).toBe("approval");
   });
@@ -518,7 +523,7 @@ describe("discord bridge", { timeout: 20_000 }, () => {
           .some((call) => String(call.body.content).includes("This bot is private")),
       "the refusal",
     );
-    expect(context.service.discordStatus().pairingCode).toBe(status.pairingCode);
+    expect(context.service.discordStatus()[0]!.pairingCode).toBe(status.pairingCode);
 
     context.fake.pushMessage({
       channelId: "999",
@@ -526,7 +531,7 @@ describe("discord bridge", { timeout: 20_000 }, () => {
       guildId: null,
     });
     await new Promise((resolveWait) => setTimeout(resolveWait, 80));
-    expect(context.service.discordStatus().pairingCode).toBe(status.pairingCode);
+    expect(context.service.discordStatus()[0]!.pairingCode).toBe(status.pairingCode);
 
     context.fake.pushMessage({ channelId: "100", content: status.pairingCode! });
     await waitFor(
@@ -536,7 +541,7 @@ describe("discord bridge", { timeout: 20_000 }, () => {
           .some((call) => String(call.body.content).startsWith("Connected.")),
       "the pairing confirmation",
     );
-    const connected = context.service.discordStatus();
+    const connected = context.service.discordStatus()[0]!;
     expect(connected.pairingCode).toBeNull();
     expect(connected.channelName).toBe("general");
     expect(connected.guildName).toBe("Test Server");
@@ -554,7 +559,7 @@ describe("discord bridge", { timeout: 20_000 }, () => {
     await new Promise((resolveWait) => setTimeout(resolveWait, 30));
     context.fake.pushMessage({ channelId: "200", content: status.pairingCode! });
     await waitFor(
-      () => context.service.discordStatus().pairingCode === null,
+      () => context.service.discordStatus()[0]!.pairingCode === null,
       "thread pairing",
     );
     const config = parseDiscordConfig(context.database.getDiscordIntegration()!);
@@ -562,7 +567,7 @@ describe("discord bridge", { timeout: 20_000 }, () => {
     expect(config.threads["200"]).toBeDefined();
     const conversation = context.database.getConversation(config.threads["200"]!);
     expect(conversation.title).toBe("research");
-    expect(context.service.discordStatus().threadName).toBe("research");
+    expect(context.service.discordStatus()[0]!.threadName).toBe("research");
   });
 
   it("injects inbound text idempotently, ignores other channels, and does not echo", async () => {
@@ -572,7 +577,7 @@ describe("discord bridge", { timeout: 20_000 }, () => {
     context.fake.pushMessage({ id: "55", channelId: "100", content: mention("Hello from Discord") });
     await waitFor(() => Object.keys(mappedThreads(context.database)).length === 1, "mention thread");
     const conversationId = Object.values(mappedThreads(context.database))[0]!;
-    expect(conversationId).not.toBe(`coworker:${context.ava.id}`);
+    expect(conversationId).not.toBe(parseDiscordConfig(context.database.getDiscordIntegration()!).conversationId);
     await waitFor(
       () =>
         context.database
@@ -682,7 +687,7 @@ describe("discord bridge", { timeout: 20_000 }, () => {
     context.emit({
       type: "agent.event",
       coworkerId: context.ava.id,
-      conversationId: `coworker:${context.ava.id}`,
+      conversationId: parseDiscordConfig(context.database.getDiscordIntegration()!).conversationId,
       runId: "run-emoji",
       taskId,
       event: { type: EventType.RUN_STARTED } as never,
@@ -750,14 +755,15 @@ describe("discord bridge", { timeout: 20_000 }, () => {
       content: "plan the quarter",
       mentionedCoworkerIds: [],
     });
-    await waitFor(() => context.fake.sent("POST", "/threads").length === 1, "outbound thread");
-    expect(context.fake.sent("POST", "/threads")[0]!.body.name).toBe("Quarterly plan");
+    await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+    expect(context.fake.sent("POST", "/threads")).toHaveLength(0);
+    expect(context.fake.sent("POST", "/messages").some(call => String(call.body.content).includes("plan the quarter"))).toBe(false);
   });
 
   it("mirrors desktop messages and posts the finished coworker reply without streaming drafts", async () => {
     const context = await setup();
     await connectAndPair(context);
-    const conversationId = `coworker:${context.ava.id}`;
+    const conversationId = parseDiscordConfig(context.database.getDiscordIntegration()!).conversationId;
     await context.service.sendConversationMessage({
       conversationId,
       clientMessageId: "desk-1",
@@ -821,7 +827,7 @@ describe("discord bridge", { timeout: 20_000 }, () => {
       .mockResolvedValue({} as Awaited<ReturnType<DesktopAppService["cancelTask"]>>);
     const base = {
       coworkerId: context.ava.id,
-      conversationId: `coworker:${context.ava.id}`,
+      conversationId: parseDiscordConfig(context.database.getDiscordIntegration()!).conversationId,
       runId: "run-stop",
       taskId: "task-stop",
     };
@@ -863,7 +869,7 @@ describe("discord bridge", { timeout: 20_000 }, () => {
           ),
       "inbox note",
     );
-    const inbox = join(context.root, "ava", "discord-inbox");
+    const inbox = join(context.root, "ava", "discord-inbox", context.database.getDiscordIntegration()!.id);
     const names = await readdir(inbox);
     expect(names.some((name) => name.endsWith("notes.txt"))).toBe(true);
     expect(await readFile(join(inbox, names[0]!))).toEqual(Buffer.from([1, 2, 3, 4]));
@@ -876,7 +882,7 @@ describe("discord bridge", { timeout: 20_000 }, () => {
       coworkerId: context.ava.id,
       title: "Ping me",
       input: "ping",
-      threadId: `coworker:${context.ava.id}`,
+      threadId: parseDiscordConfig(context.database.getDiscordIntegration()!).conversationId,
     });
     const gated = await context.service.tools.request({
       task,
@@ -889,8 +895,8 @@ describe("discord bridge", { timeout: 20_000 }, () => {
     if (gated.kind === "approval") {
       expect(gated.approval.summary).toContain("Send Discord message");
     }
-    await context.service.disconnectDiscord();
-    expect(await context.credentials.has(discordCredentialKey)).toBe(false);
+    await context.service.disconnectDiscord(context.database.getDiscordIntegration()!.id);
+    expect(await context.credentials.has(context.database.getDiscordIntegration()!.credentialKey!)).toBe(false);
     const coworker = context.database.getCoworker(context.ava.id);
     context.database.updateCoworker(context.ava.id, {
       policies: { ...coworker.policies, "discord.send": "automatic" },
@@ -903,7 +909,7 @@ describe("discord bridge", { timeout: 20_000 }, () => {
         toolName: "discord.send",
         arguments: { message: "should fail" },
       }),
-    ).rejects.toThrow(/not connected/i);
+    ).resolves.toMatchObject({ kind: "denied", reason: expect.stringMatching(/not enabled|not connected/i) });
   });
 
   it("announces pending approvals and applies button decisions", async () => {
@@ -913,7 +919,7 @@ describe("discord bridge", { timeout: 20_000 }, () => {
       coworkerId: context.ava.id,
       title: "Send the file",
       input: "send it to me",
-      threadId: `coworker:${context.ava.id}`,
+      threadId: parseDiscordConfig(context.database.getDiscordIntegration()!).conversationId,
     });
     const result = await context.service.tools.request({
       task,
@@ -979,7 +985,7 @@ describe("discord bridge", { timeout: 20_000 }, () => {
       },
       join(context.root, "sarah"),
     );
-    await context.service.configureDiscord({ coworkerId: sarah.id });
+    await context.service.configureDiscord({ integrationId: context.database.getDiscordIntegration()!.id, coworkerId: sarah.id });
     const config = parseDiscordConfig(context.database.getDiscordIntegration()!);
     expect(config.coworkerId).toBe(sarah.id);
     expect(config.channelId).toBe("100");
@@ -1006,15 +1012,15 @@ describe("discord bridge", { timeout: 20_000 }, () => {
     await waitFor(() => context.fake.sent("GET", "/gateway").length > 0, "gateway");
     await new Promise((resolveWait) => setTimeout(resolveWait, 30));
     context.fake.pushMessage({ channelId: "100", content: first.pairingCode! });
-    await waitFor(() => context.service.discordStatus().pairingCode === null, "paired");
-    const unpaired = await context.service.unpairDiscord();
+    await waitFor(() => context.service.discordStatus()[0]!.pairingCode === null, "paired");
+    const unpaired = await context.service.unpairDiscord(context.database.getDiscordIntegration()!.id);
     expect(unpaired.pairingCode).toBeTruthy();
     expect(unpaired.pairingCode).not.toBe(first.pairingCode);
     expect(unpaired.inviteUrl).toBe(first.inviteUrl);
     expect(parseDiscordConfig(unpaired.integration!).channelId).toBeNull();
-    expect(await context.credentials.has(discordCredentialKey)).toBe(true);
-    await context.service.disconnectDiscord();
-    expect(await context.credentials.has(discordCredentialKey)).toBe(false);
+    expect(await context.credentials.has(context.database.getDiscordIntegration()!.credentialKey!)).toBe(true);
+    await context.service.disconnectDiscord(context.database.getDiscordIntegration()!.id);
+    expect(await context.credentials.has(context.database.getDiscordIntegration()!.credentialKey!)).toBe(false);
   });
 
   it("stops reconnecting on 4014 and surfaces a Settings gateway error", async () => {
@@ -1023,8 +1029,8 @@ describe("discord bridge", { timeout: 20_000 }, () => {
     await waitFor(() => context.fake.sent("GET", "/gateway").length === 1, "first identify");
     await new Promise((resolveWait) => setTimeout(resolveWait, 30));
     context.fake.lastSocket()!.closeFromServer(4014, "Disallowed intent(s)");
-    await waitFor(() => context.service.discordStatus().integration?.status === "error", "fatal status");
-    expect(context.service.discordStatus().gatewayError).toMatch(/Message Content Intent/i);
+    await waitFor(() => context.service.discordStatus()[0]!.integration?.status === "error", "fatal status");
+    expect(context.service.discordStatus()[0]!.gatewayError).toMatch(/Message Content Intent/i);
     await new Promise((resolveWait) => setTimeout(resolveWait, 200));
     expect(context.fake.sent("GET", "/gateway").length).toBe(1);
   });
@@ -1094,7 +1100,7 @@ describe("discord bridge", { timeout: 20_000 }, () => {
       coworkerId: context.ava.id,
       title: "Send to Discord",
       input: "send it",
-      threadId: `coworker:${context.ava.id}`,
+      threadId: parseDiscordConfig(context.database.getDiscordIntegration()!).conversationId,
     });
     await context.service.tools.request({
       task,
@@ -1136,7 +1142,7 @@ describe("discord bridge", { timeout: 20_000 }, () => {
     expect(context.fake.sent("POST", "/messages").length).toBe(before);
     expect(
       context.database
-        .listConversationMessages(`coworker:${context.ava.id}`)
+        .listConversationMessages(parseDiscordConfig(context.database.getDiscordIntegration()!).conversationId)
         .some((message) => message.id.startsWith("discord:")),
     ).toBe(false);
   });
@@ -1251,7 +1257,7 @@ describe("discord bridge", { timeout: 20_000 }, () => {
       coworkerId: context.ava.id,
       title: "Ping me",
       input: "ping",
-      threadId: `coworker:${context.ava.id}`,
+      threadId: parseDiscordConfig(context.database.getDiscordIntegration()!).conversationId,
     });
     const result = await context.service.tools.request({
       task,
@@ -1293,7 +1299,7 @@ describe("discord bridge", { timeout: 20_000 }, () => {
       .mockResolvedValue({} as Awaited<ReturnType<DesktopAppService["cancelTask"]>>);
     const base = {
       coworkerId: context.ava.id,
-      conversationId: `coworker:${context.ava.id}`,
+      conversationId: parseDiscordConfig(context.database.getDiscordIntegration()!).conversationId,
       runId: "run-stop-partial",
       taskId: "task-stop-partial",
     };
@@ -1309,7 +1315,7 @@ describe("discord bridge", { timeout: 20_000 }, () => {
     expect(cancel).toHaveBeenCalledWith("task-stop-partial");
     expect(
       context.database
-        .listConversationMessages(`coworker:${context.ava.id}`)
+        .listConversationMessages(parseDiscordConfig(context.database.getDiscordIntegration()!).conversationId)
         .some((message) => message.content.includes("/stop")),
     ).toBe(false);
     context.emit({
@@ -1338,12 +1344,12 @@ describe("discord bridge", { timeout: 20_000 }, () => {
     context.emit({
       type: "agent.event",
       coworkerId: context.ava.id,
-      conversationId: `coworker:${context.ava.id}`,
+      conversationId: parseDiscordConfig(context.database.getDiscordIntegration()!).conversationId,
       runId: "run-403",
       taskId,
       event: { type: EventType.RUN_STARTED } as never,
     });
-    await waitFor(() => context.service.discordStatus().receiptReactionDenied === true, "denied hint");
+    await waitFor(() => context.service.discordStatus()[0]!.receiptReactionDenied === true, "denied hint");
   });
 
   it("renames a mapped conversation when the Discord thread title changes", async () => {
@@ -1366,7 +1372,7 @@ describe("discord bridge", { timeout: 20_000 }, () => {
   it("retries a 429 and still delivers the finished reply", async () => {
     const context = await setup({ message429Remaining: 1 });
     await connectAndPair(context);
-    const conversationId = `coworker:${context.ava.id}`;
+    const conversationId = parseDiscordConfig(context.database.getDiscordIntegration()!).conversationId;
     context.emit({
       type: "entity.changed",
       entity: "conversations",
@@ -1393,12 +1399,12 @@ describe("discord bridge", { timeout: 20_000 }, () => {
   it("ignores parent-channel chatter and opens a thread only on @mention", async () => {
     const context = await setup();
     await connectAndPair(context);
-    const beforeMessages = context.database.listConversationMessages(`coworker:${context.ava.id}`).length;
+    const beforeMessages = context.database.listConversationMessages(parseDiscordConfig(context.database.getDiscordIntegration()!).conversationId).length;
     const beforePosts = context.fake.sent("POST", "/messages").length;
     context.fake.pushMessage({ channelId: "100", content: "just chatting in general" });
     await new Promise((resolveWait) => setTimeout(resolveWait, 80));
     expect(Object.keys(mappedThreads(context.database))).toHaveLength(0);
-    expect(context.database.listConversationMessages(`coworker:${context.ava.id}`)).toHaveLength(
+    expect(context.database.listConversationMessages(parseDiscordConfig(context.database.getDiscordIntegration()!).conversationId)).toHaveLength(
       beforeMessages,
     );
     expect(context.fake.sent("POST", "/messages").length).toBe(beforePosts);
@@ -1415,7 +1421,7 @@ describe("discord bridge", { timeout: 20_000 }, () => {
     ).toBe(true);
     expect(
       context.database
-        .listConversationMessages(`coworker:${context.ava.id}`)
+        .listConversationMessages(parseDiscordConfig(context.database.getDiscordIntegration()!).conversationId)
         .some((message) => message.content.includes("find AI jobs")),
     ).toBe(false);
     expect(context.fake.sent("POST", "/channels/100/messages/77/threads")).toHaveLength(1);
@@ -1527,7 +1533,7 @@ describe("discord bridge", { timeout: 20_000 }, () => {
       coworkerId: context.ava.id,
       title: "Send the file",
       input: "send it to me",
-      threadId: `coworker:${context.ava.id}`,
+      threadId: parseDiscordConfig(context.database.getDiscordIntegration()!).conversationId,
     });
     const result = await context.service.tools.request({
       task,
@@ -1578,5 +1584,115 @@ describe("discord mention helpers", () => {
     expect(discordThreadTitleFromText("")).toBe("Conversation");
     expect(discordThreadTitleFromText("   \n\t")).toBe("Conversation");
     expect(discordThreadTitleFromText("x".repeat(120)).length).toBeLessThanOrEqual(100);
+  });
+});
+
+describe("multiple Discord bot connections", () => {
+  it("isolates overlapping messages, replies, approvals, and gateway failures", async () => {
+    const context = await setup();
+    const first = await connectAndPair(context);
+    const neighbor = context.database.createCoworker({ name: "Ben", role: "Assistant", systemPrompt: "Help", modelProvider: "demo", modelName: "faux-1", enabledTools: [] }, join(context.root, "ben"));
+    const secondToken = "SECONDSECONDSECONDSECOND.TEST1.TESTTESTTESTTESTTESTTEST";
+    const second = await context.service.configureDiscord({ botToken: secondToken, coworkerId: neighbor.id });
+    const firstId = first.integration.id;
+    const secondId = second.integration.id;
+    expect(firstId).not.toBe(secondId);
+    expect(first.integration.credentialKey).not.toBe(second.integration.credentialKey);
+    await waitFor(() => Boolean(context.secondaryFake.lastSocket()), "second gateway");
+    await new Promise(resolveWait => setTimeout(resolveWait, 40));
+    context.secondaryFake.pushMessage({ channelId: "100", content: second.pairingCode! });
+    await waitFor(() => context.service.discordStatus().find(s => s.integration.id === secondId)?.pairingCode === null, "second bot pairing");
+    context.fake.pushMessage({ id: "1000", channelId: "200", content: "question for first bot" });
+    context.secondaryFake.pushMessage({ id: "1000", channelId: "200", content: "question for second bot" });
+    await waitFor(() => context.database.listTasksBySourceMessage(`discord:${firstId}:1000`).length === 1 && context.database.listTasksBySourceMessage(`discord:${secondId}:1000`).length === 1, "independent overlapping message IDs");
+    const firstTask = context.database.listTasksBySourceMessage(`discord:${firstId}:1000`)[0]!;
+    const secondTask = context.database.listTasksBySourceMessage(`discord:${secondId}:1000`)[0]!;
+    expect(firstTask.threadId).not.toBe(secondTask.threadId);
+    await context.service.sendConversationMessage({ conversationId: firstTask.threadId, clientMessageId: "multi-first-desktop", content: "private desktop follow-up", mentionedCoworkerIds: [] });
+    await waitFor(() => context.fake.sent("POST", "/messages").some(call => String(call.body.content).includes("private desktop follow-up")), "reply on first bot");
+    expect(context.secondaryFake.sent("POST", "/messages").some(call => String(call.body.content).includes("private desktop follow-up"))).toBe(false);
+    const coworker = context.database.getCoworker(context.ava.id);
+    const approval = await context.service.tools.request({ task: firstTask, coworker, toolName: "discord.send", toolCallId: "multi-approval", arguments: { message: "approval-bound destination" } });
+    if (approval.kind !== "approval") throw new Error("Expected send approval");
+    context.emit({ type: "entity.changed", entity: "approvals", id: approval.approval.id });
+    context.secondaryFake.pushInteraction({ channelId: "200", customId: `apr:${approval.approval.id}:approve` });
+    await new Promise(resolveWait => setTimeout(resolveWait, 100));
+    expect(context.database.getApproval(approval.approval.id).status).toBe("PENDING");
+    await expect(context.service.configureDiscord({ botToken: secondToken, coworkerId: context.ava.id })).rejects.toThrow(/already|duplicate/i);
+    context.fake.lastSocket()!.closeFromServer(4014, "Disallowed intents");
+    await waitFor(() => context.service.discordStatus().find(s => s.integration.id === firstId)?.integration.status === "error", "first bot fatal error");
+    expect(context.service.discordStatus().find(s => s.integration.id === secondId)?.integration.status).toBe("connected");
+    await context.service.disconnectDiscord(firstId);
+    expect(await context.credentials.has(second.integration.credentialKey!)).toBe(true);
+    expect(context.database.getCoworker(context.ava.id).enabledTools).not.toContain("discord.send");
+    expect(context.database.getCoworker(neighbor.id).enabledTools).toContain("discord.send");
+    context.secondaryFake.pushMessage({ id: "1001", channelId: "200", content: "still running" });
+    await waitFor(() => context.database.listTasksBySourceMessage(`discord:${secondId}:1001`).length === 1, "second bot after disconnect");
+  });
+});
+
+describe("Discord connection lifecycle synchronization", () => {
+  it("drains an old channel lookup before moving the bot to another coworker", async () => {
+    const context = await setup();
+    const first = await connectAndPair(context);
+    const previous = context.fake.fetchImpl;
+    let entered = false;
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    vi.spyOn(context.fake, "fetchImpl").mockImplementation(async (input, init) => {
+      if (String(input).endsWith("/channels/200")) { entered = true; await gate; }
+      return previous(input, init);
+    });
+    context.fake.pushMessage({ id: "delayed-old", channelId: "200", content: "old coworker request" });
+    await waitFor(() => entered, "delayed old channel lookup");
+    const next = context.database.createCoworker({ name: "Ben", role: "Assistant", systemPrompt: "Help", modelProvider: "demo", modelName: "faux-1", enabledTools: [] }, join(context.root, "ben"));
+    const relink = context.service.configureDiscord({ integrationId: first.integration.id, coworkerId: next.id });
+    await new Promise(resolve => setTimeout(resolve, 50));
+    expect(context.database.getIntegration(first.integration.id).config.coworkerId).toBe(context.ava.id);
+    release();
+    await relink;
+    const connection = context.database.getIntegration(first.integration.id);
+    expect(connection.config.coworkerId).toBe(next.id);
+    expect(connection.config.threads).toEqual({});
+    expect(context.database.listTasks(next.id)).toHaveLength(0);
+    expect(context.database.listConversationMessages(String(connection.config.conversationId))).toHaveLength(0);
+    expect(context.database.listTasks(context.ava.id).some(task => task.input.includes("old coworker request"))).toBe(true);
+  });
+});
+
+
+describe("Discord shared thread routing", () => {
+  it("preserves concurrent inbound mappings and reuses proactively created forum conversations", async () => {
+    const context = await setup();
+    const first = await connectAndPair(context, { channelId: "300" });
+    const integrationId = first.integration.id;
+    const rootId = String(context.database.getIntegration(integrationId).config.conversationId);
+    let entered = false;
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const delivery = sendCoworkerDiscordMessage({
+      database: context.database, credentials: context.credentials,
+      coworkerId: context.ava.id, workspacePath: context.ava.workspacePath,
+      conversationId: null, integrationId, message: "Proactive forum delivery",
+      fetchImpl: async (input, init) => {
+        if (String(input).endsWith("/channels/300/threads")) { entered = true; await gate; }
+        return context.fake.fetchImpl(input, init);
+      },
+    });
+    await waitFor(() => entered, "pending forum creation");
+    context.fake.pushMessage({ id: "concurrent-inbound", channelId: "301", content: "Inbound while sending" });
+    await waitFor(() => context.database.listTasksBySourceMessage(`discord:${integrationId}:concurrent-inbound`).length === 1, "concurrent inbound thread");
+    const inboundConversation = mappedThreads(context.database)["301"];
+    release();
+    const result = await delivery;
+    expect(mappedThreads(context.database)).toMatchObject({ "301": inboundConversation, [result.threadId!]: rootId });
+    // Subsequent bridge writes must preserve the send-created mapping too.
+    context.fake.pushThread({ id: "302", parentId: "300", name: "Later thread" });
+    context.fake.pushMessage({ id: "later-inbound", channelId: "302", content: "Later inbound" });
+    context.fake.pushMessage({ id: "reply-to-delivery", channelId: result.threadId!, content: "Reply to the delivery" });
+    await waitFor(() => context.database.listTasksBySourceMessage(`discord:${integrationId}:later-inbound`).length === 1 && context.database.listTasksBySourceMessage(`discord:${integrationId}:reply-to-delivery`).length === 1, "later messages");
+    expect(mappedThreads(context.database)).toMatchObject({ "301": inboundConversation, [result.threadId!]: rootId });
+    expect(mappedThreads(context.database)["302"]).toBeTruthy();
+    expect(context.database.listTasksBySourceMessage(`discord:${integrationId}:reply-to-delivery`)[0]!.threadId).toBe(rootId);
   });
 });

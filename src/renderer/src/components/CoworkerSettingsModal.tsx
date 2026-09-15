@@ -5,6 +5,7 @@ import { ModalPortal } from "./ModalPortal";
 import { ModelSelector } from "./ModelSelector";
 import { ProviderSelect } from "./ProviderSelect";
 import { CoworkerMemoryEditor } from "./CoworkerMemoryEditor";
+import { CoworkerMessagingSettings } from "./CoworkerMessagingSettings";
 
 function folderDisplayName(path: string): string {
   const segments = path.replace(/[\\/]+$/, "").split(/[\\/]/);
@@ -337,6 +338,7 @@ export function CoworkerSettingsModal({
             </span>
           </div>
         </form>
+        <CoworkerMessagingSettings coworker={coworker} onChanged={onChanged} />
       </section>
     </div>
     </ModalPortal>

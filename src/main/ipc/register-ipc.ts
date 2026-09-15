@@ -335,17 +335,17 @@ export function registerIpc(input: {
     input.service.configureTelegram(configureTelegramSchema.parse(value)),
   );
   handle(ipcChannels.integrationsTelegramStatus, () => input.service.telegramStatus());
-  handle(ipcChannels.integrationsUnpairTelegram, () => input.service.unpairTelegram());
-  handle(ipcChannels.integrationsDisconnectTelegram, () =>
-    input.service.disconnectTelegram(),
+  handle(ipcChannels.integrationsUnpairTelegram, (_event, integrationId) => input.service.unpairTelegram(idSchema.parse(integrationId)));
+  handle(ipcChannels.integrationsDisconnectTelegram, (_event, integrationId) =>
+    input.service.disconnectTelegram(idSchema.parse(integrationId)),
   );
   handle(ipcChannels.integrationsConfigureDiscord, (_event, value) =>
     input.service.configureDiscord(configureDiscordSchema.parse(value)),
   );
   handle(ipcChannels.integrationsDiscordStatus, () => input.service.discordStatus());
-  handle(ipcChannels.integrationsUnpairDiscord, () => input.service.unpairDiscord());
-  handle(ipcChannels.integrationsDisconnectDiscord, () =>
-    input.service.disconnectDiscord(),
+  handle(ipcChannels.integrationsUnpairDiscord, (_event, integrationId) => input.service.unpairDiscord(idSchema.parse(integrationId)));
+  handle(ipcChannels.integrationsDisconnectDiscord, (_event, integrationId) =>
+    input.service.disconnectDiscord(idSchema.parse(integrationId)),
   );
 
   handle(ipcChannels.agentsRun, (_event, value) =>

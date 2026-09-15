@@ -24,6 +24,8 @@ import { readDocumentText } from "@main/integrations/document-text";
 import { createEmailDraft, sendEmail, type EmailPayload } from "@main/integrations/email";
 import { sendCoworkerTelegramMessage } from "@main/integrations/telegram-send";
 import { sendCoworkerDiscordMessage } from "@main/integrations/discord-send";
+import { resolveMessagingIntegration, resolvedMessagingThread } from "@main/integrations/integration-selection";
+import { requestContextForTask } from "@shared/request-context";
 import { resolveSharedFolderPath } from "./shared-folders";
 import { resolveWorkspacePath } from "./workspace-path";
 import { editWorkspaceText, prepareWorkspaceTextMutation, readWorkspaceText, resolveWorkspaceOutputPath, writeWorkspaceText } from "./workspace-text";
@@ -229,10 +231,18 @@ const schemas = {
   "telegram.send": z.object({
     message: z.string().trim().min(1).max(100_000),
     attachments: z.array(z.string().min(1).max(2_000)).max(10).optional(),
+    integrationId: z.string().trim().min(1).max(100).optional(),
+    integrationName: z.string().max(200).optional(),
+    integrationDestination: z.string().max(300).optional(),
+    integrationBinding: z.record(z.string(), z.unknown()).optional(),
   }),
   "discord.send": z.object({
     message: z.string().trim().min(1).max(100_000),
     attachments: z.array(z.string().min(1).max(2_000)).max(10).optional(),
+    integrationId: z.string().trim().min(1).max(100).optional(),
+    integrationName: z.string().max(200).optional(),
+    integrationDestination: z.string().max(300).optional(),
+    integrationBinding: z.record(z.string(), z.unknown()).optional(),
   }),
 } as const;
 
@@ -287,7 +297,8 @@ function approvalSummary(toolName: string, args: unknown): string {
       const files = parsed.data.attachments?.length
         ? ` · ${parsed.data.attachments.map((path) => path.split("/").at(-1)).join(", ")}`
         : "";
-      return `Send Telegram message “${preview}”${files}`;
+      const destination = parsed.data.integrationName ? ` via ${parsed.data.integrationName} (${parsed.data.integrationDestination})` : "";
+      return `Send Telegram message “${preview}”${destination}${files}`;
     }
   }
   if (toolName === "discord.send") {
@@ -300,7 +311,8 @@ function approvalSummary(toolName: string, args: unknown): string {
       const files = parsed.data.attachments?.length
         ? ` · ${parsed.data.attachments.map((path) => path.split("/").at(-1)).join(", ")}`
         : "";
-      return `Send Discord message “${preview}”${files}`;
+      const destination = parsed.data.integrationName ? ` via ${parsed.data.integrationName} (${parsed.data.integrationDestination})` : "";
+      return `Send Discord message “${preview}”${destination}${files}`;
     }
   }
   if (toolName === "schedules.create") {
@@ -364,8 +376,24 @@ export class ToolGateway {
     return schema.parse(argumentsValue);
   }
 
+  private preserveMessagingApprovalTarget(approval: Approval, args: unknown): unknown {
+    if (approval.actionType === "telegram.send" || approval.actionType === "discord.send") {
+      const original = schemas[approval.actionType].parse(approval.proposedPayload);
+      const edited = schemas[approval.actionType].parse(args);
+      const keys = ["integrationId", "integrationName", "integrationDestination", "integrationBinding"] as const;
+      for (const key of keys) {
+        if (edited[key] !== undefined && stableJson(edited[key]) !== stableJson(original[key])) {
+          throw new Error("The approved bot destination cannot be changed. Request a new approval.");
+        }
+      }
+      args = { ...edited, integrationId: original.integrationId, integrationName: original.integrationName,
+        integrationDestination: original.integrationDestination, integrationBinding: original.integrationBinding };
+    }
+    return args;
+  }
+
   async validateApprovalPayload(approval: Approval, payload: unknown): Promise<unknown> {
-    const args = this.validateArguments(approval.actionType, payload);
+    const args = this.preserveMessagingApprovalTarget(approval, this.validateArguments(approval.actionType, payload));
     validateWorkspaceTextApprovalEdit(approval, args);
     if (approval.actionType === "files.write" || approval.actionType === "files.edit") {
       const mutation = approval.actionType === "files.write" ? schemas["files.write"].parse(args) : schemas["files.edit"].parse(args);
@@ -438,16 +466,37 @@ export class ToolGateway {
       };
     }
     let validatedArguments = parsed.data;
-
     const policy = policyFor(input.coworker, input.toolName);
     if (policy === "denied") {
       const reason = `${input.toolName} is denied by policy`;
-      return {
-        kind: "denied",
-        toolCall: this.database.updateToolCall(toolCall.id, "DENIED", { error: reason }),
-        reason,
-      };
+      return { kind: "denied", toolCall: this.database.updateToolCall(toolCall.id, "DENIED", { error: reason }), reason };
     }
+
+    // Resolve the destination before an approval is created so the approved
+    // payload records exactly which connection the user saw. Execution
+    // resolves it again, preventing a stale or edited payload from bypassing
+    // ownership and pairing checks.
+    if (input.toolName === "telegram.send" || input.toolName === "discord.send") {
+      const provider = input.toolName === "telegram.send" ? "telegram" : "discord";
+      const context = requestContextForTask(input.task);
+      const messagingArgs = validatedArguments as { integrationId?: string };
+      let selected;
+      try {
+        selected = resolveMessagingIntegration({
+        database: this.database,
+        provider,
+        coworkerId: input.coworker.id,
+        requestedIntegrationId: messagingArgs.integrationId,
+        conversationId: input.task.threadId,
+        originatingIntegrationId: context.channel === provider ? context.originatingIntegrationId : undefined,
+        });
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        return { kind: "denied", toolCall: this.database.updateToolCall(toolCall.id, "DENIED", { error: reason }), reason };
+      }
+      validatedArguments = { ...schemas[input.toolName].parse(validatedArguments), integrationId: selected.id, integrationName: selected.name, integrationDestination: selected.destination, integrationBinding: { ...selected.binding, resolvedThreadId: resolvedMessagingThread(provider, selected.integration, input.task.threadId) } } as typeof validatedArguments;
+    }
+
     // Replaying a completed call returns its existing result even if a later
     // user edit has made that call's original revision stale.
     if (!metadata.volatile && this.database.getSideEffect(toolCall.idempotencyKey)?.status === "COMPLETED") {
@@ -498,10 +547,11 @@ export class ToolGateway {
       throw new Error("The approval is not ready to execute");
     }
     const toolCall = this.database.getToolCall(approval.toolCallId);
-    const args =
+    let args =
       approval.status === "EDITED" && approval.decidedPayload !== null
         ? approval.decidedPayload
         : approval.proposedPayload;
+    args = this.preserveMessagingApprovalTarget(approval, args);
     validateWorkspaceTextApprovalEdit(approval, args);
     const proposal = workspaceTextApproval(approval);
     const result = await this.execute(toolCall, coworker, args, proposal?.requiresApproval ? proposal.path : null);
@@ -994,6 +1044,12 @@ export class ToolGateway {
           credentials: this.credentials,
           workspacePath: coworker.workspacePath,
           conversationId: task.threadId,
+          coworkerId: coworker.id,
+          integrationId: args.integrationId,
+          integrationName: args.integrationName,
+          integrationDestination: args.integrationDestination,
+          integrationBinding: args.integrationBinding,
+          requestContext: requestContextForTask(task),
           message: args.message,
           attachments: args.attachments,
           fetchImpl: this.options.telegramFetch,
@@ -1007,6 +1063,12 @@ export class ToolGateway {
           credentials: this.credentials,
           workspacePath: coworker.workspacePath,
           conversationId: task.threadId,
+          coworkerId: coworker.id,
+          integrationId: args.integrationId,
+          integrationName: args.integrationName,
+          integrationDestination: args.integrationDestination,
+          integrationBinding: args.integrationBinding,
+          requestContext: requestContextForTask(task),
           message: args.message,
           attachments: args.attachments,
           fetchImpl: this.options.discordFetch,

@@ -338,3 +338,14 @@ describe("workspace confinement", () => {
     },
   );
 });
+
+
+it("allows concurrent bot downloads to create a shared inbox parent", async () => {
+  const root = await temporaryDirectory("coworker-concurrent-inbox-");
+  const paths = await Promise.all(Array.from({ length: 20 }, (_, index) =>
+    resolveWorkspacePath(root, `inbox/bot-${index}/attachment.txt`, { createParent: true }),
+  ));
+  await Promise.all(paths.map((path, index) => writeFile(path, `bot ${index}`)));
+  expect(await Promise.all(paths.map(path => readFile(path, "utf8"))))
+    .toEqual(Array.from({ length: 20 }, (_, index) => `bot ${index}`));
+});
