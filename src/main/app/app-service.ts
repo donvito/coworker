@@ -1,3 +1,4 @@
+import { withConnectionOperation } from "@main/integrations/connection-operations";
 import { randomBytes, randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
@@ -77,13 +78,15 @@ import {
   TelegramBotApi,
   parseTelegramConfig,
   telegramCredentialKey,
+  telegramCredentialKeyFor,
   telegramPairingLink,
   type TelegramIntegrationConfig,
 } from "@main/integrations/telegram";
-import { TelegramBridgeService } from "@main/integrations/telegram-bridge";
+import { TelegramBridgeManager } from "@main/integrations/telegram-bridge";
 import {
   DiscordRestApi,
   discordCredentialKey,
+  discordCredentialKeyFor,
   discordIntentSettingsUrl,
   discordInviteUrl,
   isDiscordForumType,
@@ -93,12 +96,12 @@ import {
   type DiscordIntegrationConfig,
   type DiscordWebSocketConstructor,
 } from "@main/integrations/discord";
-import { DiscordBridgeService } from "@main/integrations/discord-bridge";
+import { DiscordBridgeManager } from "@main/integrations/discord-bridge";
 import { DISCUSSION_PASS_MARKER, isDiscussionPass } from "@shared/discussion";
 import { defaultEnabledBundledSkillNames } from "@shared/skill-capabilities";
 import { BrowserAutomationService } from "@main/integrations/browser-automation";
 import { memoryFile, type UpdateMemoryInput } from "@shared/workspace-context";
-import { configureDiscordSchema, updateMemorySchema } from "@shared/validation";
+import { configureDiscordSchema, configureTelegramSchema, updateMemorySchema } from "@shared/validation";
 import { readWorkspaceText, writeWorkspaceText } from "@main/tools/workspace-text";
 
 export interface DesktopAppServiceOptions {
@@ -154,13 +157,14 @@ export class DesktopAppService {
   readonly database: CoworkerDatabase;
   readonly runtime: CoworkerRuntimeManager;
   readonly scheduler: SchedulerService;
-  readonly telegram: TelegramBridgeService;
-  readonly discord: DiscordBridgeService;
+  readonly telegram: TelegramBridgeManager;
+  readonly discord: DiscordBridgeManager;
   readonly tools: ToolGateway;
   readonly browser: BrowserAutomationService;
   readonly providerErrors: ProviderErrorLogger;
   private readonly listeners = new Set<(event: DesktopEvent) => void>();
   private initialized = false;
+  private readonly integrationMutations = new Map<string, Promise<unknown>>();
   private dataExportInProgress = false;
   private activeDataMutations = 0;
   private readonly dataMutationWaiters = new Set<() => void>();
@@ -202,7 +206,7 @@ export class DesktopAppService {
       this.emit({ type: "entity.changed", entity: "activity" });
       this.runtime.enqueueTask(task.coworkerId);
     }, (error) => options.applicationLogger?.error("scheduler", error));
-    this.telegram = new TelegramBridgeService({
+    this.telegram = new TelegramBridgeManager({
       database: this.database,
       credentials: options.credentials,
       host: this,
@@ -211,8 +215,9 @@ export class DesktopAppService {
       fetchImpl: options.telegram?.fetchImpl,
       pollTimeoutSeconds: options.telegram?.pollTimeoutSeconds,
       draftKeepAliveMs: options.telegram?.draftKeepAliveMs,
+      credentialKeyFor: (id) => this.database.getTelegramIntegration(id)?.credentialKey ?? telegramCredentialKeyFor(id),
     });
-    this.discord = new DiscordBridgeService({
+    this.discord = new DiscordBridgeManager({
       database: this.database,
       credentials: options.credentials,
       host: this,
@@ -221,6 +226,7 @@ export class DesktopAppService {
       fetchImpl: options.discord?.fetchImpl,
       WebSocketImpl: options.discord?.WebSocketImpl,
       typingKeepAliveMs: options.discord?.typingKeepAliveMs,
+      credentialKeyFor: (id) => this.database.getDiscordIntegration(id)?.credentialKey ?? discordCredentialKeyFor(id),
     });
   }
 
@@ -244,6 +250,8 @@ export class DesktopAppService {
     }
     this.seedSkills();
     await this.seedCoworkers();
+    this.database.migrateIntegrationRouting();
+    this.database.migrateMessagingConnectionLimits();
     await this.seedLegacyModelEndpoint();
     this.enableBundledSkills();
     if (this.database.getMetadata("coworker-memory-skill-v1") !== "true") {
@@ -1168,15 +1176,45 @@ export class DesktopAppService {
     return integration;
   }
 
-  async configureTelegram(input: {
+  private async mutateIntegrations<T>(provider: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.integrationMutations.get(provider) ?? Promise.resolve();
+    const next = previous.catch(() => undefined).then(async () => {
+      const release = this.beginDataMutation();
+      try { return await operation(); } finally { release(); }
+    });
+    this.integrationMutations.set(provider, next);
+    try { return await next; } finally {
+      if (this.integrationMutations.get(provider) === next) this.integrationMutations.delete(provider);
+    }
+  }
+
+  private assertBotAvailable(provider: "telegram" | "discord", botId: string | number, username: string, selectedId?: string): void {
+    const duplicate = this.database.listIntegrations().find(integration =>
+      integration.type === provider && integration.id !== selectedId &&
+      (integration.config.botUserId !== undefined
+        ? String(integration.config.botUserId) === String(botId)
+        : integration.config.botUsername === username));
+    if (duplicate) throw new Error(`This ${provider} bot is already configured. Edit its existing connection instead.`);
+  }
+
+  configureTelegram(input: { botToken?: string; coworkerId: string; integrationId?: string }): Promise<TelegramIntegrationStatus> {
+    return this.mutateIntegrations("telegram", () => withConnectionOperation(this.database, input.integrationId ?? "create:telegram", () => this.configureTelegramConnection(input)));
+  }
+
+  private async configureTelegramConnection(input: {
     botToken?: string;
     coworkerId: string;
+    integrationId?: string;
   }): Promise<TelegramIntegrationStatus> {
+    input = configureTelegramSchema.parse(input);
     const coworker = this.database.getCoworker(input.coworkerId);
     const submittedToken = input.botToken?.trim();
-    const storedToken = submittedToken
-      ? null
-      : await readableCredential(this.options.credentials, telegramCredentialKey);
+    let selected = input.integrationId ? this.database.getTelegramIntegration(input.integrationId) : null;
+    if (input.integrationId && !selected) throw new Error("The selected Telegram connection was not found");
+    if (!selected && !submittedToken) throw new Error("A bot token is required to add a Telegram connection");
+    this.database.assertMessagingSlotAvailable("telegram", coworker.id, selected?.id);
+    const credentialKey = selected?.credentialKey ?? telegramCredentialKeyFor(selected?.id ?? randomUUID());
+    const storedToken = submittedToken ? null : await readableCredential(this.options.credentials, credentialKey);
     const token = submittedToken || storedToken;
     if (!token) throw new Error("A Telegram bot token from @BotFather is required");
 
@@ -1191,15 +1229,23 @@ export class DesktopAppService {
     }
     if (!me.username) throw new Error("Telegram did not return the bot's username");
 
-    await this.options.credentials.set(telegramCredentialKey, token);
-    const existing = this.database.getTelegramIntegration();
+    this.assertBotAvailable("telegram", me.id, me.username, selected?.id);
+    if (selected) {
+      await this.telegram.stop(selected.id);
+      selected = this.database.getTelegramIntegration(selected.id);
+    }
+    const existing = selected;
     const previous = existing ? parseTelegramConfig(existing) : null;
-    const sameBot = previous?.botUsername === me.username;
+    const sameBot = previous?.botUserId !== undefined ? previous.botUserId === me.id : previous?.botUsername === me.username;
     const sameCoworker = previous?.coworkerId === coworker.id;
     const config: TelegramIntegrationConfig = {
+      ...existing?.config,
+      connectionLimitConflict: false,
       botUsername: me.username,
+      botUserId: me.id,
+      connectionError: null,
       coworkerId: coworker.id,
-      conversationId: `coworker:${coworker.id}`,
+      conversationId: previous?.conversationId ?? `coworker:${coworker.id}`,
       chatId: sameBot ? previous?.chatId ?? null : null,
       pairingCode:
         (sameBot && previous?.pairingCode) || randomBytes(9).toString("base64url"),
@@ -1209,18 +1255,32 @@ export class DesktopAppService {
       threadsEnabled: me.has_topics_enabled === true,
       approvalEdits: sameBot && sameCoworker ? previous?.approvalEdits ?? {} : {},
     };
-    const integration = this.database.upsertTelegramIntegration({
-      name: `@${me.username}`,
-      credentialKey: telegramCredentialKey,
-      status: "connected",
-      config: { ...config },
-    });
+    let integration: Integration;
+    const previousToken = existing ? await readableCredential(this.options.credentials, credentialKey) : null;
+    try {
+      await this.options.credentials.set(credentialKey, token);
+      integration = this.database.transaction(() => {
+        const saved = this.database.upsertTelegramIntegration({
+          integrationId: existing?.id, name: `@${me.username}`, credentialKey,
+          status: "connected", config: { ...config },
+        });
+        if (!sameBot || !sameCoworker || existing?.status === "disconnected" || existing?.config.routingVersion !== 1) {
+          return this.database.resetIntegrationRouting(saved.id);
+        }
+        return saved;
+      });
+    } catch (error) {
+      if (previousToken !== null) await this.options.credentials.set(credentialKey, previousToken);
+      else await this.options.credentials.delete(credentialKey);
+      if (existing) await this.telegram.start(existing.id);
+      throw error;
+    }
     this.enableTelegramTool(coworker.id);
 
     // Moving the bot between coworkers keeps the paired chat; hand off
     // loudly so neither side is left guessing where messages go now.
     const previousCoworkerId = previous?.coworkerId ?? null;
-    if (sameBot && previousCoworkerId && previousCoworkerId !== coworker.id) {
+    if (previousCoworkerId && previousCoworkerId !== coworker.id) {
       this.disableTelegramTool(previousCoworkerId);
       const previousName = this.coworkerNameOrNull(previousCoworkerId);
       this.database.addActivity({
@@ -1241,15 +1301,17 @@ export class DesktopAppService {
     }
 
     this.emit({ type: "entity.changed", entity: "integrations", id: integration.id });
-    await this.telegram.restart();
-    return this.telegramStatus();
+    await this.telegram.restart(integration.id);
+    return this.telegramStatus(integration.id);
   }
 
-  telegramStatus(): TelegramIntegrationStatus {
-    const integration = this.database.getTelegramIntegration();
-    if (!integration || integration.status !== "connected") {
-      return { integration, pairingLink: null };
-    }
+  telegramStatus(): TelegramIntegrationStatus[];
+  telegramStatus(integrationId: string): TelegramIntegrationStatus;
+  telegramStatus(integrationId?: string): TelegramIntegrationStatus | TelegramIntegrationStatus[] {
+    if (!integrationId) return this.database.listTelegramIntegrations().map((item) => this.telegramStatus(item.id));
+    const integration = this.database.getTelegramIntegration(integrationId);
+    if (!integration) throw new Error("The selected Telegram connection was not found");
+    if (integration.status !== "connected") return { integration, pairingLink: null };
     const config = parseTelegramConfig(integration);
     return {
       integration,
@@ -1260,32 +1322,34 @@ export class DesktopAppService {
     };
   }
 
-  async unpairTelegram(): Promise<TelegramIntegrationStatus> {
-    const integration = this.database.getTelegramIntegration();
-    if (!integration) throw new Error("The Telegram integration is not configured");
-    this.database.updateTelegramIntegration({
-      config: { chatId: null, pairingCode: randomBytes(9).toString("base64url") },
-    });
-    this.emit({ type: "entity.changed", entity: "integrations", id: integration.id });
-    await this.telegram.restart();
-    return this.telegramStatus();
+  unpairTelegram(integrationId: string): Promise<TelegramIntegrationStatus> {
+    return this.mutateIntegrations("telegram", () => withConnectionOperation(this.database, integrationId, async () => {
+      const integration = this.database.getTelegramIntegration(integrationId);
+      if (!integration) throw new Error("The selected Telegram connection was not found");
+      await this.telegram.stop(integrationId);
+      this.database.transaction(() => {
+        this.database.updateTelegramIntegration({ config: { chatId: null, pairingCode: randomBytes(9).toString("base64url") } }, integrationId);
+        this.database.resetIntegrationRouting(integrationId);
+      });
+      this.emit({ type: "entity.changed", entity: "integrations", id: integrationId });
+      await this.telegram.start(integrationId);
+      return this.telegramStatus(integrationId);
+    }));
   }
 
-  async disconnectTelegram(): Promise<void> {
-    await this.telegram.stop();
-    const integration = this.database.getTelegramIntegration();
-    if (integration) {
-      this.database.updateTelegramIntegration({
-        status: "disconnected",
-        config: { chatId: null },
+  disconnectTelegram(integrationId: string): Promise<void> {
+    return this.mutateIntegrations("telegram", () => withConnectionOperation(this.database, integrationId, async () => {
+      const integration = this.database.getTelegramIntegration(integrationId);
+      if (!integration) throw new Error("The selected Telegram connection was not found");
+      await this.telegram.stop(integrationId);
+      this.database.transaction(() => {
+        this.database.updateTelegramIntegration({ status: "disconnected", config: { connectionLimitConflict: false, connectionError: null, chatId: null, pairingCode: randomBytes(9).toString("base64url") } }, integrationId);
+        this.database.resetIntegrationRouting(integrationId);
       });
-      this.emit({ type: "entity.changed", entity: "integrations", id: integration.id });
-    }
-    try {
-      await this.options.credentials.delete(telegramCredentialKey);
-    } catch {
-      // The credential may already be gone; disconnecting stays idempotent.
-    }
+      if (integration.credentialKey) await this.options.credentials.delete(integration.credentialKey);
+      this.disableTelegramTool(parseTelegramConfig(integration).coworkerId);
+      this.emit({ type: "entity.changed", entity: "integrations", id: integrationId });
+    }));
   }
 
   /** Turns on the policy-gated telegram.send tool for the linked coworker. */
@@ -1304,6 +1368,9 @@ export class DesktopAppService {
 
   /** Removes telegram.send from a coworker that lost its Telegram link. */
   private disableTelegramTool(coworkerId: string): void {
+    if (this.database.listTelegramIntegrations().some((item) =>
+      (item.status === "connected" || item.status === "error") && parseTelegramConfig(item).coworkerId === coworkerId,
+    )) return;
     const name = this.coworkerNameOrNull(coworkerId);
     if (name === null) return;
     const coworker = this.database.getCoworker(coworkerId);
@@ -1314,16 +1381,24 @@ export class DesktopAppService {
     this.emit({ type: "entity.changed", entity: "coworkers", id: coworkerId });
   }
 
-  async configureDiscord(input: {
+  configureDiscord(input: { botToken?: string; coworkerId: string; integrationId?: string }): Promise<DiscordIntegrationStatus> {
+    return this.mutateIntegrations("discord", () => withConnectionOperation(this.database, input.integrationId ?? "create:discord", () => this.configureDiscordConnection(input)));
+  }
+
+  private async configureDiscordConnection(input: {
     botToken?: string;
     coworkerId: string;
+    integrationId?: string;
   }): Promise<DiscordIntegrationStatus> {
     const parsed = configureDiscordSchema.parse(input);
     const coworker = this.database.getCoworker(parsed.coworkerId);
     const submittedToken = parsed.botToken?.trim();
-    const storedToken = submittedToken
-      ? null
-      : await readableCredential(this.options.credentials, discordCredentialKey);
+    let selected = parsed.integrationId ? this.database.getDiscordIntegration(parsed.integrationId) : null;
+    if (parsed.integrationId && !selected) throw new Error("The selected Discord connection was not found");
+    if (!selected && !submittedToken) throw new Error("A bot token is required to add a Discord connection");
+    this.database.assertMessagingSlotAvailable("discord", coworker.id, selected?.id);
+    const credentialKey = selected?.credentialKey ?? discordCredentialKeyFor(selected?.id ?? randomUUID());
+    const storedToken = submittedToken ? null : await readableCredential(this.options.credentials, credentialKey);
     const token = submittedToken || storedToken;
     if (!token) throw new Error("A Discord bot token from the Developer Portal is required");
 
@@ -1348,17 +1423,23 @@ export class DesktopAppService {
       void this.options.applicationLogger?.error("discord.application", error);
     }
 
-    await this.options.credentials.set(discordCredentialKey, token);
-    const existing = this.database.getDiscordIntegration();
+    this.assertBotAvailable("discord", me.id, me.username, selected?.id);
+    if (selected) {
+      await this.discord.stop(selected.id);
+      selected = this.database.getDiscordIntegration(selected.id);
+    }
+    const existing = selected;
     const previous = existing ? parseDiscordConfig(existing) : null;
     const sameBot = previous?.botUserId === me.id;
     const sameCoworker = previous?.coworkerId === coworker.id;
     const config: DiscordIntegrationConfig = {
+      ...existing?.config,
+      connectionLimitConflict: false,
       botUsername: me.username,
       botUserId: me.id,
       applicationId,
       coworkerId: coworker.id,
-      conversationId: `coworker:${coworker.id}`,
+      conversationId: previous?.conversationId ?? `coworker:${coworker.id}`,
       guildId: sameBot ? previous?.guildId ?? null : null,
       channelId: sameBot ? previous?.channelId ?? null : null,
       channelType: sameBot ? previous?.channelType ?? null : null,
@@ -1381,16 +1462,30 @@ export class DesktopAppService {
       refusedChannels: sameBot ? previous?.refusedChannels ?? [] : [],
       gatewayError: null,
     };
-    const integration = this.database.upsertDiscordIntegration({
-      name: me.username,
-      credentialKey: discordCredentialKey,
-      status: "connected",
-      config: { ...config },
-    });
+    let integration: Integration;
+    const previousToken = existing ? await readableCredential(this.options.credentials, credentialKey) : null;
+    try {
+      await this.options.credentials.set(credentialKey, token);
+      integration = this.database.transaction(() => {
+        const saved = this.database.upsertDiscordIntegration({
+          integrationId: existing?.id, name: me.username, credentialKey,
+          status: "connected", config: { ...config },
+        });
+        if (!sameBot || !sameCoworker || existing?.status === "disconnected" || existing?.config.routingVersion !== 1) {
+          return this.database.resetIntegrationRouting(saved.id);
+        }
+        return saved;
+      });
+    } catch (error) {
+      if (previousToken !== null) await this.options.credentials.set(credentialKey, previousToken);
+      else await this.options.credentials.delete(credentialKey);
+      if (existing) await this.discord.start(existing.id);
+      throw error;
+    }
     this.enableDiscordTool(coworker.id);
 
     const previousCoworkerId = previous?.coworkerId ?? null;
-    if (sameBot && previousCoworkerId && previousCoworkerId !== coworker.id) {
+    if (previousCoworkerId && previousCoworkerId !== coworker.id) {
       this.disableDiscordTool(previousCoworkerId);
       const previousName = this.coworkerNameOrNull(previousCoworkerId);
       this.database.addActivity({
@@ -1422,20 +1517,16 @@ export class DesktopAppService {
     }
 
     this.emit({ type: "entity.changed", entity: "integrations", id: integration.id });
-    await this.discord.restart();
-    return this.discordStatus();
+    await this.discord.restart(integration.id);
+    return this.discordStatus(integration.id);
   }
 
-  discordStatus(): DiscordIntegrationStatus {
-    const integration = this.database.getDiscordIntegration();
-    if (!integration) {
-      return {
-        integration,
-        inviteUrl: null,
-        pairingCode: null,
-        intentSettingsUrl: null,
-      };
-    }
+  discordStatus(): DiscordIntegrationStatus[];
+  discordStatus(integrationId: string): DiscordIntegrationStatus;
+  discordStatus(integrationId?: string): DiscordIntegrationStatus | DiscordIntegrationStatus[] {
+    if (!integrationId) return this.database.listDiscordIntegrations().map((item) => this.discordStatus(item.id));
+    const integration = this.database.getDiscordIntegration(integrationId);
+    if (!integration) throw new Error("The selected Discord connection was not found");
     const config = parseDiscordConfig(integration);
     const paired = Boolean(config.guildId && config.channelId);
     const configured = integration.status === "connected" || integration.status === "error";
@@ -1453,47 +1544,38 @@ export class DesktopAppService {
     };
   }
 
-  async unpairDiscord(): Promise<DiscordIntegrationStatus> {
-    const integration = this.database.getDiscordIntegration();
-    if (!integration) throw new Error("The Discord integration is not configured");
-    this.database.updateDiscordIntegration({
-      config: {
-        guildId: null,
-        channelId: null,
-        channelType: null,
-        guildName: null,
-        channelName: null,
-        pairedThreadId: null,
-        pairedThreadName: null,
-        pairedUserId: null,
-        pairingCode: mintDiscordPairingCode(),
-        threads: {},
-        lastThreads: {},
-        inboundMessages: {},
-        approvalEdits: {},
-        receiptReactionDenied: false,
-      },
-    });
-    this.emit({ type: "entity.changed", entity: "integrations", id: integration.id });
-    await this.discord.restart();
-    return this.discordStatus();
+  unpairDiscord(integrationId: string): Promise<DiscordIntegrationStatus> {
+    return this.mutateIntegrations("discord", () => withConnectionOperation(this.database, integrationId, async () => {
+      const integration = this.database.getDiscordIntegration(integrationId);
+      if (!integration) throw new Error("The selected Discord connection was not found");
+      await this.discord.stop(integrationId);
+      this.database.transaction(() => {
+        this.database.updateDiscordIntegration({ config: { guildId: null, channelId: null, channelType: null, guildName: null, channelName: null,
+          pairedThreadId: null, pairedThreadName: null, pairedUserId: null, pairingCode: mintDiscordPairingCode(),
+          receiptReactionDenied: false, refusedChannels: [], gatewayError: null } }, integrationId);
+        this.database.resetIntegrationRouting(integrationId);
+      });
+      this.emit({ type: "entity.changed", entity: "integrations", id: integrationId });
+      await this.discord.start(integrationId);
+      return this.discordStatus(integrationId);
+    }));
   }
 
-  async disconnectDiscord(): Promise<void> {
-    await this.discord.stop();
-    const integration = this.database.getDiscordIntegration();
-    if (integration) {
-      this.database.updateDiscordIntegration({
-        status: "disconnected",
-        config: { guildId: null, channelId: null },
+  disconnectDiscord(integrationId: string): Promise<void> {
+    return this.mutateIntegrations("discord", () => withConnectionOperation(this.database, integrationId, async () => {
+      const integration = this.database.getDiscordIntegration(integrationId);
+      if (!integration) throw new Error("The selected Discord connection was not found");
+      await this.discord.stop(integrationId);
+      this.database.transaction(() => {
+        this.database.updateDiscordIntegration({ status: "disconnected", config: { connectionLimitConflict: false, guildId: null, channelId: null, channelType: null, guildName: null, channelName: null,
+          pairedThreadId: null, pairedThreadName: null, pairedUserId: null, pairingCode: mintDiscordPairingCode(),
+          receiptReactionDenied: false, refusedChannels: [], gatewayError: null } }, integrationId);
+        this.database.resetIntegrationRouting(integrationId);
       });
-      this.emit({ type: "entity.changed", entity: "integrations", id: integration.id });
-    }
-    try {
-      await this.options.credentials.delete(discordCredentialKey);
-    } catch {
-      // The credential may already be gone; disconnecting stays idempotent.
-    }
+      if (integration.credentialKey) await this.options.credentials.delete(integration.credentialKey);
+      this.disableDiscordTool(parseDiscordConfig(integration).coworkerId);
+      this.emit({ type: "entity.changed", entity: "integrations", id: integrationId });
+    }));
   }
 
   private enableDiscordTool(coworkerId: string): void {
@@ -1510,6 +1592,9 @@ export class DesktopAppService {
   }
 
   private disableDiscordTool(coworkerId: string): void {
+    if (this.database.listDiscordIntegrations().some((item) =>
+      (item.status === "connected" || item.status === "error") && parseDiscordConfig(item).coworkerId === coworkerId,
+    )) return;
     const name = this.coworkerNameOrNull(coworkerId);
     if (name === null) return;
     const coworker = this.database.getCoworker(coworkerId);

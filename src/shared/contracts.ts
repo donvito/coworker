@@ -420,13 +420,13 @@ export interface Integration {
 export type EmailIntegrationMode = "local-outbox" | "resend";
 
 export interface TelegramIntegrationStatus {
-  integration: Integration | null;
+  integration: Integration;
   /** Deep link that pairs the user's Telegram chat: https://t.me/<bot>?start=<code>. */
   pairingLink: string | null;
 }
 
 export interface DiscordIntegrationStatus {
-  integration: Integration | null;
+  integration: Integration;
   /** Authorize URL with the minimum bot permissions already selected. */
   inviteUrl: string | null;
   /** Posted in a guild channel or thread to pair. Null once paired. */
@@ -639,19 +639,21 @@ export interface DesktopApi {
       fromAddress?: string;
     }): Promise<Integration>;
     configureTelegram(input: {
+      integrationId?: string;
       botToken?: string;
       coworkerId: string;
     }): Promise<TelegramIntegrationStatus>;
-    telegramStatus(): Promise<TelegramIntegrationStatus>;
-    unpairTelegram(): Promise<TelegramIntegrationStatus>;
-    disconnectTelegram(): Promise<void>;
+    telegramStatus(): Promise<TelegramIntegrationStatus[]>;
+    unpairTelegram(integrationId: string): Promise<TelegramIntegrationStatus>;
+    disconnectTelegram(integrationId: string): Promise<void>;
     configureDiscord(input: {
+      integrationId?: string;
       botToken?: string;
       coworkerId: string;
     }): Promise<DiscordIntegrationStatus>;
-    discordStatus(): Promise<DiscordIntegrationStatus>;
-    unpairDiscord(): Promise<DiscordIntegrationStatus>;
-    disconnectDiscord(): Promise<void>;
+    discordStatus(): Promise<DiscordIntegrationStatus[]>;
+    unpairDiscord(integrationId: string): Promise<DiscordIntegrationStatus>;
+    disconnectDiscord(integrationId: string): Promise<void>;
     configureModel(input: {
       provider: RemoteModelProvider;
       apiKey?: string;

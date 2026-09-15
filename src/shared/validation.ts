@@ -349,6 +349,7 @@ export const configureWebSearchSchema = z.object({
 });
 
 export const configureTelegramSchema = z.object({
+  integrationId: identifier.optional(),
   botToken: z
     .string()
     .trim()
@@ -358,6 +359,7 @@ export const configureTelegramSchema = z.object({
 });
 
 export const configureDiscordSchema = z.object({
+  integrationId: identifier.optional(),
   botToken: z
     .string()
     .trim()
@@ -368,6 +370,8 @@ export const configureDiscordSchema = z.object({
     .optional(),
   coworkerId: identifier,
 });
+
+export const integrationIdSchema = identifier;
 
 export const installSkillUrlSchema = z.object({
   url: z.string().trim().url().max(2_048),

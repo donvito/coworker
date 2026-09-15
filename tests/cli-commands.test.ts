@@ -141,3 +141,16 @@ describe("terminal command contracts", () => {
     await expect(installCli(input)).rejects.toMatchObject({ code: "EEXIST" });
   });
 });
+
+describe("multi-bot CLI selection", () => {
+  it.each(["telegram", "discord"])("targets %s edits and lifecycle operations by ID", async provider => {
+    await expect(remoteCommand(parseCommand([provider, "configure", "ava", "--integration-id", "second"])))
+      .resolves.toMatchObject({ method: `${provider}.configure`, args: [{ coworkerId: "ava", integrationId: "second" }] });
+    for (const action of ["unpair", "disconnect"]) {
+      expect(() => parseCommand([provider, action])).toThrow(/integration-id/);
+      await expect(remoteCommand(parseCommand([provider, action, "--integration-id", "second"])))
+        .resolves.toEqual({ method: `${provider}.${action}`, args: ["second"] });
+    }
+    expect(humanOutput(`${provider} disconnect`, undefined)).toMatch(/disconnected/i);
+  });
+});

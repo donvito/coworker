@@ -365,7 +365,22 @@ export class CoworkerDatabase {
   }
 
   transaction<T>(operation: () => T): T {
-    return this.database.transaction(() => operation() as never, { behavior: "immediate" }) as T;
+    if (!this.sqlite.isTransaction) {
+      return this.database.transaction(() => operation() as never, { behavior: "immediate" }) as T;
+    }
+    // Public database operations may compose other atomic operations, such as
+    // creating a conversation while configuring a connection.
+    const savepoint = `nested_${randomUUID().replaceAll("-", "")}`;
+    this.sqlite.exec(`SAVEPOINT ${savepoint}`);
+    try {
+      const result = operation();
+      this.sqlite.exec(`RELEASE SAVEPOINT ${savepoint}`);
+      return result;
+    } catch (error) {
+      this.sqlite.exec(`ROLLBACK TO SAVEPOINT ${savepoint}`);
+      this.sqlite.exec(`RELEASE SAVEPOINT ${savepoint}`);
+      throw error;
+    }
   }
 
   backup(destinationPath: string): string {
@@ -1978,6 +1993,87 @@ export class CoworkerDatabase {
       .map(integrationFromRow);
   }
 
+  listTelegramIntegrations(): Integration[] {
+    return this.listIntegrations().filter((integration) => integration.type === "telegram");
+  }
+
+  listDiscordIntegrations(): Integration[] {
+    return this.listIntegrations().filter((integration) => integration.type === "discord");
+  }
+
+  /**
+   * Establishes a private root conversation for every bot connection. This is
+   * deliberately idempotent and leaves the legacy conversation/messages in
+   * place so upgrades retain history while new traffic is isolated.
+   */
+  migrateIntegrationRouting(): void {
+    const coworkerIds = new Set(this.listCoworkers().map(coworker => coworker.id));
+    this.transaction(() => {
+      for (const integration of [...this.listTelegramIntegrations(), ...this.listDiscordIntegrations()]) {
+        const config = integration.config;
+        if (typeof config.coworkerId !== "string" || !coworkerIds.has(config.coworkerId)) continue;
+        const current = typeof config.conversationId === "string"
+          ? this.database.select().from(conversations).where(eq(conversations.id, config.conversationId)).get()
+          : null;
+        if (config.routingVersion === 1 && current?.coworkerId === config.coworkerId) continue;
+        this.resetIntegrationRouting(integration.id);
+      }
+    });
+  }
+
+  /** Enforce one active connection per platform and coworker at every write boundary. */
+  assertMessagingSlotAvailable(provider: "telegram" | "discord", coworkerId: unknown, selectedId?: string): void {
+    if (typeof coworkerId !== "string" || !coworkerId) throw new Error("A coworker is required for this bot connection");
+    const occupied = this.listIntegrations().some(integration =>
+      integration.type === provider && integration.id !== selectedId &&
+      (integration.status === "connected" || integration.status === "error") &&
+      integration.config.coworkerId === coworkerId,
+    );
+    if (occupied) throw new Error(`This coworker already has a ${provider === "telegram" ? "Telegram" : "Discord"} connection. Edit or disconnect it before connecting another bot.`);
+  }
+
+  /** Preserve conflicting legacy records without silently choosing a user's bot. */
+  migrateMessagingConnectionLimits(): void {
+    this.transaction(() => {
+      const groups = new Map<string, Integration[]>();
+      for (const integration of this.listIntegrations()) {
+        if ((integration.type !== "telegram" && integration.type !== "discord") ||
+          (integration.status !== "connected" && integration.status !== "error")) continue;
+        if (typeof integration.config.coworkerId !== "string") continue;
+        const key = `${integration.type}:${integration.config.coworkerId}`;
+        groups.set(key, [...(groups.get(key) ?? []), integration]);
+      }
+      for (const group of groups.values()) {
+        if (group.length < 2) continue;
+        for (const integration of group) {
+          this.database.update(integrations).set({
+            status: "disconnected",
+            configJson: json({ ...integration.config, connectionLimitConflict: true }),
+            updatedAt: now(),
+          }).where(eq(integrations.id, integration.id)).run();
+        }
+      }
+    });
+  }
+
+  /** A new pairing/owner gets fresh conversations; historical messages stay intact. */
+  resetIntegrationRouting(integrationId: string): Integration {
+    return this.transaction(() => {
+      const integration = this.getIntegration(integrationId);
+      if (integration.type !== "telegram" && integration.type !== "discord") throw new Error("This integration is not a bot connection");
+      const config = integration.config;
+      if (typeof config.coworkerId !== "string") throw new Error("The bot connection has no coworker");
+      const conversation = this.createConversation({ coworkerId: config.coworkerId, title: `${integration.name} conversation` });
+      this.database.update(integrations).set({
+        configJson: json({ ...config, conversationId: conversation.id, routingVersion: 1,
+          routingGeneration: (typeof config.routingGeneration === "number" ? config.routingGeneration : 0) + 1,
+          topics: {}, threads: {}, lastThreads: {}, approvalEdits: {}, inboundMessages: {} }),
+        updatedAt: now(),
+      }).where(eq(integrations.id, integration.id)).run();
+      return this.getIntegration(integration.id);
+    });
+  }
+
   upsertEmailIntegration(input: {
     name: string;
     mode: EmailIntegrationMode;
@@ -2041,29 +2137,42 @@ export class CoworkerDatabase {
     return row ? integrationFromRow(row) : null;
   }
 
-  getTelegramIntegration(): Integration | null {
-    const row = this.database
+  getTelegramIntegration(id?: string): Integration | null {
+    const rows = this.database
       .select()
       .from(integrations)
-      .where(eq(integrations.type, "telegram"))
-      .limit(1)
-      .get();
-    return row ? integrationFromRow(row) : null;
+      .where(id ? and(eq(integrations.type, "telegram"), eq(integrations.id, id)) : eq(integrations.type, "telegram"))
+      .limit(id ? 1 : 2)
+      .all();
+    return rows.length === 1 ? integrationFromRow(rows[0]!) : null;
   }
 
   upsertTelegramIntegration(input: {
+    integrationId?: string;
     name: string;
     credentialKey: string | null;
     status: Integration["status"];
     config: Record<string, unknown>;
   }): Integration {
-    const existing = this.database
-      .select()
-      .from(integrations)
-      .where(eq(integrations.type, "telegram"))
-      .limit(1)
-      .get();
+    const existing = input.integrationId
+      ? this.database.select().from(integrations).where(and(eq(integrations.id, input.integrationId), eq(integrations.type, "telegram"))).get()
+      : undefined;
+    if (input.integrationId && !existing) throw new Error("The selected bot connection was not found");
+    if (input.status === "connected" || input.status === "error") {
+      this.assertMessagingSlotAvailable("telegram", input.config.coworkerId, input.integrationId);
+    }
     const timestamp = now();
+    const stableBotId = typeof input.config.botUserId === "string" || typeof input.config.botUserId === "number" ? String(input.config.botUserId) : typeof input.config.botUsername === "string" ? input.config.botUsername : null;
+    if (stableBotId) {
+      const duplicate = this.database.select().from(integrations).where(eq(integrations.type, "telegram")).all().find((row) => {
+        const config = parseJson<Record<string, unknown>>(row.configJson, {});
+        return row.id !== existing?.id && (
+          String(config.botUserId ?? config.botUsername ?? "") === stableBotId ||
+          (!config.botUserId && Boolean(config.botUsername) && config.botUsername === input.config.botUsername)
+        );
+      });
+      if (duplicate) throw new Error(`Telegram bot ${stableBotId} is already configured`);
+    }
     if (existing) {
       this.database
         .update(integrations)
@@ -2101,9 +2210,14 @@ export class CoworkerDatabase {
   updateTelegramIntegration(patch: {
     status?: Integration["status"];
     config?: Record<string, unknown>;
-  }): Integration {
-    const existing = this.getTelegramIntegration();
+  }, integrationId?: string): Integration {
+    const existing = this.getTelegramIntegration(integrationId);
     if (!existing) throw new Error("The Telegram integration is not configured");
+    const status = patch.status ?? existing.status;
+    const config = { ...existing.config, ...(patch.config ?? {}) };
+    if (status === "connected" || status === "error") {
+      this.assertMessagingSlotAvailable("telegram", config.coworkerId, existing.id);
+    }
     this.database
       .update(integrations)
       .set({
@@ -2116,29 +2230,42 @@ export class CoworkerDatabase {
     return this.getIntegration(existing.id);
   }
 
-  getDiscordIntegration(): Integration | null {
-    const row = this.database
+  getDiscordIntegration(id?: string): Integration | null {
+    const rows = this.database
       .select()
       .from(integrations)
-      .where(eq(integrations.type, "discord"))
-      .limit(1)
-      .get();
-    return row ? integrationFromRow(row) : null;
+      .where(id ? and(eq(integrations.type, "discord"), eq(integrations.id, id)) : eq(integrations.type, "discord"))
+      .limit(id ? 1 : 2)
+      .all();
+    return rows.length === 1 ? integrationFromRow(rows[0]!) : null;
   }
 
   upsertDiscordIntegration(input: {
+    integrationId?: string;
     name: string;
     credentialKey: string | null;
     status: Integration["status"];
     config: Record<string, unknown>;
   }): Integration {
-    const existing = this.database
-      .select()
-      .from(integrations)
-      .where(eq(integrations.type, "discord"))
-      .limit(1)
-      .get();
+    const existing = input.integrationId
+      ? this.database.select().from(integrations).where(and(eq(integrations.id, input.integrationId), eq(integrations.type, "discord"))).get()
+      : undefined;
+    if (input.integrationId && !existing) throw new Error("The selected bot connection was not found");
+    if (input.status === "connected" || input.status === "error") {
+      this.assertMessagingSlotAvailable("discord", input.config.coworkerId, input.integrationId);
+    }
     const timestamp = now();
+    const stableBotId = typeof input.config.botUserId === "string" || typeof input.config.botUserId === "number" ? String(input.config.botUserId) : typeof input.config.botUsername === "string" ? input.config.botUsername : null;
+    if (stableBotId) {
+      const duplicate = this.database.select().from(integrations).where(eq(integrations.type, "discord")).all().find((row) => {
+        const config = parseJson<Record<string, unknown>>(row.configJson, {});
+        return row.id !== existing?.id && (
+          String(config.botUserId ?? config.botUsername ?? "") === stableBotId ||
+          (!config.botUserId && Boolean(config.botUsername) && config.botUsername === input.config.botUsername)
+        );
+      });
+      if (duplicate) throw new Error(`Discord bot ${stableBotId} is already configured`);
+    }
     if (existing) {
       this.database
         .update(integrations)
@@ -2175,9 +2302,14 @@ export class CoworkerDatabase {
   updateDiscordIntegration(patch: {
     status?: Integration["status"];
     config?: Record<string, unknown>;
-  }): Integration {
-    const existing = this.getDiscordIntegration();
+  }, integrationId?: string): Integration {
+    const existing = this.getDiscordIntegration(integrationId);
     if (!existing) throw new Error("The Discord integration is not configured");
+    const status = patch.status ?? existing.status;
+    const config = { ...existing.config, ...(patch.config ?? {}) };
+    if (status === "connected" || status === "error") {
+      this.assertMessagingSlotAvailable("discord", config.coworkerId, existing.id);
+    }
     this.database
       .update(integrations)
       .set({

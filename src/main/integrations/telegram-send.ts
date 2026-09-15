@@ -1,3 +1,4 @@
+import { withConnectionOperation } from "./connection-operations";
 import { readFile } from "node:fs/promises";
 import { basename, extname } from "node:path";
 import type { CoworkerDatabase } from "@main/db/database";
@@ -12,6 +13,8 @@ import {
   telegramDocumentUploadLimit,
   telegramPhotoUploadLimit,
 } from "./telegram";
+import { resolveMessagingIntegration, resolvedMessagingThread } from "./integration-selection";
+import type { RequestContext } from "@shared/request-context";
 
 const photoMimeTypes: Record<string, string> = {
   ".jpg": "image/jpeg",
@@ -23,6 +26,7 @@ const photoMimeTypes: Record<string, string> = {
 
 export interface TelegramSendResult {
   delivered: true;
+  integrationId: string;
   chatId: number;
   messageThreadId: number | null;
   messageChunks: number;
@@ -34,17 +38,26 @@ export interface TelegramSendResult {
  * and optional workspace files to the paired Telegram chat, targeting the
  * topic mapped to the task's conversation when one exists.
  */
-export async function sendCoworkerTelegramMessage(input: {
+async function sendCoworkerTelegramMessageUnchecked(input: {
   database: CoworkerDatabase;
   credentials: CredentialStore;
   workspacePath: string;
   /** The task's conversation (threadId); routes into its mapped topic. */
   conversationId: string | null;
+  coworkerId: string;
+  integrationId?: string;
+  integrationName?: string;
+  integrationDestination?: string;
+  integrationBinding?: Record<string, unknown>;
+  requestContext?: RequestContext;
   message: string;
   attachments?: string[];
   fetchImpl?: typeof fetch;
 }): Promise<TelegramSendResult> {
-  const integration = input.database.getTelegramIntegration();
+  const selected = resolveMessagingIntegration({ database: input.database, provider: "telegram", coworkerId: input.coworkerId, conversationId: input.conversationId, requestedIntegrationId: input.integrationId, originatingIntegrationId: input.requestContext?.channel === "telegram" ? input.requestContext.originatingIntegrationId : undefined });
+  const integration = selected.integration;
+  const currentBinding = { ...selected.binding, resolvedThreadId: resolvedMessagingThread("telegram", integration, input.conversationId) };
+  if ((input.integrationName && input.integrationName !== selected.name) || (input.integrationDestination && input.integrationDestination !== selected.destination) || (input.integrationBinding && JSON.stringify(input.integrationBinding) !== JSON.stringify(currentBinding))) throw new Error("The selected Telegram connection changed while approval was pending. Ask for approval again.");
   if (!integration || integration.status !== "connected") {
     throw new Error(
       "Telegram is not connected. Ask the user to connect it in Settings → Integrations.",
@@ -56,26 +69,15 @@ export async function sendCoworkerTelegramMessage(input: {
       "Telegram is connected but no chat is paired yet. Ask the user to open the pairing link in Settings → Integrations.",
     );
   }
-  const token = await input.credentials.get(telegramCredentialKey);
+  const token = await input.credentials.get(integration.credentialKey ?? telegramCredentialKey);
   if (!token) {
     throw new Error(
       "The Telegram bot token is missing. Ask the user to reconnect Telegram in Settings → Integrations.",
     );
   }
 
-  // Bridge-created topics map strictly; otherwise deliver into the thread the
-  // user last wrote from in this conversation. Threaded bot chats swallow
-  // messages sent without a thread id, so a bare send is the last resort.
-  const mappedThread =
-    input.conversationId && input.conversationId !== config.conversationId
-      ? Object.entries(config.topics).find(([, mapped]) => mapped === input.conversationId)?.[0]
-      : undefined;
-  const threadId =
-    mappedThread !== undefined
-      ? Number(mappedThread)
-      : input.conversationId
-        ? config.lastThreads[input.conversationId]
-        : undefined;
+  const selectedThread = resolvedMessagingThread("telegram", integration, input.conversationId);
+  const threadId = selectedThread === null ? undefined : Number(selectedThread);
 
   // Read and validate every attachment before sending anything, so a bad
   // path cannot leave a half-delivered message.
@@ -138,9 +140,22 @@ export async function sendCoworkerTelegramMessage(input: {
 
   return {
     delivered: true,
+    integrationId: selected.id,
     chatId: config.chatId,
     messageThreadId: threadId ?? null,
     messageChunks,
     attachments,
   };
+}
+
+export async function sendCoworkerTelegramMessage(input: Parameters<typeof sendCoworkerTelegramMessageUnchecked>[0]): Promise<TelegramSendResult> {
+  const selected = resolveMessagingIntegration({
+    database: input.database, provider: "telegram", coworkerId: input.coworkerId,
+    conversationId: input.conversationId, requestedIntegrationId: input.integrationId,
+    originatingIntegrationId: input.requestContext?.channel === "telegram" ? input.requestContext.originatingIntegrationId : undefined,
+  });
+  return withConnectionOperation(input.database, selected.id, () => sendCoworkerTelegramMessageUnchecked({
+    ...input, integrationId: selected.id,
+    integrationBinding: input.integrationBinding ?? { ...selected.binding, resolvedThreadId: resolvedMessagingThread("telegram", selected.integration, input.conversationId) },
+  }));
 }

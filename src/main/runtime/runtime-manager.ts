@@ -16,6 +16,7 @@ import type {
 import type { ProviderErrorSink } from "./provider-error-logger";
 import { loadWorkspaceContext } from "@main/tools/workspace-text";
 import { requestContextForTask } from "@shared/request-context";
+import { messagingCandidates } from "@main/integrations/integration-selection";
 
 interface RuntimeRecord {
   coworkerId: string;
@@ -418,7 +419,12 @@ export class CoworkerRuntimeManager {
         runId: task.runId,
         threadId: task.threadId,
         input: task.input,
-        requestContext: requestContextForTask(task),
+        requestContext: {
+          ...requestContextForTask(task),
+          eligibleConnections: ["telegram", "discord"].flatMap((provider) =>
+            messagingCandidates(this.options.database, provider as "telegram" | "discord", coworkerId).map(({ id, name, destination }) => ({ id, name, destination })),
+          ),
+        },
         workspaceContext,
         images,
         threadMessages,

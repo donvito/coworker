@@ -18,9 +18,9 @@ import {
   DiscordLinkBadge,
   coworkerAvatarCount,
   coworkerAvatarVisual,
-  discordLinkedCoworkerId,
+  discordConnectionCount,
   TelegramLinkBadge,
-  telegramLinkedCoworkerId,
+  telegramConnectionCount,
 } from "../components/Primitives";
 
 type CoworkerView = "cards" | "list";
@@ -116,11 +116,11 @@ export function CoworkersPage({
                 {coworker.enabledTools.length} tools
               </span>
               <CoworkerModelBadge coworker={coworker} modelEndpoints={modelEndpoints} />
-              {telegramLinkedCoworkerId(integrations) === coworker.id ? (
-                <TelegramLinkBadge />
+              {telegramConnectionCount(integrations, coworker.id) > 0 ? (
+                <TelegramLinkBadge count={telegramConnectionCount(integrations, coworker.id)} />
               ) : null}
-              {discordLinkedCoworkerId(integrations) === coworker.id ? (
-                <DiscordLinkBadge />
+              {discordConnectionCount(integrations, coworker.id) > 0 ? (
+                <DiscordLinkBadge count={discordConnectionCount(integrations, coworker.id)} />
               ) : null}
             </span>
             <span className="roster-open-cta">

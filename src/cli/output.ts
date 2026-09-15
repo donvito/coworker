@@ -33,15 +33,18 @@ function formatApproval(approval: Approval): string {
   return lines.join("\n");
 }
 
-function telegramState(result: TelegramIntegrationStatus | undefined): string {
-  return result?.integration?.status ?? "not configured";
+function telegramState(result: TelegramIntegrationStatus[] | TelegramIntegrationStatus | undefined): string {
+  if (result && !Array.isArray(result)) return result.integration?.status ?? "not configured";
+  if (!result?.length) return "not configured";
+  return result.map((item) => item.integration.status).join(", ");
 }
 
-function formatTelegram(result: TelegramIntegrationStatus): string {
+function formatTelegram(result: TelegramIntegrationStatus | TelegramIntegrationStatus[]): string {
+  if (Array.isArray(result)) return result.length ? result.map((item) => formatTelegram(item)).join("\n\n") : "Telegram is not configured.";
   const { integration, pairingLink } = result;
   if (!integration) return "Telegram is not configured.";
   const { config } = integration;
-  const lines = [`Telegram: ${telegramState(result)}`, `Bot: ${cell(config.botUsername)}`];
+  const lines = [`Telegram: ${integration.status}`, `Integration ID: ${integration.id}`, `Bot: ${cell(config.botUsername)}`];
   if (integration.status === "connected") {
     const paired = config.chatId !== null && config.chatId !== undefined;
     lines.push(`Pairing: ${paired ? "paired" : "waiting for pairing"}`);
@@ -51,18 +54,22 @@ function formatTelegram(result: TelegramIntegrationStatus): string {
   return lines.join("\n");
 }
 
-function discordState(result: DiscordIntegrationStatus | undefined): string {
-  return result?.integration?.status ?? "not configured";
+function discordState(result: DiscordIntegrationStatus[] | DiscordIntegrationStatus | undefined): string {
+  if (result && !Array.isArray(result)) return result.integration?.status ?? "not configured";
+  if (!result?.length) return "not configured";
+  return result.map((item) => item.integration.status).join(", ");
 }
 
-function formatDiscord(result: DiscordIntegrationStatus): string {
+function formatDiscord(result: DiscordIntegrationStatus | DiscordIntegrationStatus[]): string {
+  if (Array.isArray(result)) return result.length ? result.map((item) => formatDiscord(item)).join("\n\n") : "Discord is not configured.";
   const { integration, inviteUrl, pairingCode, intentSettingsUrl } = result;
   if (!integration) return "Discord is not configured.";
   const { config } = integration;
   const configured = integration.status === "connected" || integration.status === "error";
   const paired = Boolean(config.guildId && config.channelId);
   const lines = [
-    `Discord: ${configured && !paired && integration.status === "connected" ? "connected, waiting to pair" : discordState(result)}`,
+    `Discord: ${configured && !paired && integration.status === "connected" ? "connected, waiting to pair" : integration.status}`,
+    `Integration ID: ${integration.id}`,
     `Bot: ${cell(config.botUsername)}`,
   ];
   if (configured && !paired) {
@@ -109,6 +116,8 @@ function formatLogRecord(record: LogRecord): string {
 }
 
 export function humanOutput(command: string, value: unknown): string {
+  if (command === "telegram disconnect") return "Telegram bot disconnected.";
+  if (command === "discord disconnect") return "Discord bot disconnected.";
   if (value === null || value === undefined) return "Done.";
   if (command === "memory show") return (value as WorkspaceTextDocument).content;
   if (["memory set", "memory clear"].includes(command)) return "Memory saved. It will be loaded on the next turn.";
@@ -124,7 +133,7 @@ export function humanOutput(command: string, value: unknown): string {
     const services = status.services as Record<string, unknown> | undefined;
     return ["Coworker is running.", `Mode: ${cell(status.mode)}  PID: ${cell(status.pid)}  Uptime: ${cell(status.uptimeSeconds)}s`,
       `Profile: ${cell(status.profile)}\nData: ${cell(status.dataPath)}`,
-      `Scheduler: ${cell(services?.scheduler)}  Telegram: ${telegramState(services?.telegram as TelegramIntegrationStatus | undefined)}  Discord: ${discordState(services?.discord as DiscordIntegrationStatus | undefined)}`].join("\n");
+      `Scheduler: ${cell(services?.scheduler)}  Telegram: ${telegramState(services?.telegram as TelegramIntegrationStatus[] | TelegramIntegrationStatus | undefined)}  Discord: ${discordState(services?.discord as DiscordIntegrationStatus[] | DiscordIntegrationStatus | undefined)}`].join("\n");
   }
   if (["start", "restart"].includes(command)) return `Coworker started (${cell((value as Record<string, unknown>).mode)} mode, PID ${cell((value as Record<string, unknown>).pid)}).`;
   if (command === "stop") return "Coworker stopped.";
@@ -132,8 +141,8 @@ export function humanOutput(command: string, value: unknown): string {
   if (command === "models default") return formatModelDefault(value as AppSettings | ConfigureModelResult);
   if (command === "models endpoints add") return `Endpoint added.\nProvider ID: ${cell((value as { provider: string }).provider)}`;
   if (command === "models list") return table((value as Array<Record<string, unknown>>).map((model) => ({ Model: model.id, Name: model.name ?? "" })), ["Model", "Name"]);
-  if (["telegram status", "telegram configure", "telegram unpair"].includes(command)) return formatTelegram(value as TelegramIntegrationStatus);
-  if (["discord status", "discord configure", "discord unpair"].includes(command)) return formatDiscord(value as DiscordIntegrationStatus);
+  if (["telegram status", "telegram configure", "telegram unpair"].includes(command)) return formatTelegram(value as TelegramIntegrationStatus | TelegramIntegrationStatus[]);
+  if (["discord status", "discord configure", "discord unpair"].includes(command)) return formatDiscord(value as DiscordIntegrationStatus | DiscordIntegrationStatus[]);
   if (command === "approvals show") return formatApproval(value as Approval);
   if (command === "activity list") {
     const rows = value as Array<Record<string, unknown>>;

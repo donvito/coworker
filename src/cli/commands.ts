@@ -8,7 +8,7 @@ import { memoryFile } from "@shared/workspace-context";
 import { updateMemorySchema } from "@shared/validation";
 
 const booleanOptions = ["json", "help", "headless", "ui", "overwrite", "key-stdin", "prompt-key", "token-stdin", "prompt-token"];
-const stringOptions = ["data-path", "file", "base-url", "model", "endpoint-name", "name", "coworker",
+const stringOptions = ["data-path", "file", "base-url", "model", "endpoint-name", "name", "coworker", "integration-id",
   "provider", "role", "description", "system-prompt", "status", "cron", "run-at", "timezone", "title", "input",
   "output", "source", "level", "since", "until", "limit", "conversation", "timeout", "revision"];
 type Values = Record<string, string | boolean | undefined>;
@@ -25,13 +25,13 @@ const definitions: Record<string, { args: [number, number]; flags: string[]; usa
   "startup status": { args: [0, 0], flags: [], usage: "startup status" },
   "startup disable": { args: [0, 0], flags: [], usage: "startup disable" },
   "telegram status": { args: [0, 0], flags: [], usage: "telegram status" },
-  "telegram configure": { args: [1, 1], flags: ["token-stdin", "prompt-token"], usage: "telegram configure COWORKER_ID [--prompt-token | --token-stdin]" },
-  "telegram unpair": { args: [0, 0], flags: [], usage: "telegram unpair" },
-  "telegram disconnect": { args: [0, 0], flags: [], usage: "telegram disconnect" },
+  "telegram configure": { args: [1, 1], flags: ["integration-id", "token-stdin", "prompt-token"], usage: "telegram configure COWORKER_ID [--integration-id ID] [--prompt-token | --token-stdin]" },
+  "telegram unpair": { args: [0, 0], flags: ["integration-id"], usage: "telegram unpair --integration-id ID" },
+  "telegram disconnect": { args: [0, 0], flags: ["integration-id"], usage: "telegram disconnect --integration-id ID" },
   "discord status": { args: [0, 0], flags: [], usage: "discord status" },
-  "discord configure": { args: [1, 1], flags: ["token-stdin", "prompt-token"], usage: "discord configure COWORKER_ID [--prompt-token | --token-stdin]" },
-  "discord unpair": { args: [0, 0], flags: [], usage: "discord unpair" },
-  "discord disconnect": { args: [0, 0], flags: [], usage: "discord disconnect" },
+  "discord configure": { args: [1, 1], flags: ["integration-id", "token-stdin", "prompt-token"], usage: "discord configure COWORKER_ID [--integration-id ID] [--prompt-token | --token-stdin]" },
+  "discord unpair": { args: [0, 0], flags: ["integration-id"], usage: "discord unpair --integration-id ID" },
+  "discord disconnect": { args: [0, 0], flags: ["integration-id"], usage: "discord disconnect --integration-id ID" },
   "activity list": { args: [0, 0], flags: ["limit"], usage: "activity list [--limit N]" },
   "models providers": { args: [0, 0], flags: [], usage: "models providers" },
   "models list": { args: [1, 1], flags: [], usage: "models list PROVIDER" },
@@ -108,6 +108,7 @@ export function parseCommand(argv: string[]): CliCommand {
   if (commandName === "run" && !values.headless) throw new Error("Usage: coworker run --headless");
   if (commandName === "memory set" && !values.file) throw new Error("--file notes.md is required");
   if (values.revision !== undefined && !/^[a-f0-9]{64}$/.test(String(values.revision))) throw new Error("--revision must be the revision from memory show --json");
+  if (["telegram unpair", "telegram disconnect", "discord unpair", "discord disconnect"].includes(commandName) && typeof values["integration-id"] !== "string") throw new Error("--integration-id is required");
   if (commandName === "activity list" && values.limit !== undefined && !listLimitSchema.safeParse(Number(values.limit)).success) {
     throw new Error("--limit must be an integer from 1 to 1000");
   }
@@ -149,8 +150,7 @@ export async function remoteCommand(command: CliCommand, apiKey?: string, curren
   const request = (method: string, ...parameters: unknown[]) => ({ method, args: parameters });
   const simple: Record<string, string> = {
     "models providers": "models.providers", "models list": ipc.integrationsListModels,
-    "telegram status": "telegram.status", "telegram unpair": "telegram.unpair", "telegram disconnect": "telegram.disconnect",
-    "discord status": "discord.status", "discord unpair": "discord.unpair", "discord disconnect": "discord.disconnect",
+    "telegram status": "telegram.status", "discord status": "discord.status",
     "startup status": "startup.status", "startup disable": "startup.disable",
     "models endpoints remove": ipc.integrationsRemoveModelEndpoint,
     "coworkers list": ipc.coworkersList, "coworkers show": "coworkers.show", "coworkers remove": ipc.coworkersRemove,
@@ -177,8 +177,11 @@ export async function remoteCommand(command: CliCommand, apiKey?: string, curren
   if (name === "models configure" || name === "models endpoints add") return request(
     name === "models configure" ? ipc.integrationsConfigureModel : ipc.integrationsAddModelEndpoint,
     { provider: args[0], name: values.name, baseUrl: values["base-url"], defaultModelName: values.model, endpointName: values["endpoint-name"], apiKey });
-  if (name === "telegram configure") return request("telegram.configure", { coworkerId: args[0], botToken: apiKey });
-  if (name === "discord configure") return request("discord.configure", { coworkerId: args[0], botToken: apiKey });
+  if (name === "telegram configure") return request("telegram.configure", { coworkerId: args[0], botToken: apiKey, integrationId: values["integration-id"] });
+  if (name === "discord configure") return request("discord.configure", { coworkerId: args[0], botToken: apiKey, integrationId: values["integration-id"] });
+  if (name === "telegram unpair" || name === "telegram disconnect" || name === "discord unpair" || name === "discord disconnect") {
+    return request(name.replace(" ", "."), values["integration-id"]);
+  }
   if (name === "models default") return args.length ? request(ipc.integrationsConfigureModel,
     { provider: args[0], defaultModelName: args[1] }) : request(ipc.getSettings);
   if (name === "models credentials remove") return request(ipc.integrationsRemoveCredential, `model:${args[0]}`);

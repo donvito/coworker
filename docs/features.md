@@ -58,7 +58,7 @@ See the [memory guide](memory.md) for examples, limits, and privacy details.
 
 ## Telegram
 
-Pair a private Telegram chat and message a coworker from your phone.
+Connect one Telegram bot per coworker, paired to one private chat. Telegram connections are independent across coworkers, with separate conversations, credentials, and pairing controls.
 
 - Replies stream back to Telegram and mirror to the desktop conversation
 - Documents and photos move both ways
@@ -67,7 +67,7 @@ Pair a private Telegram chat and message a coworker from your phone.
 
 ## Discord
 
-Pair one Discord server channel (or a thread/forum post in it) and message a coworker from Discord. Telegram can stay connected at the same time.
+Connect one Discord bot per coworker, paired to one server channel (or a thread/forum post in it). A coworker may have both one Telegram and one Discord connection. Discord connections are independent across coworkers, with separate conversations and connection controls.
 
 - Invite the bot, then paste the pairing code in the channel or thread you want — that is the only pairing action
 - Threads and forum posts become their own desktop conversations
@@ -79,6 +79,10 @@ Pair one Discord server channel (or a thread/forum post in it) and message a cow
 - Approvals arrive as buttons you can tap; reply to the edit prompt to approve replacement text
 - `/stop` cancels in-flight work
 
+Bot conversations remain accessible in the desktop app. Desktop replies within one of those conversations go only to its bot; ordinary desktop conversations are not broadcast. Desktop-started conversations stay local. If you request delivery to Telegram or Discord and several coworker connections match, the coworker asks which connection to use. An incoming bot request uses its own connection by default.
+
+On upgrade, existing bots stay paired and future messages start in fresh bot-specific conversations. Previous history remains in the desktop app.
+
 ## Platform
 
 - Tray/background operation and launch-at-login controls
@@ -86,3 +90,9 @@ Pair one Discord server channel (or a thread/forum post in it) and message a cow
 - OS-backed encrypted model and integration credentials
 - Redacted application diagnostics with downloadable ZIP support bundles
 - Complete ZIP backups of conversations, database state, coworker workspaces, and outbox files
+
+### Messaging configuration
+
+Each coworker can connect one Telegram bot and one Discord bot. Configure them in the coworker’s settings or in the global **Settings → Integrations** page; both views manage the same connections. Messaging changes save independently of the coworker’s other settings. Unpairing keeps the platform slot occupied; disconnecting frees it. Conversations started on desktop remain local, while conversations started through a bot sync with that bot.
+
+If an older profile has several active bots on the same platform for one coworker, the upgrade pauses those conflicting connections and keeps their credentials, pairings, and history. Reconnect the desired bot or move a bot to a coworker with a free slot. Reconnecting a paused bot can reuse its stored token; explicitly disconnecting it removes that token.

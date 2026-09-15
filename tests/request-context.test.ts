@@ -16,3 +16,9 @@ describe("request transport context", () => {
     expect(requestContextForTask({ sourceMessageId, source })).toEqual({ channel, source });
   });
 });
+
+  it("carries connection identity in new transport IDs without changing legacy IDs", () => {
+    expect(requestContextForTask({ sourceMessageId: "telegram:bot-one:123", source: "manual" })).toEqual({ channel: "telegram", source: "manual", originatingIntegrationId: "bot-one" });
+    expect(requestContextForTask({ sourceMessageId: "discord:bot-two:123", source: "recovery" })).toEqual({ channel: "discord", source: "recovery", originatingIntegrationId: "bot-two" });
+    expect(requestContextForTask({ sourceMessageId: "discord:123", source: "manual" })).not.toHaveProperty("originatingIntegrationId");
+  });

@@ -8,6 +8,9 @@ export const telegramDocumentUploadLimit = 50 * 1024 * 1024;
 export const telegramDownloadLimit = 20 * 1024 * 1024;
 
 export const telegramCredentialKey = "integration:telegram:bot";
+export function telegramCredentialKeyFor(integrationId: string): string {
+  return `${telegramCredentialKey}:${integrationId}`;
+}
 
 export interface TelegramUser {
   id: number;
@@ -107,12 +110,18 @@ export interface TelegramForumTopic {
   name: string;
 }
 
-/** Config JSON stored on the singleton `telegram` integration row. */
+/** Config JSON stored on one Telegram bot connection. */
 export interface TelegramIntegrationConfig {
   botUsername: string;
+  /** Paused by the one-connection upgrade until the user chooses a bot. */
+  connectionLimitConflict?: boolean;
+  /** Stable Bot API user id, used to reject the same bot on two connections. */
+  botUserId?: number;
+  /** Latest polling error, cleared when this connection recovers. */
+  connectionError?: string | null;
   /** The coworker this bot is linked to. */
   coworkerId: string;
-  /** The coworker's main conversation, used for messages outside any topic. */
+  /** This connection's root conversation, used for messages outside any topic. */
   conversationId: string;
   /** Paired private chat id, set after /start <pairingCode> succeeds. */
   chatId: number | null;
@@ -137,6 +146,8 @@ export function parseTelegramConfig(integration: Integration): TelegramIntegrati
   const config = integration.config as Partial<TelegramIntegrationConfig>;
   return {
     botUsername: typeof config.botUsername === "string" ? config.botUsername : "",
+    botUserId: typeof config.botUserId === "number" ? config.botUserId : undefined,
+    connectionError: typeof config.connectionError === "string" ? config.connectionError : null,
     coworkerId: typeof config.coworkerId === "string" ? config.coworkerId : "",
     conversationId: typeof config.conversationId === "string" ? config.conversationId : "",
     chatId: typeof config.chatId === "number" ? config.chatId : null,

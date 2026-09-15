@@ -1,3 +1,4 @@
+import { BridgeManager } from "./bridge-manager";
 import { readFile, writeFile } from "node:fs/promises";
 import { basename, posix } from "node:path";
 import { EventType } from "@ag-ui/core";
@@ -51,6 +52,9 @@ export interface TelegramBridgeHost {
 }
 
 export interface TelegramBridgeOptions {
+  /** Integration row this bridge owns. Omitted for legacy singleton callers. */
+  integrationId?: string;
+  credentialKey?: string;
   database: CoworkerDatabase;
   credentials: CredentialStore;
   host: TelegramBridgeHost;
@@ -206,8 +210,8 @@ export class TelegramBridgeService {
 
   async start(): Promise<void> {
     if (this.running) return;
-    const integration = this.options.database.getTelegramIntegration();
-    if (!integration || integration.status !== "connected") return;
+    const integration = this.options.database.getTelegramIntegration(this.options.integrationId);
+    if (!integration || (integration.status !== "connected" && integration.status !== "error")) return;
     const token = await this.readToken();
     if (!token) return;
 
@@ -272,7 +276,7 @@ export class TelegramBridgeService {
 
   private async readToken(): Promise<string | null> {
     try {
-      return await this.options.credentials.get(telegramCredentialKey);
+      return await this.options.credentials.get(this.options.database.getTelegramIntegration(this.options.integrationId)?.credentialKey ?? this.options.credentialKey ?? telegramCredentialKey);
     } catch (error) {
       this.options.onError?.("telegram.credentials", error);
       return null;
@@ -283,7 +287,7 @@ export class TelegramBridgeService {
     const config = this.config;
     if (!config?.coworkerId) return;
     for (const conversation of this.options.database.listConversations(config.coworkerId)) {
-      if (conversation.kind !== "direct") continue;
+      if (conversation.kind !== "direct" || !this.ownsConversation(conversation.id)) continue;
       const messages = this.options.database.listConversationMessages(conversation.id);
       this.seedCursor(conversation.id, messages);
     }
@@ -318,6 +322,7 @@ export class TelegramBridgeService {
           timeoutSeconds: this.options.pollTimeoutSeconds ?? 50,
           signal,
         });
+        this.reportConnectionHealth(null);
         for (const update of updates) {
           if (!this.running) return;
           await this.handleUpdate(update);
@@ -327,6 +332,9 @@ export class TelegramBridgeService {
       } catch (error) {
         if (!this.running) return;
         if (signal.aborted) continue; // wake() aborted the poll on purpose.
+        this.reportConnectionHealth(error instanceof TelegramApiError
+          ? `Telegram polling failed (API ${error.errorCode}). Check this bot's token and other polling instances.`
+          : "Telegram polling failed. This connection will retry automatically.");
         this.options.onError?.("telegram.poll", error);
         if (error instanceof TelegramApiError && error.errorCode === 409) {
           this.options.database.addActivity({
@@ -438,7 +446,7 @@ export class TelegramBridgeService {
         return;
       }
 
-      const clientMessageId = `telegram:${update.update_id}`;
+      const clientMessageId = `telegram:${this.options.integrationId ?? "legacy"}:${update.update_id}`;
       this.injectedMessageIds.add(clientMessageId);
       if (message.message_thread_id !== undefined) {
         this.inboundThreadOrigins.set(clientMessageId, message.message_thread_id);
@@ -750,7 +758,7 @@ export class TelegramBridgeService {
       if (!file.file_path) throw new Error("Telegram did not return a file path");
       const bytes = await this.api.downloadFile(file.file_path);
       const fileName = safeInboxFileName(document.file_name, `file-${updateId}`);
-      const relativePath = posix.join("telegram-inbox", `${updateId}-${fileName}`);
+      const relativePath = posix.join("telegram-inbox", this.options.integrationId ?? "legacy", `${updateId}-${fileName}`);
       const absolutePath = await resolveWorkspaceOutputPath(coworker.workspacePath, relativePath);
       await writeFile(absolutePath, bytes, { mode: 0o600 });
       return `(File received via Telegram and saved in the workspace at ${relativePath})`;
@@ -930,9 +938,16 @@ export class TelegramBridgeService {
     }
   }
 
+  private ownsConversation(conversationId: string): boolean {
+    const config = this.config;
+    return Boolean(config && (config.conversationId === conversationId || Object.values(config.topics).includes(conversationId)));
+  }
+
   private pendingTelegramApproval(id: string): Approval {
     const approval = this.options.database.getApproval(id);
     if (approval.coworkerId !== this.config?.coworkerId) throw new Error("This approval belongs to another coworker.");
+    const task = this.options.database.getTask(approval.taskId);
+    if (!this.ownsConversation(task.threadId)) throw new Error("This approval belongs to another bot connection.");
     if (approval.status !== "PENDING") throw new Error("This approval has already been decided.");
     return approval;
   }
@@ -999,7 +1014,7 @@ export class TelegramBridgeService {
   ): void {
     const config = this.config;
     if (!config || config.chatId === null) return;
-    if (event.coworkerId !== config.coworkerId) return;
+    if (event.coworkerId !== config.coworkerId || !this.ownsConversation(event.conversationId)) return;
     const conversationId = event.conversationId;
 
     const taskId = event.taskId;
@@ -1318,17 +1333,14 @@ export class TelegramBridgeService {
     } catch {
       return; // Deleted before we got to it.
     }
-    if (conversation.kind !== "direct") return;
+    if (conversation.kind !== "direct" || !this.ownsConversation(conversationId)) return;
     if (!conversation.memberIds.includes(config.coworkerId)) return;
     // Archived conversations don't mirror (new inbound activity un-archives
     // them through the send path before this runs).
     if (conversation.archivedAt) return;
 
     let threadId = this.topicForConversation(conversationId);
-    if (threadId === undefined && conversationId !== config.conversationId) {
-      threadId = await this.createOutboundTopic(conversation);
-      if (threadId === undefined) return; // Not synced (threads off or failed).
-    }
+    if (threadId === undefined && conversationId !== config.conversationId) return;
     if (threadId === undefined) {
       // Main conversation: keep the Telegram side coherent by mirroring into
       // the topic the user last wrote from, when there is one.
@@ -1504,6 +1516,17 @@ export class TelegramBridgeService {
     }
   }
 
+  private reportConnectionHealth(error: string | null): void {
+    if (!this.running || !this.config) return;
+    const integration = this.options.database.getTelegramIntegration(this.options.integrationId);
+    if (!integration || integration.status === "disconnected") return;
+    const status = error ? "error" : "connected";
+    if (integration.status === status && (this.config.connectionError ?? null) === error) return;
+    this.config.connectionError = error;
+    this.options.database.updateTelegramIntegration({ status, config: { connectionError: error } }, this.options.integrationId);
+    this.options.emit({ type: "entity.changed", entity: "integrations", id: integration.id });
+  }
+
   private saveConfig(
     patch: Partial<TelegramIntegrationConfig>,
     options: { notify?: boolean } = {},
@@ -1511,7 +1534,7 @@ export class TelegramBridgeService {
     if (!this.config) return;
     this.config = { ...this.config, ...patch };
     try {
-      this.options.database.updateTelegramIntegration({ config: patch });
+      this.options.database.updateTelegramIntegration({ config: patch }, this.options.integrationId);
     } catch (error) {
       this.options.onError?.("telegram.config", error);
       return;
@@ -1519,5 +1542,17 @@ export class TelegramBridgeService {
     if (options.notify !== false) {
       this.options.emit({ type: "entity.changed", entity: "integrations" });
     }
+  }
+
+}
+
+/** Owns an independent runtime for every Telegram connection. */
+export class TelegramBridgeManager extends BridgeManager<TelegramBridgeService> {
+  constructor(options: Omit<TelegramBridgeOptions, "integrationId" | "credentialKey"> & { credentialKeyFor?: (id: string) => string }) {
+    super({
+      list: () => options.database.listTelegramIntegrations(),
+      create: integration => new TelegramBridgeService({ ...options, onError: (scope, error) => options.onError?.(`${scope}.${integration.id}`, error), integrationId: integration.id, credentialKey: integration.credentialKey ?? options.credentialKeyFor?.(integration.id) }),
+      onError: (id, error) => options.onError?.(`telegram.connection.${id}`, error),
+    });
   }
 }

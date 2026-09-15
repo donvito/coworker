@@ -8557,3 +8557,23 @@ button.floor-activity-row:hover {
   color: var(--red);
   font-size: 11px;
 }
+
+.messaging-connection-card {
+  display: grid;
+  gap: 12px;
+  padding: 18px;
+  margin: 16px 0;
+  border: 1px solid var(--line-subtle);
+  border-radius: 14px;
+}
+.messaging-connection-card p { margin: 0; }
+.messaging-connection-heading,
+.messaging-connection-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.messaging-connection-heading { justify-content: space-between; }
+.messaging-connection-heading > span { font-size: 13px; }
+.messaging-connection-card .integration-form { max-width: 100%; }
