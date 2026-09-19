@@ -34,6 +34,7 @@ import { resolveArtifactFile } from "@main/integrations/artifact-files";
 import type { ApplicationLogger } from "@main/runtime/application-logger";
 import type { CredentialStore } from "@main/security/credential-store";
 import type { LoginStartup } from "@main/app/login-startup";
+import type { AppUpdater } from "@main/app/app-updater";
 
 const mutationChannels = new Set<string>([
   ipcChannels.updateSettings,
@@ -83,6 +84,7 @@ export function registerIpc(input: {
   getMainWindow: () => BrowserWindow | null;
   logger?: ApplicationLogger;
   startup?: Pick<LoginStartup, "status" | "enable" | "disable">;
+  updater: Pick<AppUpdater, "current" | "check" | "download" | "install">;
 }): () => void {
   const administration = createAdministration(input);
   const channels: string[] = [];
@@ -141,6 +143,15 @@ export function registerIpc(input: {
       : await dialog.showSaveDialog(options);
     if (result.canceled || !result.filePath) return null;
     return input.service.exportDataBackup(result.filePath);
+  });
+  handle(ipcChannels.updatesStatus, () => input.updater.current());
+  handle(ipcChannels.updatesCheck, () => input.updater.check({ manual: true }));
+  handle(ipcChannels.updatesDownload, () => input.updater.download());
+  handle(ipcChannels.updatesInstall, () => input.updater.install());
+  handle(ipcChannels.updatesOpenReleasePage, async () => {
+    const url = input.updater.current().releaseUrl;
+    if (!url || !/^https:\/\/github\.com\//.test(url)) throw new Error("No release page is available");
+    await shell.openExternal(url);
   });
   handle(ipcChannels.copyText, (_event, text) => {
     if (typeof text !== "string" || text.length > 1_000_000) {

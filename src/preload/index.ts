@@ -17,6 +17,13 @@ const api: DesktopApi = {
     getSettings: () => ipcRenderer.invoke(ipcChannels.getSettings),
     updateSettings: (settings) => ipcRenderer.invoke(ipcChannels.updateSettings, settings),
   },
+  updates: {
+    status: () => ipcRenderer.invoke(ipcChannels.updatesStatus),
+    check: () => ipcRenderer.invoke(ipcChannels.updatesCheck),
+    download: () => ipcRenderer.invoke(ipcChannels.updatesDownload),
+    install: () => ipcRenderer.invoke(ipcChannels.updatesInstall),
+    openReleasePage: () => ipcRenderer.invoke(ipcChannels.updatesOpenReleasePage),
+  },
   coworkers: {
     list: () => ipcRenderer.invoke(ipcChannels.coworkersList),
     create: (input) => ipcRenderer.invoke(ipcChannels.coworkersCreate, input),

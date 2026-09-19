@@ -18,7 +18,9 @@ import {
   shell,
   Tray,
 } from "electron";
+import { autoUpdater } from "electron-updater";
 import { DesktopAppService } from "@main/app/app-service";
+import { AppUpdater } from "@main/app/app-updater";
 import { prepareAppProfile, resolveAppProfile } from "@main/app/app-profile";
 import { registerIpc } from "@main/ipc/register-ipc";
 import { ApplicationLogger } from "@main/runtime/application-logger";
@@ -73,6 +75,7 @@ let shutdownStarted = false;
 let shutdownCompleted = false;
 let runInBackground = true;
 let applicationLogger: ApplicationLogger | null = null;
+let updater: AppUpdater | null = null;
 let control: Awaited<ReturnType<typeof startControlServer>> | null = null;
 let ready = false;
 let showWhenReady = false;
@@ -261,7 +264,10 @@ function rebuildTrayMenu(): void {
           });
         },
       },
-      { type: "separator" },
+      ...(updater?.current().state === "downloaded"
+        ? [{ label: `Restart to update to ${updater.current().latestVersion ?? "the latest version"}`, click: () => updater?.install() }]
+        : []),
+      { type: "separator" as const },
       {
         label: "Quit",
         click: () => {
@@ -298,7 +304,24 @@ async function start(): Promise<void> {
       runInBackground = settings.runInBackground;
       nativeTheme.themeSource = settings.colorMode;
       mainWindow?.setBackgroundColor(windowBackgroundColor());
+      updater?.refreshSchedule();
     },
+  });
+  const activeLogger = applicationLogger;
+  const appService = service;
+  updater = new AppUpdater({
+    client: app.isPackaged ? autoUpdater : null,
+    currentVersion: app.getVersion(),
+    repositoryUrl: "https://github.com/donvito/coworker",
+    // Squirrel.Mac refuses to install unsigned bundles, so macOS builds only link to the release.
+    canInstall: process.platform !== "darwin",
+    autoUpdateEnabled: () => appService.database.getSettings().autoUpdate,
+    onStatus: (status) => {
+      mainWindow?.webContents.send(ipcChannels.event, { type: "update.status", status });
+      rebuildTrayMenu();
+    },
+    beforeInstall: () => { isQuitting = true; },
+    logger: activeLogger,
   });
   // Reflect the OS registration without re-enabling entries the user disabled
   // externally, or letting a different profile overwrite the login owner.
@@ -316,6 +339,7 @@ async function start(): Promise<void> {
     getMainWindow: () => mainWindow,
     logger: applicationLogger,
     startup,
+    updater,
   });
   if (process.platform === "darwin" && !app.isPackaged) {
     const icon = appIcon();
@@ -366,6 +390,7 @@ async function start(): Promise<void> {
     if (event.type === "entity.changed" && event.entity === "approvals") rebuildTrayMenu();
   });
   rebuildTrayMenu();
+  updater.start();
   powerMonitor.on("resume", () => {
     void service?.scheduler.wake();
     void service?.telegram.wake();
@@ -446,6 +471,7 @@ app.on("before-quit", (event) => {
   if (window && !window.isDestroyed()) window.destroy();
   unregisterIpc?.();
   unregisterIpc = null;
+  updater?.stop();
   tray?.destroy();
   tray = null;
   void (async () => {

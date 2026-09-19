@@ -30,6 +30,7 @@ function renderSettings(overrides: Record<string, unknown>) {
         theme: "forest",
         colorMode: "light",
         showReasoning: true,
+        autoUpdate: true,
         globalOperatingInstructions: "Ask when information is missing.",
         defaultModelProvider: null,
         defaultModelName: null,
