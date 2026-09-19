@@ -460,9 +460,38 @@ export interface AppSettings {
   theme: AppTheme;
   colorMode: AppColorMode;
   showReasoning: boolean;
+  /** Check GitHub releases on launch and periodically, and download updates in the background. */
+  autoUpdate: boolean;
   globalOperatingInstructions: string;
   defaultModelProvider: RemoteModelProvider | null;
   defaultModelName: string | null;
+}
+
+export type AppUpdateState =
+  | "unsupported"
+  | "idle"
+  | "checking"
+  | "up-to-date"
+  | "available"
+  | "downloading"
+  | "downloaded"
+  | "error";
+
+export interface AppUpdateStatus {
+  state: AppUpdateState;
+  /** Version the app is currently running. */
+  currentVersion: string;
+  /** Newest version published on GitHub, once a check has completed. */
+  latestVersion?: string;
+  /** GitHub release page for the latest version. */
+  releaseUrl?: string;
+  releaseNotes?: string;
+  /** Download progress, 0-100, while downloading. */
+  percent?: number;
+  /** True when the platform build can install updates in place; otherwise the release page is offered instead. */
+  canInstall: boolean;
+  checkedAt?: string;
+  error?: string;
 }
 
 export interface AppSnapshot {
@@ -509,6 +538,7 @@ export type DesktopEvent =
       event: BaseEvent;
     }
   | { type: "notification"; title: string; body: string }
+  | { type: "update.status"; status: AppUpdateStatus }
   | {
       /** A user message arrived from an external channel (e.g. Telegram). */
       type: "conversation.inbound";
@@ -566,6 +596,14 @@ export interface DesktopApi {
     exportDataBackup(): Promise<string | null>;
     getSettings(): Promise<AppSettings>;
     updateSettings(settings: Partial<AppSettings>): Promise<AppSettings>;
+  };
+  updates: {
+    status(): Promise<AppUpdateStatus>;
+    check(): Promise<AppUpdateStatus>;
+    download(): Promise<AppUpdateStatus>;
+    /** Quits and installs a downloaded update. */
+    install(): Promise<void>;
+    openReleasePage(): Promise<void>;
   };
   coworkers: {
     list(): Promise<Coworker[]>;

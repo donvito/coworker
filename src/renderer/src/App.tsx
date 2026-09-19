@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { ActivityItem } from "@shared/contracts";
 import { AppShell } from "./components/AppShell";
 import { Icon } from "./components/Icon";
+import { UpdateBanner } from "./components/UpdateBanner";
 import { useAppearance } from "./lib/appearance";
 import type { PageId } from "./navigation";
 import { ActivityPage } from "./pages/ActivityPage";
@@ -13,6 +14,7 @@ import { HomePage } from "./pages/HomePage";
 import { SchedulesPage } from "./pages/SchedulesPage";
 import { SettingsPage, type SettingsTab } from "./pages/SettingsPage";
 import { useAppData } from "./state/AppDataProvider";
+import { useAppUpdates } from "./state/app-updates";
 
 export default function App() {
   const { snapshot, loading, error, refresh, lastEvent } = useAppData();
@@ -21,6 +23,7 @@ export default function App() {
   const [focusConversationId, setFocusConversationId] = useState<string | null>(null);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("general");
   useAppearance(snapshot?.settings);
+  const updates = useAppUpdates(lastEvent);
 
   useEffect(() => {
     if (lastEvent?.type === "navigation.requested") {
@@ -106,6 +109,7 @@ export default function App() {
           <button onClick={() => void refresh()}>Retry</button>
         </div>
       ) : null}
+      <UpdateBanner updates={updates} />
 
       {page === "home" ? (
         <HomePage
@@ -218,6 +222,7 @@ export default function App() {
           dataPath={snapshot.dataPath}
           version={snapshot.version}
           initialTab={settingsTab}
+          updates={updates}
           onChanged={refresh}
         />
       ) : null}

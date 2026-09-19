@@ -57,6 +57,8 @@ jobs:
             release/*.exe
             release/*.AppImage
             release/*.deb
+            release/*.yml
+            release/*.blockmap
 
   publish:
     name: Publish release
@@ -93,6 +95,9 @@ jobs:
           | macOS (Intel) | `Coworker-*-mac-x64.dmg` |
           | Windows | `Coworker-*-win-x64-setup.exe` (or `arm64`) |
           | Linux | `Coworker-*-linux-x64.AppImage` / `.deb` |
+
+          The `latest*.yml` and `*.blockmap` files are update metadata used by the
+          app's built-in updater; you do not need to download them.
 
           These builds are **not code-signed**.
 

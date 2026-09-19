@@ -95,6 +95,7 @@ const defaultSettings: AppSettings = {
   theme: "graphite",
   colorMode: "light",
   showReasoning: true,
+  autoUpdate: true,
   globalOperatingInstructions:
     "When essential information is missing or ambiguous, ask a concise follow-up question before acting. Do not invent names, dates, recipients, amounts, document details, or other required information. Before creating a document, confirm its output format if the user has not already selected one.",
   defaultModelProvider: null,
@@ -519,6 +520,7 @@ export class CoworkerDatabase {
       colorMode:
         appColorModes.find((candidate) => candidate === storedColorMode) ?? defaultSettings.colorMode,
       showReasoning: Boolean(stored.get("showReasoning") ?? defaultSettings.showReasoning),
+      autoUpdate: Boolean(stored.get("autoUpdate") ?? defaultSettings.autoUpdate),
       globalOperatingInstructions:
         typeof stored.get("globalOperatingInstructions") === "string"
           ? String(stored.get("globalOperatingInstructions"))

@@ -28,6 +28,8 @@ import { ModelSelector } from "../components/ModelSelector";
 import { PageHeader } from "../components/Primitives";
 import { readableError } from "../lib/errors";
 import { MessagingConnections } from "../components/MessagingConnections";
+import { UpdateSettings } from "../components/UpdateSettings";
+import type { AppUpdatesController } from "../state/app-updates";
 
 export type SettingsTab =
   | "general"
@@ -56,6 +58,7 @@ export function SettingsPage({
   dataPath,
   version = "development",
   initialTab = "general",
+  updates,
   onChanged,
 }: {
   settings: AppSettings;
@@ -67,6 +70,7 @@ export function SettingsPage({
   dataPath: string;
   version?: string;
   initialTab?: SettingsTab;
+  updates?: AppUpdatesController;
   onChanged: () => Promise<void>;
 }) {
   const [tab, setTab] = useState<SettingsTab>(initialTab);
@@ -1198,6 +1202,14 @@ export function SettingsPage({
               <p>
                 Coworker version <strong>{version}</strong>
               </p>
+              {updates ? (
+                <UpdateSettings
+                  autoUpdate={settings.autoUpdate}
+                  disabled={working}
+                  onToggleAutoUpdate={(enabled) => void patchSettings({ autoUpdate: enabled })}
+                  updates={updates}
+                />
+              ) : null}
               <p>SQLite, artifacts, encrypted credential blobs, logs, and the local email outbox.</p>
               <p>
                 Provider failures are recorded in <code>logs/provider-errors.jsonl</code>. API keys
