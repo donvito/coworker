@@ -17,6 +17,7 @@ const settings: AppSettings = {
   globalOperatingInstructions: "Ask when information is missing.",
   defaultModelProvider: null,
   defaultModelName: null,
+  checkForUpdatesAutomatically: true,
 };
 
 function mockSettingsApi() {

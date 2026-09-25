@@ -23,6 +23,7 @@ import {
   remoteModelProviderDefinitions,
 } from "@shared/model-providers";
 import { AppearanceControls } from "../components/AppearanceControls";
+import { UpdatePanel } from "../components/AppUpdates";
 import { Icon } from "../components/Icon";
 import { ModelSelector } from "../components/ModelSelector";
 import { PageHeader } from "../components/Primitives";
@@ -70,6 +71,9 @@ export function SettingsPage({
   onChanged: () => Promise<void>;
 }) {
   const [tab, setTab] = useState<SettingsTab>(initialTab);
+  useEffect(() => {
+    setTab(initialTab);
+  }, [initialTab]);
   const [working, setWorking] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [noticeKind, setNoticeKind] = useState<"success" | "error">("success");
@@ -1232,6 +1236,12 @@ export function SettingsPage({
                   <Icon name="download" /> Export all data
                 </button>
               </div>
+
+              <UpdatePanel
+                disabled={working}
+                onPatchSettings={(patch) => void patchSettings(patch)}
+                settings={settings}
+              />
 
               <div className="provider-diagnostics">
                 <header>

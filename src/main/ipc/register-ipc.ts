@@ -34,6 +34,7 @@ import { resolveArtifactFile } from "@main/integrations/artifact-files";
 import type { ApplicationLogger } from "@main/runtime/application-logger";
 import type { CredentialStore } from "@main/security/credential-store";
 import type { LoginStartup } from "@main/app/login-startup";
+import { releasesPageUrl, type AppUpdater } from "@main/app/app-updater";
 
 const mutationChannels = new Set<string>([
   ipcChannels.updateSettings,
@@ -83,6 +84,7 @@ export function registerIpc(input: {
   getMainWindow: () => BrowserWindow | null;
   logger?: ApplicationLogger;
   startup?: Pick<LoginStartup, "status" | "enable" | "disable">;
+  updater?: AppUpdater;
 }): () => void {
   const administration = createAdministration(input);
   const channels: string[] = [];
@@ -141,6 +143,18 @@ export function registerIpc(input: {
       : await dialog.showSaveDialog(options);
     if (result.canceled || !result.filePath) return null;
     return input.service.exportDataBackup(result.filePath);
+  });
+  const updater = () => {
+    if (!input.updater) throw new Error("Updates are not available in this build");
+    return input.updater;
+  };
+  handle(ipcChannels.updatesState, () => updater().getState());
+  handle(ipcChannels.updatesCheck, () => updater().check());
+  handle(ipcChannels.updatesDownload, () => updater().download());
+  handle(ipcChannels.updatesInstall, () => updater().install());
+  handle(ipcChannels.updatesOpenReleasePage, async () => {
+    const url = updater().getState().release?.url ?? releasesPageUrl;
+    await shell.openExternal(url.startsWith("https://") ? url : releasesPageUrl);
   });
   handle(ipcChannels.copyText, (_event, text) => {
     if (typeof text !== "string" || text.length > 1_000_000) {

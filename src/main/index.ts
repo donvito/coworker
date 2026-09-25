@@ -19,6 +19,8 @@ import {
   Tray,
 } from "electron";
 import { DesktopAppService } from "@main/app/app-service";
+import { AppUpdater, resolveInstallTarget } from "@main/app/app-updater";
+import { backgroundLaunchSwitch } from "@shared/launch-options";
 import { prepareAppProfile, resolveAppProfile } from "@main/app/app-profile";
 import { registerIpc } from "@main/ipc/register-ipc";
 import { ApplicationLogger } from "@main/runtime/application-logger";
@@ -67,6 +69,7 @@ const gotLock = !launchOptions.installCli && (deferLoginSelection || app.request
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let service: DesktopAppService | null = null;
+let updater: AppUpdater | null = null;
 let unregisterIpc: (() => void) | null = null;
 let isQuitting = false;
 let shutdownStarted = false;
@@ -296,6 +299,10 @@ async function start(): Promise<void> {
     credentials,
     onSettingsChanged: async (settings) => {
       runInBackground = settings.runInBackground;
+      if (updater && (app.isPackaged || process.env.COWORKER_UPDATE_FEED_URL)) {
+        if (settings.checkForUpdatesAutomatically) updater.ensureAutomaticChecks();
+        else updater.stopAutomaticChecks();
+      }
       nativeTheme.themeSource = settings.colorMode;
       mainWindow?.setBackgroundColor(windowBackgroundColor());
     },
@@ -310,12 +317,43 @@ async function start(): Promise<void> {
   }
   await service.initialize();
   if (isQuitting) return;
+  const updateService = service;
+  const updateLogger = applicationLogger;
+  updater = new AppUpdater({
+    currentVersion: app.getVersion(),
+    updatesPath: join(dataPath, "updates"),
+    target: resolveInstallTarget({
+      packaged: app.isPackaged,
+      platform: process.platform,
+      executablePath: process.execPath,
+      appImagePath: process.env.APPIMAGE,
+    }),
+    platform: process.platform,
+    arch: process.arch,
+    releaseUrl: process.env.COWORKER_UPDATE_FEED_URL,
+    prepareForInstall: (input) => updateService.prepareForUpdate(input),
+    cancelInstallPreparation: () => updateService.cancelUpdatePreparation(),
+    quit: () => { isQuitting = true; app.quit(); },
+    relaunchArguments: () => [
+      ...(launchOptions.dataPath ? ["--data-path", launchOptions.dataPath] : []),
+      ...(headless ? [backgroundLaunchSwitch] : []),
+    ],
+    onStateChanged: (state) => updateService.publishUpdateState(state),
+    onError: (scope, error) => void updateLogger.error(scope, error),
+  });
+  const completedUpdate = await updater.finalizePendingUpdate();
+  if (completedUpdate) service.recordCompletedUpdate(completedUpdate);
+  if ((app.isPackaged || process.env.COWORKER_UPDATE_FEED_URL) &&
+    service.database.getSettings().checkForUpdatesAutomatically) {
+    updater.startAutomaticChecks();
+  }
   unregisterIpc = registerIpc({
     service,
     credentials,
     getMainWindow: () => mainWindow,
     logger: applicationLogger,
     startup,
+    updater,
   });
   if (process.platform === "darwin" && !app.isPackaged) {
     const icon = appIcon();
@@ -448,6 +486,7 @@ app.on("before-quit", (event) => {
   unregisterIpc = null;
   tray?.destroy();
   tray = null;
+  updater?.stopAutomaticChecks();
   void (async () => {
     await startupPromise?.catch(() => {});
     await control?.close();

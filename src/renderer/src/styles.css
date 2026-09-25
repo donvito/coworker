@@ -8577,3 +8577,119 @@ button.floor-activity-row:hover {
 .messaging-connection-heading { justify-content: space-between; }
 .messaging-connection-heading > span { font-size: 13px; }
 .messaging-connection-card .integration-form { max-width: 100%; }
+
+.update-banner {
+  position: sticky;
+  z-index: 10;
+  top: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  width: min(760px, calc(100% - 40px));
+  margin: 10px auto -50px;
+  padding: 9px 13px;
+  color: var(--success);
+  font-size: 13px;
+  background: var(--success-soft);
+  border: 1px solid var(--success-line);
+  border-radius: 9px;
+}
+
+.update-banner-actions {
+  display: flex;
+  gap: 12px;
+}
+
+.update-banner button {
+  color: inherit;
+  background: transparent;
+  border: 0;
+  text-decoration: underline;
+}
+
+.update-panel {
+  margin-top: 30px;
+  padding-top: 24px;
+  border-top: 1px solid var(--line);
+}
+
+.update-panel > header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 11px;
+}
+
+.update-panel > header > span {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.update-panel h3 {
+  margin-top: 4px;
+  font-size: 15px;
+  font-weight: 620;
+}
+
+.update-panel > header small,
+.update-meta {
+  margin-top: 2px;
+  color: var(--ink-soft);
+  font-size: 11px;
+}
+
+.update-summary {
+  margin: 0 0 3px;
+  font-size: 13px;
+}
+
+.update-panel .settings-notice {
+  margin: 12px 0 0;
+}
+
+.update-release {
+  display: flex;
+  margin: 14px 0;
+  padding: 14px;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--white);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.update-release > small {
+  color: var(--ink-soft);
+  font-size: 11px;
+}
+
+.update-notes {
+  overflow: auto;
+  max-height: 180px;
+  margin: 4px 0 0;
+  font-family: inherit;
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+
+.update-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.update-progress progress {
+  flex: 1;
+}
+
+.update-confirm p {
+  margin: 6px 0 0;
+  font-size: 12.5px;
+}
+
+.update-panel > .settings-row {
+  margin-top: 14px;
+}

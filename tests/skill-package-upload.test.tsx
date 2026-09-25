@@ -46,6 +46,7 @@ describe("skill package upload", () => {
           globalOperatingInstructions: "Ask when information is missing.",
           defaultModelProvider: null,
           defaultModelName: null,
+          checkForUpdatesAutomatically: true,
         }}
         skills={[]}
       />,

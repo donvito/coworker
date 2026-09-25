@@ -99,6 +99,7 @@ const defaultSettings: AppSettings = {
     "When essential information is missing or ambiguous, ask a concise follow-up question before acting. Do not invent names, dates, recipients, amounts, document details, or other required information. Before creating a document, confirm its output format if the user has not already selected one.",
   defaultModelProvider: null,
   defaultModelName: null,
+  checkForUpdatesAutomatically: true,
 };
 
 function now(): string {
@@ -391,6 +392,32 @@ export class CoworkerDatabase {
     return destinationPath;
   }
 
+  /** Confirms a backup opens, passes SQLite's integrity check, and has the same tables and migrations. */
+  verifyBackup(backupPath: string): void {
+    const backup = new DatabaseSync(backupPath, { readOnly: true });
+    try {
+      const integrity = backup.prepare("PRAGMA integrity_check").all() as Array<{ integrity_check: string }>;
+      if (integrity.length !== 1 || integrity[0]?.integrity_check !== "ok") {
+        throw new Error("The database backup failed its integrity check");
+      }
+      const tablesQuery =
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name";
+      const backupTables = (backup.prepare(tablesQuery).all() as Array<{ name: string }>).map((row) => row.name);
+      const liveTables = (this.sqlite.prepare(tablesQuery).all() as Array<{ name: string }>).map((row) => row.name);
+      if (backupTables.join("\n") !== liveTables.join("\n")) {
+        throw new Error("The database backup does not contain every table");
+      }
+      if (liveTables.includes("__drizzle_migrations")) {
+        const countQuery = "SELECT count(*) AS count FROM __drizzle_migrations";
+        const backupCount = (backup.prepare(countQuery).get() as { count: number }).count;
+        const liveCount = (this.sqlite.prepare(countQuery).get() as { count: number }).count;
+        if (backupCount !== liveCount) throw new Error("The database backup is missing migration history");
+      }
+    } finally {
+      backup.close();
+    }
+  }
+
   private backupBeforePendingMigrations(migrationsFolder: string): string | null {
     if (this.path === ":memory:") return null;
     const userTableCount =
@@ -525,6 +552,9 @@ export class CoworkerDatabase {
           : defaultSettings.globalOperatingInstructions,
       defaultModelProvider: configuredProvider,
       defaultModelName: configuredModelName,
+      checkForUpdatesAutomatically: Boolean(
+        stored.get("checkForUpdatesAutomatically") ?? defaultSettings.checkForUpdatesAutomatically,
+      ),
     };
     return appSettings;
   }

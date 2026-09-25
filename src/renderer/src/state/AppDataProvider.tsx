@@ -46,6 +46,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       if (
         event.type === "agent.event" ||
         event.type === "notification" ||
+        event.type === "app.update" ||
         event.type === "navigation.requested"
       )
         return;

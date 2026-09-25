@@ -40,6 +40,7 @@ describe("global model default", () => {
           globalOperatingInstructions: "Ask when information is missing.",
           defaultModelProvider: null,
           defaultModelName: null,
+          checkForUpdatesAutomatically: true,
         }}
         skills={[]}
       />,
@@ -93,6 +94,7 @@ describe("global model default", () => {
           globalOperatingInstructions: "Ask when information is missing.",
           defaultModelProvider: null,
           defaultModelName: null,
+          checkForUpdatesAutomatically: true,
         }}
         skills={[]}
       />,
@@ -153,6 +155,7 @@ describe("global model default", () => {
           globalOperatingInstructions: "Ask when information is missing.",
           defaultModelProvider: "openrouter",
           defaultModelName: "vendor/old-model",
+          checkForUpdatesAutomatically: true,
         }}
         skills={[]}
       />,
@@ -228,6 +231,7 @@ describe("global model default", () => {
           globalOperatingInstructions: "Ask when information is missing.",
           defaultModelProvider: null,
           defaultModelName: null,
+          checkForUpdatesAutomatically: true,
         }}
         skills={[]}
       />,
