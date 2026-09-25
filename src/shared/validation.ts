@@ -290,6 +290,7 @@ export const settingsPatchSchema = z
     globalOperatingInstructions: z.string().trim().max(50_000).optional(),
     defaultModelProvider: remoteModelProviderSchema.nullable().optional(),
     defaultModelName: z.string().trim().min(1).max(160).nullable().optional(),
+    checkForUpdatesAutomatically: z.boolean().optional(),
   })
   .refine((value) => Object.keys(value).length > 0, "At least one setting is required");
 

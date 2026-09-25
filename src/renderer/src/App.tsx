@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { ActivityItem } from "@shared/contracts";
 import { AppShell } from "./components/AppShell";
+import { UpdateBanner } from "./components/AppUpdates";
 import { Icon } from "./components/Icon";
 import { useAppearance } from "./lib/appearance";
 import type { PageId } from "./navigation";
@@ -69,6 +70,12 @@ export default function App() {
     setSettingsTab("general");
   }
 
+  function openDataSettings() {
+    setSettingsTab("data");
+    setPage("settings");
+    setSelectedCoworkerId(null);
+  }
+
   function openModelSettings() {
     setSettingsTab("models");
     setPage("settings");
@@ -105,7 +112,9 @@ export default function App() {
           <span>{error}</span>
           <button onClick={() => void refresh()}>Retry</button>
         </div>
-      ) : null}
+      ) : (
+        <UpdateBanner onOpen={openDataSettings} />
+      )}
 
       {page === "home" ? (
         <HomePage

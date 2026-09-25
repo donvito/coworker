@@ -60,6 +60,7 @@ describe("provider diagnostics settings", () => {
       globalOperatingInstructions: "Ask when information is missing.",
       defaultModelProvider: null,
           defaultModelName: null,
+          checkForUpdatesAutomatically: true,
         }}
         skills={[]}
         version="1.2.3"

@@ -8,6 +8,8 @@ import type {
   AgentRunRequest,
   AppSettings,
   AppSnapshot,
+  AppUpdateCompletion,
+  AppUpdateState,
   Approval,
   ApprovalDecisionInput,
   ApprovalStatus,
@@ -166,6 +168,7 @@ export class DesktopAppService {
   private initialized = false;
   private readonly integrationMutations = new Map<string, Promise<unknown>>();
   private dataExportInProgress = false;
+  private updatePreparationInProgress = false;
   private activeDataMutations = 0;
   private readonly dataMutationWaiters = new Set<() => void>();
 
@@ -1921,7 +1924,80 @@ export class DesktopAppService {
     }
   }
 
+  /**
+   * Quiesces background work and writes a verified database backup before the
+   * app quits to install an update. Resumes work if anything fails.
+   */
+  async prepareForUpdate(input: { fromVersion: string; toVersion: string }): Promise<{ backupPath: string }> {
+    if (this.updatePreparationInProgress) throw new Error("An update is already being installed");
+    if (this.dataExportInProgress) throw new Error("Wait for the complete data backup to finish before updating");
+    this.updatePreparationInProgress = true;
+    this.runtime.pauseDispatch();
+    this.scheduler.stop();
+    try {
+      const runningTasks = this.database
+        .listTasks(undefined, Number.MAX_SAFE_INTEGER)
+        .filter((task) => task.status === "RUNNING");
+      if (runningTasks.length > 0) {
+        throw new Error("Wait for active coworker tasks to finish before updating");
+      }
+      await this.waitForDataMutations();
+      await this.telegram.stop();
+      await this.discord.stop();
+      await this.runtime.stopAll();
+      const safeVersion = (version: string) => version.replaceAll(/[^0-9A-Za-z.-]/g, "_");
+      const backupPath = join(
+        this.options.dataPath,
+        "backups",
+        `coworker-before-update-${safeVersion(input.fromVersion)}-to-${safeVersion(input.toVersion)}-${new Date().toISOString().replaceAll(":", "-")}.db`,
+      );
+      this.database.backup(backupPath);
+      this.database.verifyBackup(backupPath);
+      await this.options.applicationLogger?.info("app.update", "Database backed up before update", {
+        fromVersion: input.fromVersion,
+        toVersion: input.toVersion,
+        backupPath,
+      });
+      return { backupPath };
+    } catch (error) {
+      await this.cancelUpdatePreparation();
+      throw error;
+    }
+  }
+
+  async cancelUpdatePreparation(): Promise<void> {
+    if (!this.updatePreparationInProgress) return;
+    this.updatePreparationInProgress = false;
+    if (this.initialized) {
+      await this.scheduler.start();
+      await this.telegram.start();
+      await this.discord.start();
+    }
+    this.runtime.resumeDispatch();
+  }
+
+  publishUpdateState(state: AppUpdateState): void {
+    this.emit({ type: "app.update", state });
+  }
+
+  recordCompletedUpdate(completion: AppUpdateCompletion): void {
+    this.database.addActivity({
+      type: "app.updated",
+      summary: `Updated Coworker from ${completion.fromVersion} to ${completion.toVersion}`,
+      metadata: { backupPath: completion.backupPath },
+    });
+    void this.options.applicationLogger?.info("app.update", "Update installed", {
+      fromVersion: completion.fromVersion,
+      toVersion: completion.toVersion,
+      backupPath: completion.backupPath,
+    });
+    this.emit({ type: "entity.changed", entity: "activity" });
+  }
+
   assertDataMutationAllowed(): void {
+    if (this.updatePreparationInProgress) {
+      throw new Error("Coworker is installing an update");
+    }
     if (this.dataExportInProgress) {
       throw new Error("Coworker data is temporarily read-only while a complete backup is created");
     }

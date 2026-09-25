@@ -463,6 +463,47 @@ export interface AppSettings {
   globalOperatingInstructions: string;
   defaultModelProvider: RemoteModelProvider | null;
   defaultModelName: string | null;
+  checkForUpdatesAutomatically: boolean;
+}
+
+export type AppUpdateStatus =
+  | "idle"
+  | "checking"
+  | "up-to-date"
+  | "available"
+  | "downloading"
+  | "ready"
+  | "installing"
+  | "error";
+
+export interface AppUpdateRelease {
+  version: string;
+  name: string;
+  notes: string;
+  publishedAt: string | null;
+  url: string;
+  assetName: string | null;
+  assetSize: number | null;
+}
+
+export interface AppUpdateCompletion {
+  fromVersion: string;
+  toVersion: string;
+  backupPath: string;
+  completedAt: string;
+}
+
+export interface AppUpdateState {
+  status: AppUpdateStatus;
+  currentVersion: string;
+  release: AppUpdateRelease | null;
+  checkedAt: string | null;
+  progress: { receivedBytes: number; totalBytes: number | null } | null;
+  error: string | null;
+  /** Whether this build can download and install the update itself. */
+  canInstall: boolean;
+  installUnsupportedReason: string | null;
+  lastUpdate: AppUpdateCompletion | null;
 }
 
 export interface AppSnapshot {
@@ -509,6 +550,7 @@ export type DesktopEvent =
       event: BaseEvent;
     }
   | { type: "notification"; title: string; body: string }
+  | { type: "app.update"; state: AppUpdateState }
   | {
       /** A user message arrived from an external channel (e.g. Telegram). */
       type: "conversation.inbound";
@@ -566,6 +608,14 @@ export interface DesktopApi {
     exportDataBackup(): Promise<string | null>;
     getSettings(): Promise<AppSettings>;
     updateSettings(settings: Partial<AppSettings>): Promise<AppSettings>;
+  };
+  updates: {
+    state(): Promise<AppUpdateState>;
+    check(): Promise<AppUpdateState>;
+    download(): Promise<AppUpdateState>;
+    /** Backs up the database, quits, installs the downloaded update, and relaunches. */
+    install(): Promise<AppUpdateState>;
+    openReleasePage(): Promise<void>;
   };
   coworkers: {
     list(): Promise<Coworker[]>;

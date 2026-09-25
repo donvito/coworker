@@ -33,6 +33,7 @@ function renderSettings(overrides: Record<string, unknown>) {
         globalOperatingInstructions: "Ask when information is missing.",
         defaultModelProvider: null,
         defaultModelName: null,
+        checkForUpdatesAutomatically: true,
       }}
       skills={[]}
     />,

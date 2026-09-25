@@ -38,6 +38,7 @@ describe("web search credentials", () => {
           globalOperatingInstructions: "Ask when information is missing.",
           defaultModelProvider: null,
           defaultModelName: null,
+          checkForUpdatesAutomatically: true,
         }}
         skills={[]}
       />,
