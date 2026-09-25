@@ -21,6 +21,7 @@ import {
 import { DesktopAppService } from "@main/app/app-service";
 import { AppUpdater, resolveInstallTarget } from "@main/app/app-updater";
 import { backgroundLaunchSwitch } from "@shared/launch-options";
+import originalFs from "original-fs";
 import { prepareAppProfile, resolveAppProfile } from "@main/app/app-profile";
 import { registerIpc } from "@main/ipc/register-ipc";
 import { ApplicationLogger } from "@main/runtime/application-logger";
@@ -333,6 +334,7 @@ async function start(): Promise<void> {
     releaseUrl: process.env.COWORKER_UPDATE_FEED_URL,
     prepareForInstall: (input) => updateService.prepareForUpdate(input),
     cancelInstallPreparation: () => updateService.cancelUpdatePreparation(),
+    removeDirectory: (path) => originalFs.promises.rm(path, { recursive: true, force: true, maxRetries: 3 }),
     quit: () => { isQuitting = true; app.quit(); },
     relaunchArguments: () => [
       ...(launchOptions.dataPath ? ["--data-path", launchOptions.dataPath] : []),

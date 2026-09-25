@@ -7,6 +7,7 @@ export default defineConfig({
     plugins: [externalizeDepsPlugin()],
     build: {
       rollupOptions: {
+        external: ["original-fs"],
         input: {
           index: resolve("src/main/index.ts"),
           "cli/index": resolve("src/cli/index.ts"),

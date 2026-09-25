@@ -61,6 +61,11 @@ export interface AppUpdaterOptions {
   prepareForInstall: (input: { fromVersion: string; toVersion: string }) => Promise<{ backupPath: string }>;
   cancelInstallPreparation: () => Promise<void>;
   launchInstaller?: (plan: InstallerPlan) => Promise<void>;
+  /**
+   * Recursively deletes a directory. Inside Electron this must bypass the ASAR
+   * shim, which otherwise treats app.asar files in downloaded bundles as folders.
+   */
+  removeDirectory?: (path: string) => Promise<void>;
   quit: () => void;
   relaunchArguments?: () => string[];
   onStateChanged?: (state: AppUpdateState) => void;
@@ -347,6 +352,10 @@ export class AppUpdater {
     return structuredClone(this.state);
   }
 
+  private removeDirectory(path: string): Promise<void> {
+    return (this.options.removeDirectory ?? ((target) => rm(target, { recursive: true, force: true, maxRetries: 3 })))(path);
+  }
+
   private get pendingPath(): string {
     return join(this.options.updatesPath, "pending.json");
   }
@@ -369,7 +378,7 @@ export class AppUpdater {
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") this.options.onError?.("updates.finalize", error);
     }
-    await this.removeStaleDownloads();
+    void this.removeStaleDownloads();
     if (!pending) return null;
     await rm(this.pendingPath, { force: true }).catch((error) => this.options.onError?.("updates.finalize", error));
     if (compareVersions(this.options.currentVersion, pending.toVersion) >= 0) {
@@ -402,7 +411,7 @@ export class AppUpdater {
       entries
         .filter((entry) => parseVersion(entry) && compareVersions(entry, this.options.currentVersion) <= 0)
         .map((entry) =>
-          rm(join(this.options.updatesPath, entry), { recursive: true, force: true, maxRetries: 3 }).catch(
+          this.removeDirectory(join(this.options.updatesPath, entry)).catch(
             (error) => this.options.onError?.("updates.cleanup", error),
           ),
         ),
@@ -500,7 +509,7 @@ export class AppUpdater {
     const workPath = join(this.options.updatesPath, release.version);
     this.setState({ status: "downloading", error: null, progress: { receivedBytes: 0, totalBytes: asset.size || null } });
     try {
-      await rm(workPath, { recursive: true, force: true });
+      await this.removeDirectory(workPath);
       await mkdir(workPath, { recursive: true });
       const finalPath = join(workPath, basename(asset.name));
       const partialPath = `${finalPath}.partial`;
@@ -553,7 +562,7 @@ export class AppUpdater {
     } catch (error) {
       this.options.onError?.("updates.download", error);
       this.payload = null;
-      await rm(workPath, { recursive: true, force: true }).catch(() => undefined);
+      await this.removeDirectory(workPath).catch(() => undefined);
       return this.setState({ status: "available", progress: null, error: `Could not download the update: ${errorMessage(error)}` });
     }
   }

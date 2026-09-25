@@ -224,10 +224,19 @@ describe("AppUpdater", () => {
     };
     await mkdir(join(updatesPath, "0.7.0"), { recursive: true });
     await writeFile(join(updatesPath, "pending.json"), JSON.stringify(pending));
-    const updated = new AppUpdater({ ...base, currentVersion: "0.7.0" });
+    const removed: string[] = [];
+    const updated = new AppUpdater({
+      ...base,
+      currentVersion: "0.7.0",
+      removeDirectory: async (path) => {
+        removed.push(path);
+        await rm(path, { recursive: true, force: true });
+      },
+    });
     const completion = await updated.finalizePendingUpdate();
     expect(completion).toMatchObject({ fromVersion: "0.6.1", toVersion: "0.7.0", backupPath: "/backup.db" });
     expect(updated.getState().lastUpdate?.toVersion).toBe("0.7.0");
+    await vi.waitFor(() => expect(removed).toEqual([join(updatesPath, "0.7.0")]));
     await expect(stat(join(updatesPath, "0.7.0"))).rejects.toMatchObject({ code: "ENOENT" });
 
     await writeFile(join(updatesPath, "pending.json"), JSON.stringify(pending));
