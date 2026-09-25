@@ -341,7 +341,10 @@ async function start(): Promise<void> {
     onStateChanged: (state) => updateService.publishUpdateState(state),
     onError: (scope, error) => void updateLogger.error(scope, error),
   });
-  const completedUpdate = await updater.finalizePendingUpdate();
+  const completedUpdate = await updater.finalizePendingUpdate().catch((error) => {
+    void updateLogger.error("updates.finalize", error);
+    return null;
+  });
   if (completedUpdate) service.recordCompletedUpdate(completedUpdate);
   if ((app.isPackaged || process.env.COWORKER_UPDATE_FEED_URL) &&
     service.database.getSettings().checkForUpdatesAutomatically) {

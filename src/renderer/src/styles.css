@@ -8579,15 +8579,18 @@ button.floor-activity-row:hover {
 .messaging-connection-card .integration-form { max-width: 100%; }
 
 .update-banner {
-  position: sticky;
-  z-index: 10;
-  top: 10px;
+  position: fixed;
+  z-index: 16;
+  top: 38px;
+  left: calc(var(--sidebar-width, 0px) + (100vw - var(--sidebar-width, 0px)) / 2);
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 14px;
-  width: min(760px, calc(100% - 40px));
-  margin: 10px auto -50px;
+  width: min(640px, calc(100vw - var(--sidebar-width, 0px) - 40px));
+  transform: translateX(-50%);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 8%);
+  -webkit-app-region: no-drag;
   padding: 9px 13px;
   color: var(--success);
   font-size: 13px;

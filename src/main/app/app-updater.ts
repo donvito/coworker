@@ -371,7 +371,7 @@ export class AppUpdater {
     }
     await this.removeStaleDownloads();
     if (!pending) return null;
-    await rm(this.pendingPath, { force: true });
+    await rm(this.pendingPath, { force: true }).catch((error) => this.options.onError?.("updates.finalize", error));
     if (compareVersions(this.options.currentVersion, pending.toVersion) >= 0) {
       const completion: AppUpdateCompletion = {
         fromVersion: pending.fromVersion,
@@ -401,7 +401,11 @@ export class AppUpdater {
     await Promise.all(
       entries
         .filter((entry) => parseVersion(entry) && compareVersions(entry, this.options.currentVersion) <= 0)
-        .map((entry) => rm(join(this.options.updatesPath, entry), { recursive: true, force: true })),
+        .map((entry) =>
+          rm(join(this.options.updatesPath, entry), { recursive: true, force: true, maxRetries: 3 }).catch(
+            (error) => this.options.onError?.("updates.cleanup", error),
+          ),
+        ),
     );
   }
 
