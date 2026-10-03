@@ -1,4 +1,5 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import type { ChatGPTAccount, ChatGPTAuthStatus, OpenAIAuthMode } from "@shared/chatgpt-auth";
 import type {
   AppSettings,
   ConfigureModelResult,
@@ -30,6 +31,11 @@ import { ModelSelector } from "../components/ModelSelector";
 import { PageHeader } from "../components/Primitives";
 import { readableError } from "../lib/errors";
 import { MessagingConnections } from "../components/MessagingConnections";
+import chatGPTSignInMark from "../assets/chatgpt-sign-in.svg";
+import {
+  ChatGPTWelcomeDialog,
+  isChatGPTPlanConnected,
+} from "../components/ChatGPTPlanIndicator";
 
 export type SettingsTab =
   | "general"
@@ -49,6 +55,15 @@ const settingsTabLabels: Record<SettingsTab, string> = {
   archived: "Archived",
   data: "Data",
 };
+
+function chatGPTAccountDisplayName(account: Pick<ChatGPTAccount, "label" | "email">): string {
+  const email = account.email?.trim();
+  // Some saved account labels already include the email; do not repeat it.
+  if (!email || account.label.toLocaleLowerCase().includes(email.toLocaleLowerCase())) {
+    return account.label;
+  }
+  return `${account.label} · ${email}`;
+}
 
 interface Confirmation {
   eyebrow: string;
@@ -113,6 +128,20 @@ export function SettingsPage({
   const [telegramStatuses, setTelegramStatuses] = useState<TelegramIntegrationStatus[]>([]);
   const [discordStatuses, setDiscordStatuses] = useState<DiscordIntegrationStatus[]>([]);
   const [confirmingArchivedDelete, setConfirmingArchivedDelete] = useState<string | null>(null);
+  const [chatGPTStatus, setChatGPTStatus] = useState<ChatGPTAuthStatus | null>(null);
+  const [chatGPTStatusLoading, setChatGPTStatusLoading] = useState(false);
+  const [chatGPTError, setChatGPTError] = useState<string | null>(null);
+  const [chatGPTSignInPending, setChatGPTSignInPending] = useState(false);
+  const chatGPTStatusRequest = useRef(0);
+  const chatGPTSignInGeneration = useRef(0);
+  const chatGPTSignInPendingRef = useRef(false);
+
+  // Older test harnesses and app builds can omit the optional bridge while the
+  // API-key path remains fully usable. A real bridge always supplies this set.
+  const chatGPTBridgeAvailable =
+    typeof window.coworker?.integrations?.chatgptStatus === "function" &&
+    typeof window.coworker?.integrations?.setOpenAIAuthMode === "function" &&
+    typeof window.coworker?.integrations?.chatgptSignIn === "function";
 
   const knownProviderCards = remoteModelProviderDefinitions
     .filter((provider) => provider.id !== "openai-compatible")
@@ -126,12 +155,224 @@ export function SettingsPage({
   const activeDefinition = getModelProviderDefinition(
     addingEndpoint ? "openai-compatible" : modelProvider,
   );
+  const openAIAuthMode = chatGPTStatus?.mode ?? "api-key";
+  const openAIPlanConnected = isChatGPTPlanConnected(chatGPTStatus);
+  const openAIActiveAccount = chatGPTStatus?.accounts.find(
+    (account) => account.id === chatGPTStatus.activeAccountId,
+  );
+  // Keep the existing Disconnect action available for an identity whose token expired.
+  const openAIHasStoredActiveAccount = Boolean(
+    openAIAuthMode === "chatgpt-subscription" &&
+      openAIActiveAccount,
+  );
+  const openAISavedAccounts = chatGPTStatus?.accounts ?? [];
+  const openAISignInTargetAccountId =
+    chatGPTStatus?.activeAccountId ??
+    (openAISavedAccounts.length === 1 ? openAISavedAccounts[0]?.id : undefined);
+  const canContinueChatGPTSignIn = Boolean(
+    chatGPTStatus &&
+      (openAISavedAccounts.length === 0 || openAISignInTargetAccountId),
+  );
   const activeConnected = activeProvider
-    ? Boolean(credentialStatus[modelProviderCredentialKey(activeProvider)])
+    ? activeProvider === "openai" && chatGPTBridgeAvailable
+      ? chatGPTStatusLoading || !chatGPTStatus
+        ? false
+        : openAIAuthMode === "chatgpt-subscription"
+          ? openAIPlanConnected
+          : Boolean(credentialStatus[modelProviderCredentialKey(activeProvider)])
+      : Boolean(credentialStatus[modelProviderCredentialKey(activeProvider)])
     : false;
+  const activeConfigured =
+    activeProvider === "openai" ? activeConnected || openAIHasStoredActiveAccount : activeConnected;
   const activeLabel = addingEndpoint
     ? "New endpoint"
     : modelProviderDisplayName(modelProvider, modelEndpoints);
+
+  function providerIsConnected(provider: RemoteModelProvider): boolean {
+    if (provider !== "openai" || !chatGPTBridgeAvailable) {
+      return Boolean(credentialStatus[modelProviderCredentialKey(provider)]);
+    }
+    if (!chatGPTStatus) return false;
+    return chatGPTStatus.mode === "chatgpt-subscription"
+      ? isChatGPTPlanConnected(chatGPTStatus)
+      : Boolean(credentialStatus[modelProviderCredentialKey(provider)]);
+  }
+
+  function providerStatusLabel(provider: RemoteModelProvider): string {
+    if (provider !== "openai" || !chatGPTBridgeAvailable) {
+      return credentialStatus[modelProviderCredentialKey(provider)] ? "Connected" : "Not connected";
+    }
+    if (chatGPTStatusLoading) return "Checking connection…";
+    if (!chatGPTStatus) return "Connection unavailable";
+    if (chatGPTStatus.mode === "chatgpt-subscription") {
+      if (isChatGPTPlanConnected(chatGPTStatus)) return "ChatGPT plan connected";
+      if (chatGPTStatus.state === "sign-in-required" && openAIActiveAccount) {
+        return "Sign-in required";
+      }
+      if (openAIActiveAccount?.connected) return "Account needs access";
+      if (openAIActiveAccount) return "Reconnect account";
+      if (chatGPTStatus.state === "waiting") return "Waiting for sign-in";
+      return "Not connected";
+    }
+    return credentialStatus[modelProviderCredentialKey(provider)] ? "Connected" : "Not connected";
+  }
+
+  async function refreshChatGPTStatus() {
+    if (typeof window.coworker?.integrations?.chatgptStatus !== "function") return;
+    const requestId = ++chatGPTStatusRequest.current;
+    setChatGPTStatusLoading(true);
+    try {
+      const status = await window.coworker.integrations.chatgptStatus();
+      if (requestId === chatGPTStatusRequest.current) {
+        setChatGPTStatus(status);
+        setChatGPTError(null);
+      }
+    } catch {
+      if (requestId === chatGPTStatusRequest.current) {
+        setChatGPTError("Could not check your ChatGPT connection. Try again.");
+      }
+    } finally {
+      if (requestId === chatGPTStatusRequest.current) setChatGPTStatusLoading(false);
+    }
+  }
+
+  function acceptChatGPTStatus(status: ChatGPTAuthStatus) {
+    // A completed action wins over any status read that started before it.
+    chatGPTStatusRequest.current += 1;
+    setChatGPTStatus(status);
+    setChatGPTStatusLoading(false);
+    setChatGPTError(null);
+  }
+
+  async function cancelChatGPTSignIn(updateView = true) {
+    const wasPending = chatGPTSignInPendingRef.current;
+    const shouldCancel =
+      wasPending || chatGPTSignInPending || chatGPTStatus?.state === "waiting";
+    chatGPTSignInPendingRef.current = false;
+    chatGPTSignInGeneration.current += 1;
+    if (updateView) setChatGPTSignInPending(false);
+    if (!shouldCancel || typeof window.coworker?.integrations?.chatgptCancelSignIn !== "function") {
+      return;
+    }
+    try {
+      const status = await window.coworker.integrations.chatgptCancelSignIn();
+      if (updateView) acceptChatGPTStatus(status);
+    } catch {
+      if (updateView) setChatGPTError("Could not cancel sign-in. Please try again.");
+    }
+  }
+
+  async function updateOpenAIAuthMode(mode: OpenAIAuthMode) {
+    if (typeof window.coworker?.integrations?.setOpenAIAuthMode !== "function") return;
+    setWorking(true);
+    setChatGPTError(null);
+    try {
+      const status = await window.coworker.integrations.setOpenAIAuthMode(mode);
+      acceptChatGPTStatus(status);
+      await onChanged();
+    } catch {
+      setChatGPTError("Could not change your OpenAI sign-in method. Please try again.");
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function startChatGPTSignIn(accountId?: string) {
+    if (typeof window.coworker?.integrations?.chatgptSignIn !== "function") return;
+    const generation = ++chatGPTSignInGeneration.current;
+    chatGPTSignInPendingRef.current = true;
+    setChatGPTSignInPending(true);
+    setChatGPTError(null);
+    try {
+      const status = await window.coworker.integrations.chatgptSignIn(accountId);
+      if (generation !== chatGPTSignInGeneration.current) return;
+      chatGPTSignInPendingRef.current = false;
+      setChatGPTSignInPending(false);
+      acceptChatGPTStatus(status);
+      await onChanged();
+    } catch {
+      if (generation !== chatGPTSignInGeneration.current) return;
+      chatGPTSignInPendingRef.current = false;
+      setChatGPTSignInPending(false);
+      await refreshChatGPTStatus();
+      setChatGPTError("We couldn’t finish signing in to ChatGPT. Please try again.");
+    }
+  }
+
+  async function continueChatGPTSignIn() {
+    if (!chatGPTStatus) return;
+    if (chatGPTStatus.activeAccountId) {
+      await startChatGPTSignIn(chatGPTStatus.activeAccountId);
+      return;
+    }
+    if (openAISavedAccounts.length === 1) {
+      // Reconnect the only retained registration instead of creating a second
+      // registration for an account that already has a saved identity.
+      await selectChatGPTAccount(openAISavedAccounts[0]!.id);
+      return;
+    }
+    if (openAISavedAccounts.length === 0) await startChatGPTSignIn();
+  }
+
+  async function selectChatGPTAccount(accountId: string) {
+    const account = chatGPTStatus?.accounts.find((candidate) => candidate.id === accountId);
+    // Retained records without a live token must be reauthorized against that
+    // registration. The account-selection API accepts only connected sessions.
+    if (account && !account.connected) {
+      await startChatGPTSignIn(account.id);
+      return;
+    }
+    if (typeof window.coworker?.integrations?.chatgptSelectAccount !== "function") return;
+    setChatGPTError(null);
+    try {
+      acceptChatGPTStatus(await window.coworker.integrations.chatgptSelectAccount(accountId));
+      await onChanged();
+    } catch {
+      setChatGPTError("Could not switch ChatGPT accounts. Please try again.");
+    }
+  }
+
+  async function acknowledgeChatGPTWelcome() {
+    if (typeof window.coworker?.integrations?.chatgptAcknowledgeWelcome !== "function") return;
+    acceptChatGPTStatus(await window.coworker.integrations.chatgptAcknowledgeWelcome());
+  }
+
+  useEffect(() => {
+    if (tab !== "models" || !chatGPTBridgeAvailable) return;
+    void refreshChatGPTStatus();
+    // OAuth can expire while Settings stays open. Integration events refresh
+    // only the credential-free account summary shown on this page.
+    const unsubscribe =
+      typeof window.coworker.events?.subscribe === "function"
+        ? window.coworker.events.subscribe((event) => {
+            if (event.type === "entity.changed" && event.entity === "integrations") {
+              void refreshChatGPTStatus();
+            }
+          })
+        : () => undefined;
+    return () => {
+      // Ignore a late read after leaving the model settings tab.
+      chatGPTStatusRequest.current += 1;
+      unsubscribe();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, chatGPTBridgeAvailable]);
+
+  useEffect(
+    () => () => {
+      // Closing settings while the browser window is open must not leave a
+      // pending authorization callback attached to a destroyed view.
+      if (
+        chatGPTSignInPendingRef.current &&
+        typeof window.coworker?.integrations?.chatgptCancelSignIn === "function"
+      ) {
+        chatGPTSignInPendingRef.current = false;
+        chatGPTSignInGeneration.current += 1;
+        void window.coworker.integrations.chatgptCancelSignIn().catch(() => undefined);
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     const keys = [
@@ -194,6 +435,7 @@ export function SettingsPage({
   }, [notice, noticeKind]);
 
   function openTab(next: SettingsTab) {
+    if (next !== "models") void cancelChatGPTSignIn();
     setTab(next);
     setNotice(null);
   }
@@ -307,6 +549,15 @@ export function SettingsPage({
     const apiKey = String(data.get("apiKey") ?? "").trim();
     const baseUrl = String(data.get("baseUrl") ?? "").trim();
     const endpointName = String(data.get("endpointName") ?? "").trim();
+    if (
+      modelProvider === "openai" &&
+      chatGPTBridgeAvailable &&
+      openAIAuthMode === "chatgpt-subscription" &&
+      !openAIPlanConnected
+    ) {
+      setChatGPTError("Connect a ChatGPT account before saving these settings.");
+      return;
+    }
     setWorking(true);
     setNotice(null);
     try {
@@ -327,6 +578,9 @@ export function SettingsPage({
         result = await window.coworker.integrations.configureModel({
           provider: modelProvider,
           apiKey: apiKey || undefined,
+          authMode: modelProvider === "openai" && chatGPTBridgeAvailable
+            ? openAIAuthMode
+            : undefined,
           baseUrl: baseUrl || undefined,
           defaultModelName,
           endpointName: endpointName || undefined,
@@ -335,7 +589,11 @@ export function SettingsPage({
       }
       const savedLabel =
         endpointName || modelProviderDisplayName(savedProvider, modelEndpoints);
-      setCredentialStatus((current) => ({ ...current, [result.key]: true }));
+      // Subscription sign-in is kept separately from saved API keys, so saving
+      // plan-backed defaults must not make an inactive key look connected.
+      if (!(savedProvider === "openai" && openAIAuthMode === "chatgpt-subscription")) {
+        setCredentialStatus((current) => ({ ...current, [result.key]: true }));
+      }
       let appliedDefault = result.defaultApplied ? defaultModelChoice : "";
       if (makeDefaultModel && !result.defaultApplied && result.models[0]) {
         // First-time connection: the model list only became known during this
@@ -353,8 +611,8 @@ export function SettingsPage({
       setNoticeKind("success");
       setNotice(
         appliedDefault
-          ? `${savedLabel} configuration stored securely. ${savedLabel} · ${appliedDefault} is now the global default model.`
-          : `${savedLabel} configuration stored securely.`,
+          ? `${savedLabel} settings saved. ${savedLabel} · ${appliedDefault} is now the global default model.`
+          : `${savedLabel} settings saved.`,
       );
     } catch (configureError) {
       setNoticeKind("error");
@@ -386,6 +644,8 @@ export function SettingsPage({
 
   function confirmDisconnectModel(provider: RemoteModelProvider) {
     const label = modelProviderDisplayName(provider, modelEndpoints);
+    const disconnectingChatGPT =
+      provider === "openai" && openAIAuthMode === "chatgpt-subscription";
     const dependents = coworkers
       .filter((coworker) => coworker.modelProvider === provider)
       .map((coworker) => coworker.name);
@@ -395,9 +655,11 @@ export function SettingsPage({
       body: (
         <ul className="confirm-list">
           <li>
-            {getModelProviderDefinition(provider).apiKeyRequired
-              ? "Its saved API key is removed from this computer."
-              : "Its saved connection is removed from this computer."}
+            {disconnectingChatGPT
+              ? "This ChatGPT account will be disconnected from this computer."
+              : getModelProviderDefinition(provider).apiKeyRequired
+                ? "Its saved API key is removed from this computer."
+                : "Its saved connection is removed from this computer."}
           </li>
           {dependents.length > 0 ? (
             <li>
@@ -413,16 +675,24 @@ export function SettingsPage({
       confirmLabel: "Disconnect",
       busyLabel: "Disconnecting…",
       onConfirm: async () => {
-        await window.coworker.integrations.disconnectModel(provider);
-        setCredentialStatus((current) => ({
-          ...current,
-          [modelProviderCredentialKey(provider)]: false,
-          [modelProviderBaseUrlKey(provider)]: false,
-        }));
+        const result = await window.coworker.integrations.disconnectModel(provider);
+        if (!disconnectingChatGPT) {
+          setCredentialStatus((current) => ({
+            ...current,
+            [modelProviderCredentialKey(provider)]: false,
+            [modelProviderBaseUrlKey(provider)]: false,
+          }));
+        } else if (typeof window.coworker.integrations.chatgptStatus === "function") {
+          await refreshChatGPTStatus();
+        }
         await onChanged();
         setConfirmation(null);
         setNoticeKind("success");
-        setNotice(`${label} was disconnected.`);
+        setNotice(
+          disconnectingChatGPT && result?.revocationConfirmed === false
+            ? "ChatGPT was disconnected on this computer, but sign-out could not be confirmed in ChatGPT."
+            : `${disconnectingChatGPT ? "ChatGPT" : label} was disconnected.`,
+        );
       },
     });
   }
@@ -841,38 +1111,36 @@ export function SettingsPage({
             <section className="settings-section">
               <h2>Model Providers</h2>
               <div className="provider-grid model-provider-grid">
-                {knownProviderCards.map((provider) => (
-                  <button
-                    aria-pressed={modelProvider === provider.id}
-                    className={`provider-card model-provider-card${
-                      modelProvider === provider.id ? " selected" : ""
-                    }`}
-                    key={provider.id}
-                    onClick={() => {
-                      setModelProvider(provider.id);
-                      setNotice(null);
-                    }}
-                    type="button"
-                  >
-                    <span>
-                      <strong>{provider.label}</strong>
-                      <small>
-                        {credentialStatus[modelProviderCredentialKey(provider.id)]
-                          ? "Connected"
-                          : "Not connected"}
-                        {settings.defaultModelProvider === provider.id ? " · Default" : ""}
-                      </small>
-                    </span>
-                    <span
-                      className={
-                        credentialStatus[modelProviderCredentialKey(provider.id)]
-                          ? "connection-dot connected"
-                          : "connection-dot"
-                      }
-                      aria-hidden="true"
-                    />
-                  </button>
-                ))}
+                {knownProviderCards.map((provider) => {
+                  const connected = providerIsConnected(provider.id);
+                  return (
+                    <button
+                      aria-pressed={modelProvider === provider.id}
+                      className={`provider-card model-provider-card${
+                        modelProvider === provider.id ? " selected" : ""
+                      }`}
+                      key={provider.id}
+                      onClick={() => {
+                        if (provider.id !== "openai") void cancelChatGPTSignIn();
+                        setModelProvider(provider.id);
+                        setNotice(null);
+                      }}
+                      type="button"
+                    >
+                      <span>
+                        <strong>{provider.label}</strong>
+                        <small>
+                          {providerStatusLabel(provider.id)}
+                          {settings.defaultModelProvider === provider.id ? " · Default" : ""}
+                        </small>
+                      </span>
+                      <span
+                        className={connected ? "connection-dot connected" : "connection-dot"}
+                        aria-hidden="true"
+                      />
+                    </button>
+                  );
+                })}
                 {modelEndpoints.map((endpoint) => (
                   <button
                     aria-pressed={modelProvider === endpoint.id}
@@ -881,6 +1149,7 @@ export function SettingsPage({
                     }`}
                     key={endpoint.id}
                     onClick={() => {
+                      void cancelChatGPTSignIn();
                       setModelProvider(endpoint.id);
                       setNotice(null);
                     }}
@@ -902,6 +1171,7 @@ export function SettingsPage({
                     modelProvider === "add-endpoint" ? " selected" : ""
                   }`}
                   onClick={() => {
+                    void cancelChatGPTSignIn();
                     setModelProvider("add-endpoint");
                     setNotice(null);
                   }}
@@ -929,6 +1199,16 @@ export function SettingsPage({
                   <small>
                     {addingEndpoint ? (
                       "Name the endpoint so you can tell your local servers apart"
+                    ) : modelProvider === "openai" &&
+                      chatGPTBridgeAvailable &&
+                      openAIAuthMode === "chatgpt-subscription" ? (
+                      openAIPlanConnected ? (
+                        <span className="credential-saved">
+                          <Icon name="check" /> ChatGPT plan connected
+                        </span>
+                      ) : (
+                        "Choose a ChatGPT account to connect"
+                      )
                     ) : activeConnected ? (
                       <>
                         <span className="credential-saved">
@@ -944,6 +1224,141 @@ export function SettingsPage({
                     )}
                   </small>
                 </div>
+                {modelProvider === "openai" && chatGPTBridgeAvailable ? (
+                  <div aria-label="OpenAI sign-in method" className="chatgpt-auth-settings">
+                    <fieldset
+                      className="chatgpt-auth-choice"
+                      disabled={working || chatGPTStatusLoading || chatGPTSignInPending}
+                    >
+                      <legend>Authentication method</legend>
+                      {activeDefinition.authModes?.includes("api-key") ? (
+                        <label>
+                          <input
+                            checked={openAIAuthMode === "api-key"}
+                            name="openai-auth-mode"
+                            onChange={() => void updateOpenAIAuthMode("api-key")}
+                            type="radio"
+                          />
+                          <span>
+                            <strong>OpenAI API key</strong>
+                            <small>Use your OpenAI API account and billing.</small>
+                          </span>
+                        </label>
+                      ) : null}
+                      {activeDefinition.authModes?.includes("chatgpt-subscription") ? (
+                        <label>
+                          <input
+                            checked={openAIAuthMode === "chatgpt-subscription"}
+                            name="openai-auth-mode"
+                            onChange={() => void updateOpenAIAuthMode("chatgpt-subscription")}
+                            type="radio"
+                          />
+                          <span>
+                            <strong>ChatGPT subscription</strong>
+                            <small>Use your ChatGPT plan’s allowance for eligible requests.</small>
+                          </span>
+                        </label>
+                      ) : null}
+                    </fieldset>
+                    {openAIAuthMode === "chatgpt-subscription" ? (
+                      <div className="chatgpt-account-settings">
+                        {chatGPTStatusLoading && !chatGPTStatus ? (
+                          <p role="status">Checking ChatGPT connection…</p>
+                        ) : null}
+                        {!chatGPTStatusLoading && !chatGPTStatus && chatGPTError ? (
+                          <button
+                            className="text-button"
+                            onClick={() => void refreshChatGPTStatus()}
+                            type="button"
+                          >
+                            Try again
+                          </button>
+                        ) : null}
+                        {chatGPTStatus &&
+                        (openAISavedAccounts.length > 1 ||
+                          (!chatGPTStatus.activeAccountId &&
+                            openAISavedAccounts.some((account) => !account.connected))) ? (
+                          <label className="chatgpt-account-select">
+                            <span>ChatGPT account</span>
+                            <select
+                              aria-label="ChatGPT account"
+                              disabled={working || chatGPTSignInPending}
+                              onChange={(event) => void selectChatGPTAccount(event.target.value)}
+                              value={chatGPTStatus.activeAccountId ?? ""}
+                            >
+                              <option value="">Choose an account</option>
+                              {openAISavedAccounts.map((account) => (
+                                <option key={account.id} value={account.id}>
+                                  {chatGPTAccountDisplayName(account)}
+                                  {!account.connected ? " · Reconnect" : ""}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                        ) : null}
+                        {chatGPTStatus?.state === "waiting" || chatGPTSignInPending ? (
+                          <div className="chatgpt-signin-waiting" role="status">
+                            <span>Waiting for ChatGPT sign-in…</span>
+                            <button
+                              className="ghost-button"
+                              onClick={() => void cancelChatGPTSignIn()}
+                              type="button"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        ) : openAIPlanConnected && openAIActiveAccount ? (
+                          <p className="chatgpt-account-connected" role="status">
+                            Connected as <strong>{chatGPTAccountDisplayName(openAIActiveAccount)}</strong>.
+                            Coworker uses this ChatGPT plan’s allowance for eligible requests.
+                            You can manage usage in ChatGPT settings.
+                          </p>
+                        ) : chatGPTStatus?.state === "connected" && openAIActiveAccount ? (
+                          <p className="chatgpt-account-permission" role="alert">
+                            This ChatGPT account can’t use its plan with Coworker. Choose another
+                            account or try signing in again.
+                          </p>
+                        ) : chatGPTStatus?.state === "sign-in-required" ? (
+                          <p className="chatgpt-account-permission" role="alert">
+                            Sign in to {openAIActiveAccount
+                              ? chatGPTAccountDisplayName(openAIActiveAccount)
+                              : "ChatGPT"} again to use your plan here.
+                          </p>
+                        ) : null}
+                        {!openAIActiveAccount && openAISavedAccounts.length === 1 &&
+                        !openAISavedAccounts[0]?.connected ? (
+                          <p className="chatgpt-account-permission" role="status">
+                            Saved account <strong>{chatGPTAccountDisplayName(openAISavedAccounts[0]!)}</strong>{" "}
+                            needs to reconnect. Continue with ChatGPT to use this saved account.
+                          </p>
+                        ) : null}
+                        {chatGPTError ? <p className="chatgpt-account-error" role="alert">{chatGPTError}</p> : null}
+                        {!openAIPlanConnected && canContinueChatGPTSignIn &&
+                        chatGPTStatus?.state !== "waiting" && !chatGPTSignInPending ? (
+                          <button
+                            className="chatgpt-signin-button"
+                            disabled={working || chatGPTStatusLoading}
+                            onClick={() => void continueChatGPTSignIn()}
+                            type="button"
+                          >
+                            <img alt="" aria-hidden="true" src={chatGPTSignInMark} />
+                            Continue with ChatGPT
+                          </button>
+                        ) : null}
+                        {chatGPTStatus?.accounts.length ? (
+                          <button
+                            className="text-button chatgpt-add-account"
+                            disabled={working || chatGPTSignInPending}
+                            onClick={() => void startChatGPTSignIn()}
+                            type="button"
+                          >
+                            Add another ChatGPT account
+                          </button>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
                 {isEndpointForm ? (
                   <input
                     aria-label="Endpoint name"
@@ -967,19 +1382,23 @@ export function SettingsPage({
                     required={isEndpointForm || activeDefinition.baseUrlMode === "required"}
                   />
                 ) : null}
-                <input
-                  aria-label={`${activeLabel} API key`}
-                  name="apiKey"
-                  type="password"
-                  placeholder={
-                    activeConnected
-                      ? "Stored — enter to replace"
-                      : activeDefinition.apiKeyPlaceholder || "Optional API key"
-                  }
-                  required={
-                    activeDefinition.apiKeyRequired && !activeConnected && !addingEndpoint
-                  }
-                />
+                {!(modelProvider === "openai" &&
+                  chatGPTBridgeAvailable &&
+                  openAIAuthMode === "chatgpt-subscription") ? (
+                  <input
+                    aria-label={`${activeLabel} API key`}
+                    name="apiKey"
+                    type="password"
+                    placeholder={
+                      activeConnected
+                        ? "Stored — enter to replace"
+                        : activeDefinition.apiKeyPlaceholder || "Optional API key"
+                    }
+                    required={
+                      activeDefinition.apiKeyRequired && !activeConnected && !addingEndpoint
+                    }
+                  />
+                ) : null}
                 <div className="credential-default-model">
                   <label className="settings-row">
                     <span>
@@ -1002,6 +1421,7 @@ export function SettingsPage({
                     activeProvider && activeConnected && credentialsLoaded ? (
                       <ModelSelector
                         disabled={working}
+                        key={`${activeProvider}:${openAIAuthMode}:${chatGPTStatus?.activeAccountId ?? ""}`}
                         onChange={setDefaultModelChoice}
                         provider={activeProvider}
                         value={defaultModelChoice}
@@ -1016,9 +1436,16 @@ export function SettingsPage({
                   ) : null}
                 </div>
                 <div className="credential-form-actions">
-                  <button className="primary-button" disabled={working}>
-                    Verify and save
-                  </button>
+                  {!(modelProvider === "openai" &&
+                    chatGPTBridgeAvailable &&
+                    openAIAuthMode === "chatgpt-subscription" &&
+                    !openAIPlanConnected) ? (
+                    <button className="primary-button" disabled={working}>
+                      {modelProvider === "openai" && openAIAuthMode === "chatgpt-subscription"
+                        ? "Save settings"
+                        : "Verify and save"}
+                    </button>
+                  ) : null}
                   {selectedEndpoint ? (
                     <button
                       className="ghost-button danger"
@@ -1028,7 +1455,7 @@ export function SettingsPage({
                     >
                       Remove endpoint
                     </button>
-                  ) : activeProvider && activeConnected ? (
+                  ) : activeProvider && activeConfigured ? (
                     <button
                       className="ghost-button danger"
                       disabled={working}
@@ -1452,6 +1879,12 @@ export function SettingsPage({
           ) : null}
         </div>
       </div>
+      {chatGPTBridgeAvailable ? (
+        <ChatGPTWelcomeDialog
+          onAcknowledge={acknowledgeChatGPTWelcome}
+          status={chatGPTStatus}
+        />
+      ) : null}
       {confirmation ? (
         <ConfirmDialog
           busyLabel={confirmation.busyLabel}

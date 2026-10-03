@@ -111,7 +111,13 @@ export function registerIpc(input: {
   };
 
   for (const channel of administration.channels) {
-    handle(channel, (_event, ...args) => administration.invoke(channel, args));
+    handle(channel, (_event, ...args) =>
+      channel === ipcChannels.conversationsSend
+        ? input.service.sendConversationMessageFromUser(
+            sendConversationMessageSchema.parse(args[0]),
+          )
+        : administration.invoke(channel, args),
+    );
   }
 
   handle(ipcChannels.bootstrap, () => input.service.snapshot());

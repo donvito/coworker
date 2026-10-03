@@ -3328,7 +3328,12 @@ function CoworkerSurface({
                   <Icon name="shield" />
                   <span>
                     <strong>Request could not complete</strong>
-                    <small>{latestTask.error}</small>
+                    <small>
+                      {coworker.modelProvider === "openai" &&
+                      latestTask.error.includes("subscription_sharing_usage_limit_exceeded")
+                        ? "Your ChatGPT plan usage limit was reached. Use Manage usage below to review it."
+                        : latestTask.error}
+                    </small>
                   </span>
                 </div>
               ) : null}
@@ -3556,6 +3561,14 @@ function CoworkerSurface({
                   modelEndpoints={modelEndpoints}
                   onChanged={onChanged}
                   placement="up"
+                  showPlanUsage
+                  usageLimitReached={
+                    coworker.modelProvider === "openai" &&
+                    latestTask?.status === "FAILED" &&
+                    Boolean(
+                      latestTask.error?.includes("subscription_sharing_usage_limit_exceeded"),
+                    )
+                  }
                 />
               </div>
             </form>

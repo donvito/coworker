@@ -12,6 +12,9 @@ import {
   modelProviderName,
 } from "@shared/model-providers";
 import type { CredentialStore } from "@main/security/credential-store";
+import type { ChatGPTAuthService } from "@main/security/chatgpt-auth";
+import type { OpenAIAuthMode } from "@shared/chatgpt-auth";
+import { redactProviderDiagnostic } from "@main/runtime/provider-error-logger";
 
 export type ModelCatalogFetch = (
   input: string | URL,
@@ -25,6 +28,10 @@ export interface ModelConnectionOptions {
 }
 
 export interface RuntimeModelConfiguration {
+  /** OpenAI's selected sign-in path; subscription tokens are resolved per request. */
+  authMode: OpenAIAuthMode;
+  /** Bound identity for subscription token requests; null for API-key and other providers. */
+  chatgptAccountId: string | null;
   apiKey?: string;
   baseUrl?: string;
   supportsImages: boolean;
@@ -49,6 +56,16 @@ const openAiResponseSchema = z.object({
         })
         .optional(),
     }),
+  ),
+});
+
+const chatgptSubscriptionModelsSchema = z.object({
+  models: z.array(
+    z.object({
+      slug: z.string().min(1),
+      display_name: z.string().min(1),
+      visibility: z.string(),
+    }).passthrough(),
   ),
 });
 
@@ -508,6 +525,50 @@ export async function queryProviderModels(
   return sortModels(supportedModels(provider).filter((model) => remoteIds.has(model.id)));
 }
 
+/** The subscription catalog is account scoped and intentionally preserves server order. */
+async function queryChatgptSubscriptionModels(
+  auth: ChatGPTAuthService,
+  fetcher: ModelCatalogFetch,
+): Promise<ModelOption[]> {
+  let accessToken: string | undefined;
+  try {
+    const status = await auth.status();
+    if (status.mode !== "chatgpt-subscription") {
+      throw new Error("Choose ChatGPT subscription sign-in to use this model catalog");
+    }
+    if (status.state !== "connected" || !status.activeAccountId) {
+      throw new Error("Connect a ChatGPT account before choosing a model");
+    }
+    accessToken = await auth.getAccessToken(status.activeAccountId);
+    const body = await requestJson(
+      "openai",
+      new URL("https://api.openai.com/v1/models"),
+      { Authorization: `Bearer ${accessToken}` },
+      fetcher,
+    );
+    const parsed = parseResponse("openai", chatgptSubscriptionModelsSchema, body);
+    return parsed.models
+      .filter((model) => model.visibility === "list")
+      .map((model) => {
+        // Server availability is authoritative; bundled metadata only adds capabilities
+        // when the exact returned slug is known to this version of Pi.
+        const known = providerModels("openai").find((candidate) => candidate.id === model.slug);
+        return {
+          id: model.slug,
+          name: model.display_name,
+          supportsImages: known?.input.includes("image") ?? false,
+        };
+      });
+  } catch (error) {
+    const raw = error instanceof Error ? error.message : String(error);
+    const redacted = redactProviderDiagnostic(raw)
+      .replace(/(authorization\s*[:=]\s*bearer\s+)[^\s,"'}]+/gi, "$1[REDACTED]")
+      .replace(/(bearer\s+)[^\s,"'}]+/gi, "$1[REDACTED]");
+    const safeMessage = accessToken ? redacted.replaceAll(accessToken, "[REDACTED]") : redacted;
+    throw new Error(safeMessage);
+  }
+}
+
 async function configuredConnection(
   provider: RemoteModelProvider,
   credentials: CredentialStore,
@@ -529,9 +590,13 @@ export async function listAvailableModels(
   provider: ModelProvider,
   credentials: CredentialStore,
   fetcher: ModelCatalogFetch = fetch,
+  chatgptAuth?: ChatGPTAuthService,
 ): Promise<ModelOption[]> {
   if (provider === "demo") {
     return [{ id: "faux-1", name: "Built-in demo", supportsImages: false }];
+  }
+  if (provider === "openai" && chatgptAuth && (await chatgptAuth.status()).mode === "chatgpt-subscription") {
+    return queryChatgptSubscriptionModels(chatgptAuth, fetcher);
   }
   const connection = await configuredConnection(provider, credentials);
   return queryProviderModels(provider, connection.apiKey, fetcher, {
@@ -544,7 +609,16 @@ export async function getModelCapabilities(
   modelId: string,
   credentials: CredentialStore,
   fetcher: ModelCatalogFetch = fetch,
+  chatgptAuth?: ChatGPTAuthService,
 ): Promise<{ supportsImages: boolean }> {
+  if (provider === "openai" && chatgptAuth && (await chatgptAuth.status()).mode === "chatgpt-subscription") {
+    const models = await queryChatgptSubscriptionModels(chatgptAuth, fetcher);
+    const selected = models.find((model) => model.id === modelId);
+    if (!selected) {
+      throw new Error(`Model ${modelId} is not available to the selected ChatGPT account. Choose a listed model.`);
+    }
+    return { supportsImages: selected.supportsImages };
+  }
   if (provider === "demo" || isBuiltInProvider(provider)) {
     return { supportsImages: modelSupportsImageInput(provider, modelId) };
   }
@@ -556,26 +630,45 @@ export async function getRuntimeModelConfiguration(
   provider: ModelProvider,
   modelId: string,
   credentials: CredentialStore,
+  chatgptAuth?: ChatGPTAuthService,
+  fetcher: ModelCatalogFetch = fetch,
 ): Promise<RuntimeModelConfiguration> {
   if (provider === "demo") {
-    return { supportsImages: false, contextWindow: 128_000 };
+    return { authMode: "api-key", chatgptAccountId: null, supportsImages: false, contextWindow: 128_000 };
+  }
+  if (provider === "openai" && chatgptAuth && (await chatgptAuth.status()).mode === "chatgpt-subscription") {
+    const status = await chatgptAuth.status();
+    const models = await queryChatgptSubscriptionModels(chatgptAuth, fetcher);
+    if (!models.some((model) => model.id === modelId)) {
+      throw new Error(`Model ${modelId} is not available to the selected ChatGPT account. Choose a listed model.`);
+    }
+    return {
+      authMode: "chatgpt-subscription",
+      chatgptAccountId: status.activeAccountId,
+      supportsImages: providerModels("openai").find((model) => model.id === modelId)?.input.includes("image") ?? false,
+      contextWindow: providerModels("openai").find((model) => model.id === modelId)?.contextWindow ?? 32_768,
+    };
   }
   const connection = await configuredConnection(provider, credentials);
   if (isBuiltInProvider(provider)) {
     const model = providerModels(provider).find((candidate) => candidate.id === modelId);
     if (!model) throw new Error(`Model ${modelId} is not available from ${modelProviderName(provider)}`);
     return {
+      authMode: "api-key",
+      chatgptAccountId: null,
       apiKey: connection.apiKey,
       supportsImages: model.input.includes("image"),
       contextWindow: model.contextWindow,
     };
   }
-  const models = await queryProviderModels(provider, connection.apiKey, fetch, {
+  const models = await queryProviderModels(provider, connection.apiKey, fetcher, {
     baseUrl: connection.baseUrl,
   });
   const model = models.find((candidate) => candidate.id === modelId);
   if (!model) throw new Error(`Model ${modelId} is not available from ${modelProviderName(provider)}`);
   return {
+    authMode: "api-key",
+    chatgptAccountId: null,
     apiKey:
       connection.apiKey === localModelCredentialMarker ? undefined : connection.apiKey,
     baseUrl: connection.baseUrl,

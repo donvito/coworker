@@ -33,6 +33,8 @@ import type {
   UpdateCoworkerInput,
   UpdateScheduleInput,
 } from "@shared/contracts";
+import type { ChatGPTAuthStatus, OpenAIAuthMode } from "@shared/chatgpt-auth";
+import { ChatGPTAuthService, type ChatGPTAuthServiceOptions } from "@main/security/chatgpt-auth";
 import { CoworkerDatabase } from "@main/db/database";
 import {
   getModelCapabilities,
@@ -127,6 +129,8 @@ export interface DesktopAppServiceOptions {
     WebSocketImpl?: DiscordWebSocketConstructor;
     typingKeepAliveMs?: number;
   };
+  /** OAuth boundary overrides for deterministic ChatGPT sign-in tests. */
+  chatgpt?: Partial<Pick<ChatGPTAuthServiceOptions, "openExternal" | "fetchImpl" | "now">>;
 }
 
 function safeDirectoryName(name: string): string {
@@ -175,15 +179,23 @@ export class DesktopAppService {
   readonly browser: BrowserAutomationService;
   readonly peers: PeerMessaging;
   readonly providerErrors: ProviderErrorLogger;
+  readonly chatgptAuth: ChatGPTAuthService;
   private readonly listeners = new Set<(event: DesktopEvent) => void>();
   private initialized = false;
   private readonly integrationMutations = new Map<string, Promise<unknown>>();
+  private readonly chatgptChangeSnapshots: ChatGPTAuthStatus[] = [];
+  private chatgptChangeDepth = 0;
+  private chatgptManageUsageExternal: (url: string) => Promise<void>;
   private dataExportInProgress = false;
   private activeDataMutations = 0;
   private readonly dataMutationWaiters = new Set<() => void>();
 
   constructor(private readonly options: DesktopAppServiceOptions) {
     this.database = options.database ?? new CoworkerDatabase(join(options.dataPath, "coworker.db"));
+    const openExternal = options.chatgpt?.openExternal ?? (async () => {
+      throw new Error("Opening ChatGPT account settings is unavailable in this runtime");
+    });
+    this.chatgptManageUsageExternal = openExternal;
     this.providerErrors = new ProviderErrorLogger(
       join(options.dataPath, "logs", "provider-errors.jsonl"),
     );
@@ -209,10 +221,19 @@ export class DesktopAppService {
         discordFetch: options.discord?.fetchImpl,
       },
     );
+    this.chatgptAuth = new ChatGPTAuthService({
+      credentials: options.credentials,
+      ...options.chatgpt,
+      openExternal,
+      beforeChange: () => this.beforeChatgptChange(),
+      afterChange: () => this.afterChatgptChange(),
+    });
     this.runtime = new CoworkerRuntimeManager({
       database: this.database,
       tools: this.tools,
       credentials: options.credentials,
+      chatgptAuth: this.chatgptAuth,
+      modelCatalogFetch: options.chatgpt?.fetchImpl ?? fetch,
       emit: (event) => this.emit(event),
       providerErrors: this.providerErrors,
       applicationErrors: options.applicationLogger,
@@ -618,6 +639,13 @@ export class DesktopAppService {
   async sendConversationMessage(
     input: SendConversationMessageInput,
   ): Promise<ConversationDispatchReceipt> {
+    return this.sendConversationMessageInternal(input, false);
+  }
+
+  private async sendConversationMessageInternal(
+    input: SendConversationMessageInput,
+    userInitiated: boolean,
+  ): Promise<ConversationDispatchReceipt> {
     let conversation = this.database.getConversation(input.conversationId);
     if (conversation.archivedAt) {
       // New activity brings an archived conversation back, so messages
@@ -666,7 +694,7 @@ export class DesktopAppService {
       conversation.kind === "direct" &&
       mentionedCoworkerIds.some((id) => !conversation.memberIds.includes(id))
     ) {
-      return this.sendTaggedMessage(conversation, input, mentionedCoworkerIds);
+      return this.sendTaggedMessage(conversation, input, mentionedCoworkerIds, userInitiated);
     }
     const ongoingDiscussion =
       conversation.kind === "group"
@@ -812,6 +840,24 @@ export class DesktopAppService {
   }
 
   /**
+   * A desktop user action may retry its own manual task after a subscription
+   * usage pause. Dispatch only the exact tasks created by this send; scheduled
+   * work stays behind the quota gate until a manual inference succeeds.
+   */
+  async sendConversationMessageFromUser(
+    input: SendConversationMessageInput,
+  ): Promise<ConversationDispatchReceipt> {
+    const receipt = await this.sendConversationMessageInternal(input, true);
+    for (const run of receipt.runs) {
+      const task = this.database.getTask(run.taskId);
+      if (task.source === "manual" && task.status === "QUEUED") {
+        this.runtime.resumeAfterUserAction(run.coworkerId, run.taskId);
+      }
+    }
+    return receipt;
+  }
+
+  /**
    * A human tagged other coworkers in a direct chat. Each tagged coworker does
    * the work in their own conversation; when they finish, the chat's coworker
    * gets their result and reports back here. The chat's coworker also answers
@@ -821,6 +867,7 @@ export class DesktopAppService {
     conversation: Conversation,
     input: SendConversationMessageInput,
     mentionedCoworkerIds: string[],
+    userInitiated: boolean,
   ): Promise<ConversationDispatchReceipt> {
     if (input.images && input.images.length > 0) {
       throw new Error("Images cannot be sent to tagged coworkers yet");
@@ -841,7 +888,7 @@ export class DesktopAppService {
     }
     const sendToOthers = () => {
       for (const target of others) {
-        this.peers.send({
+        const delivery = this.peers.send({
           from: null,
           via: owner,
           to: target,
@@ -850,14 +897,17 @@ export class DesktopAppService {
           // The chat's own coworker reports the outcome back here.
           expectReply: owner.status === "active",
         });
+        if (userInitiated) {
+          this.runtime.resumeAfterUserAction(target.id, delivery.taskId);
+        }
       }
     };
 
     if (mentionedCoworkerIds.includes(owner.id)) {
-      const result = await this.sendConversationMessage({
+      const result = await this.sendConversationMessageInternal({
         ...input,
         mentionedCoworkerIds: [owner.id],
-      });
+      }, userInitiated);
       // Store every tag so a retry with the same message id matches and is a no-op.
       this.database.addMessageMentions(result.message.id, mentionedCoworkerIds);
       sendToOthers();
@@ -1204,6 +1254,9 @@ export class DesktopAppService {
     this.emit({ type: "entity.changed", entity: "conversations", id: task.threadId });
     this.emit({ type: "entity.changed", entity: "activity" });
     this.runtime.enqueueTask(task.coworkerId);
+    if (task.source === "manual") {
+      this.runtime.resumeAfterUserAction(task.coworkerId, task.id);
+    }
     return task;
   }
 
@@ -1816,11 +1869,15 @@ export class DesktopAppService {
   async configureModel(input: {
     provider: RemoteModelProvider;
     apiKey?: string;
+    authMode?: OpenAIAuthMode;
     baseUrl?: string;
     defaultModelName?: string;
     endpointName?: string;
   }): Promise<ConfigureModelResult> {
     try {
+      if (input.provider === "openai") {
+        return await this.configureOpenAIModel({ ...input, provider: "openai" });
+      }
       const definition = getModelProviderDefinition(input.provider);
       const key = modelProviderCredentialKey(input.provider);
       const endpoint = isModelEndpointProvider(input.provider)
@@ -1900,6 +1957,200 @@ export class DesktopAppService {
     }
   }
 
+  private async configureOpenAIModel(input: {
+    provider: "openai";
+    apiKey?: string;
+    authMode?: OpenAIAuthMode;
+    defaultModelName?: string;
+  }): Promise<ConfigureModelResult> {
+    const key = modelProviderCredentialKey("openai");
+    const currentMode = (await this.chatgptAuth.status()).mode;
+    const authMode = input.authMode ?? currentMode;
+    const submittedApiKey = input.apiKey?.trim();
+    if (submittedApiKey && input.authMode === undefined && currentMode === "chatgpt-subscription") {
+      throw new Error("Choose API key sign-in explicitly before saving an OpenAI API key");
+    }
+    if (submittedApiKey && authMode === "chatgpt-subscription") {
+      throw new Error("Choose API key sign-in before saving an OpenAI API key");
+    }
+
+    if (authMode === "chatgpt-subscription") {
+      if (currentMode !== authMode) await this.chatgptAuth.setMode(authMode);
+      const status = await this.chatgptAuth.status();
+      const availableModels = status.state === "connected"
+        ? await listAvailableModels(
+            "openai",
+            this.options.credentials,
+            this.options.chatgpt?.fetchImpl ?? fetch,
+            this.chatgptAuth,
+          )
+        : [];
+      if (input.defaultModelName !== undefined) {
+        if (status.state !== "connected") {
+          throw new Error("Connect a ChatGPT account before choosing the default model");
+        }
+        if (!availableModels.some((model) => model.id === input.defaultModelName)) {
+          throw new Error(
+            `Model ${input.defaultModelName} is not available to the selected ChatGPT account. Choose a listed model.`,
+          );
+        }
+        await this.updateSettings({
+          defaultModelProvider: "openai",
+          defaultModelName: input.defaultModelName,
+        });
+      }
+      this.emit({ type: "entity.changed", entity: "integrations" });
+      return {
+        key,
+        configured: status.state === "connected",
+        needsReentry: status.state === "sign-in-required",
+        models: availableModels,
+        defaultApplied: input.defaultModelName !== undefined,
+        authMode,
+      };
+    }
+
+    const storedApiKey = submittedApiKey
+      ? null
+      : await readableCredential(this.options.credentials, key);
+    const apiKey = submittedApiKey || storedApiKey || "";
+    if (!apiKey) throw new Error("An OpenAI API key is required for API key sign-in");
+    await verifyModelCredential("openai", apiKey, this.options.chatgpt?.fetchImpl ?? fetch);
+    const availableModels = await queryProviderModels(
+      "openai",
+      apiKey,
+      this.options.chatgpt?.fetchImpl ?? fetch,
+    );
+    if (availableModels.length === 0) {
+      throw new Error("OpenAI returned no compatible chat models");
+    }
+    if (
+      input.defaultModelName !== undefined &&
+      !availableModels.some((model) => model.id === input.defaultModelName)
+    ) {
+      throw new Error(
+        `Model ${input.defaultModelName} is not available to this OpenAI credential`,
+      );
+    }
+    if (submittedApiKey || currentMode !== authMode) {
+      await this.withOpenAIWorkersStopped(async () => {
+        if (submittedApiKey) await this.options.credentials.set(key, apiKey);
+        if (currentMode !== authMode) await this.chatgptAuth.setMode(authMode);
+      });
+    }
+    if (input.defaultModelName !== undefined) {
+      await this.updateSettings({
+        defaultModelProvider: "openai",
+        defaultModelName: input.defaultModelName,
+      });
+    }
+    this.emit({ type: "entity.changed", entity: "integrations" });
+    return {
+      key,
+      configured: true,
+      models: availableModels,
+      defaultApplied: input.defaultModelName !== undefined,
+      authMode,
+    };
+  }
+
+  /** Auth and API-key changes share one generation-safe stop/recovery boundary. */
+  private async withOpenAIWorkersStopped<T>(change: () => Promise<T>): Promise<T> {
+    if (this.chatgptChangeDepth === 0) this.runtime.pauseDispatch();
+    this.chatgptChangeDepth += 1;
+    try {
+      await Promise.all(
+        this.database
+          .listCoworkers()
+          .filter((coworker) => coworker.modelProvider === "openai")
+          .map((coworker) => this.runtime.stop(coworker.id)),
+      );
+      return await change();
+    } finally {
+      this.chatgptChangeDepth = Math.max(0, this.chatgptChangeDepth - 1);
+      if (this.chatgptChangeDepth === 0) this.runtime.resumeDispatch();
+    }
+  }
+
+  private async beforeChatgptChange(): Promise<void> {
+    if (this.chatgptChangeDepth === 0) this.runtime.pauseDispatch();
+    this.chatgptChangeDepth += 1;
+    try {
+      const snapshot = await this.chatgptAuth.status();
+      await Promise.all(
+        this.database
+          .listCoworkers()
+          .filter((coworker) => coworker.modelProvider === "openai")
+          .map((coworker) => this.runtime.stop(coworker.id)),
+      );
+      this.chatgptChangeSnapshots.push(snapshot);
+    } catch (error) {
+      this.chatgptChangeSnapshots.pop();
+      this.chatgptChangeDepth -= 1;
+      if (this.chatgptChangeDepth === 0) this.runtime.resumeDispatch();
+      throw error;
+    }
+  }
+
+  private async afterChatgptChange(): Promise<void> {
+    const previous = this.chatgptChangeSnapshots.pop();
+    try {
+      const current = await this.chatgptAuth.status();
+      if (
+        previous &&
+        (previous.mode !== current.mode || previous.activeAccountId !== current.activeAccountId)
+      ) {
+        await this.invalidateUnavailableOpenAIDefault(current);
+      }
+      this.emit({ type: "entity.changed", entity: "integrations" });
+    } finally {
+      this.chatgptChangeDepth = Math.max(0, this.chatgptChangeDepth - 1);
+      if (this.chatgptChangeDepth === 0) this.runtime.resumeDispatch();
+    }
+  }
+
+  private async invalidateUnavailableOpenAIDefault(status: ChatGPTAuthStatus): Promise<void> {
+    const settings = this.database.getSettings();
+    if (settings.defaultModelProvider !== "openai" || !settings.defaultModelName) return;
+    try {
+      const models = await listAvailableModels(
+        "openai",
+        this.options.credentials,
+        this.options.chatgpt?.fetchImpl ?? fetch,
+        this.chatgptAuth,
+      );
+      if (!models.some((model) => model.id === settings.defaultModelName)) {
+        await this.updateSettings({ defaultModelProvider: null, defaultModelName: null });
+      }
+    } catch (error) {
+      // A failed refresh is not evidence that the previously selected model disappeared.
+      await this.providerErrors.log({ phase: "model_catalog", provider: "openai" }, error);
+      const activeApiKey = status.mode === "api-key"
+        ? await readableCredential(this.options.credentials, modelProviderCredentialKey("openai"))
+        : null;
+      if (
+        (status.mode === "chatgpt-subscription" && status.state === "disconnected") ||
+        (status.mode === "api-key" && !activeApiKey)
+      ) {
+        await this.updateSettings({ defaultModelProvider: null, defaultModelName: null });
+      }
+    }
+  }
+
+  async chatgptManageUsage(): Promise<void> {
+    await this.chatgptManageUsageExternal("https://chatgpt.com/#settings/Usage");
+  }
+
+  /** Removes a saved but inactive key while subscription sign-in is selected. */
+  async removeInactiveOpenAIApiKey(): Promise<void> {
+    if ((await this.chatgptAuth.status()).mode !== "chatgpt-subscription") {
+      throw new Error("Disconnect OpenAI from Settings to safely remove the active API key");
+    }
+    await this.withOpenAIWorkersStopped(() =>
+      this.options.credentials.delete(modelProviderCredentialKey("openai")),
+    );
+  }
+
   /** Workers keep the credentials they started with, so restart the ones on this provider. */
   private async restartCoworkersUsing(provider: RemoteModelProvider): Promise<void> {
     const affected = this.database
@@ -1955,9 +2206,28 @@ export class DesktopAppService {
   }
 
   /** Coworkers on the provider keep their model and fail with a reconnect hint until it is set up again. */
-  async disconnectModelProvider(provider: RemoteModelProvider): Promise<void> {
+  async disconnectModelProvider(provider: RemoteModelProvider): Promise<void | { revocationConfirmed: boolean }> {
     if (isModelEndpointProvider(provider)) {
       throw new Error("Remove OpenAI-compatible endpoints instead of disconnecting them");
+    }
+    if (provider === "openai") {
+      let result: { revocationConfirmed: boolean } | undefined;
+      if ((await this.chatgptAuth.status()).mode === "chatgpt-subscription") {
+        result = await this.chatgptAuth.disconnect();
+      } else {
+        await this.removeActiveOpenAIApiKey();
+      }
+      if (this.database.getSettings().defaultModelProvider === "openai") {
+        await this.updateSettings({ defaultModelProvider: null, defaultModelName: null });
+      }
+      this.database.addActivity({
+        type: "model.disconnected",
+        summary: "OpenAI was disconnected",
+        metadata: { provider, authMode: (await this.chatgptAuth.status()).mode },
+      });
+      this.emit({ type: "entity.changed", entity: "integrations" });
+      this.emit({ type: "entity.changed", entity: "activity" });
+      return result;
     }
     await this.options.credentials.delete(modelProviderCredentialKey(provider));
     await this.options.credentials.delete(modelProviderBaseUrlKey(provider));
@@ -1972,6 +2242,12 @@ export class DesktopAppService {
     });
     this.emit({ type: "entity.changed", entity: "integrations" });
     this.emit({ type: "entity.changed", entity: "activity" });
+  }
+
+  private async removeActiveOpenAIApiKey(): Promise<void> {
+    await this.withOpenAIWorkersStopped(() =>
+      this.options.credentials.delete(modelProviderCredentialKey("openai")),
+    );
   }
 
   async configureWebSearch(input: {
@@ -2072,7 +2348,12 @@ export class DesktopAppService {
 
   async listModels(provider: ModelProvider) {
     try {
-      return await listAvailableModels(provider, this.options.credentials);
+      return await listAvailableModels(
+        provider,
+        this.options.credentials,
+        this.options.chatgpt?.fetchImpl ?? fetch,
+        this.chatgptAuth,
+      );
     } catch (error) {
       await this.providerErrors.log({ phase: "model_catalog", provider }, error);
       throw error;
@@ -2081,7 +2362,13 @@ export class DesktopAppService {
 
   async modelCapabilities(provider: ModelProvider, modelId: string) {
     try {
-      return await getModelCapabilities(provider, modelId, this.options.credentials);
+      return await getModelCapabilities(
+        provider,
+        modelId,
+        this.options.credentials,
+        this.options.chatgpt?.fetchImpl ?? fetch,
+        this.chatgptAuth,
+      );
     } catch (error) {
       await this.providerErrors.log(
         { phase: "capabilities", provider, model: modelId },

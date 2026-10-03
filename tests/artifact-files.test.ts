@@ -57,7 +57,7 @@ describe("artifact file access", () => {
     }
   });
 
-  it("resolves files recorded under a differently cased workspace root", async () => {
+  it("respects filesystem casing for recorded workspace roots", async () => {
     const root = await mkdtemp(join(tmpdir(), "coworker-artifacts-"));
     temporaryPaths.push(root);
     const workspace = join(root, "Workspace");
@@ -83,13 +83,20 @@ describe("artifact file access", () => {
         coworkerId: coworker.id,
         name: "seedance_profiles.csv",
         mimeType: "text/csv",
-        // The same directory, spelled the way the app resolved it when writing.
+        // macOS/Windows normally resolve this spelling to the same directory.
+        // On Linux it names a different workspace and must stay confined.
         filePath: join(root, "workspace", "seedance_profiles.csv"),
       });
 
-      await expect(resolveArtifactFile(database, artifact.id)).resolves.toMatchObject({
-        artifact: { id: artifact.id },
-      });
+      if (process.platform === "linux") {
+        await expect(resolveArtifactFile(database, artifact.id)).rejects.toThrow(
+          "Path traversal outside the coworker workspace is blocked",
+        );
+      } else {
+        await expect(resolveArtifactFile(database, artifact.id)).resolves.toMatchObject({
+          artifact: { id: artifact.id },
+        });
+      }
     } finally {
       database.close();
     }

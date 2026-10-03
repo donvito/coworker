@@ -1429,6 +1429,24 @@ export class CoworkerDatabase {
 
   claimNextTask(coworkerId: string): Task | null {
     return this.transaction(() => {
+      return this.claimQueuedTask(coworkerId);
+    });
+  }
+
+  /** Atomically claim one selected queued task, subject to the normal single-run guard. */
+  claimTask(taskId: string): Task | null {
+    return this.transaction(() => {
+      const selected = this.database
+        .select({ coworkerId: tasks.coworkerId })
+        .from(tasks)
+        .where(and(eq(tasks.id, taskId), eq(tasks.status, "QUEUED")))
+        .get();
+      if (!selected) return null;
+      return this.claimQueuedTask(selected.coworkerId, taskId);
+    });
+  }
+
+  private claimQueuedTask(coworkerId: string, taskId?: string): Task | null {
       const active = this.database
         .select({ id: tasks.id })
         .from(tasks)
@@ -1444,7 +1462,13 @@ export class CoworkerDatabase {
       const row = this.database
         .select()
         .from(tasks)
-        .where(and(eq(tasks.coworkerId, coworkerId), eq(tasks.status, "QUEUED")))
+        .where(
+          and(
+            eq(tasks.coworkerId, coworkerId),
+            eq(tasks.status, "QUEUED"),
+            ...(taskId ? [eq(tasks.id, taskId)] : []),
+          ),
+        )
         .orderBy(desc(tasks.priority), asc(tasks.createdAt))
         .limit(1)
         .get();
@@ -1459,7 +1483,6 @@ export class CoworkerDatabase {
         .where(eq(tasks.id, row.id))
         .run();
       return this.getTask(row.id);
-    });
   }
 
   setTaskStatus(

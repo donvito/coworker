@@ -4,6 +4,7 @@ import type {
   ModelProvider,
   RemoteModelProvider,
 } from "./contracts";
+import type { OpenAIAuthMode } from "./chatgpt-auth";
 
 /** True for user-registered OpenAI-compatible endpoints ("openai-compatible:<slug>"). */
 export function isCustomModelProvider(
@@ -22,6 +23,8 @@ export function isModelEndpointProvider(
 export interface ModelProviderDefinition {
   id: ModelProvider;
   label: string;
+  /** Extra sign-in choices supported by this provider, currently OpenAI only. */
+  authModes?: readonly OpenAIAuthMode[];
   apiKeyRequired: boolean;
   baseUrlMode: "none" | "optional" | "required";
   defaultBaseUrl?: string;
@@ -46,6 +49,7 @@ export const modelProviderDefinitions: readonly ModelProviderDefinition[] = [
   {
     id: "openai",
     label: "OpenAI",
+    authModes: ["api-key", "chatgpt-subscription"],
     apiKeyRequired: true,
     baseUrlMode: "none",
     apiKeyPlaceholder: "sk-…",

@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -6,6 +6,7 @@ import { openrouterProvider } from "@earendil-works/pi-ai/providers/openrouter";
 
 const safeStorage = vi.hoisted(() => ({
   isEncryptionAvailable: vi.fn(() => true),
+  getSelectedStorageBackend: vi.fn(() => "gnome_libsecret"),
   encryptString: vi.fn((value: string) => Buffer.from(value, "utf8")),
   decryptString: vi.fn((value: Buffer) => value.toString("utf8")),
 }));
@@ -22,6 +23,7 @@ const temporaryPaths: string[] = [];
 
 afterEach(async () => {
   safeStorage.isEncryptionAvailable.mockReturnValue(true);
+  safeStorage.getSelectedStorageBackend.mockReturnValue("gnome_libsecret");
   safeStorage.encryptString.mockImplementation((value: string) => Buffer.from(value, "utf8"));
   safeStorage.decryptString.mockImplementation((value: Buffer) => value.toString("utf8"));
   vi.unstubAllGlobals();
@@ -36,6 +38,30 @@ describe("secure credential storage", () => {
     const store = new SecureCredentialStore(directory);
     await expect(store.set("model:openai", "never-write-plaintext")).rejects.toThrow("Secure credential storage is not available");
     await expect(store.get("model:openai")).resolves.toBeNull();
+  });
+
+  it("writes an owner-only credential file through an atomic temporary file", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "coworker-atomic-credentials-"));
+    temporaryPaths.push(directory);
+    const store = new SecureCredentialStore(directory);
+    await store.set("model:openai:chatgpt", "encrypted-state");
+    const files = await readdir(directory);
+    expect(files).toHaveLength(1);
+    expect(files[0]).toMatch(/\.credential$/);
+    if (process.platform !== "win32") {
+      expect((await stat(join(directory, files[0]!))).mode & 0o777).toBe(0o600);
+      expect((await stat(directory)).mode & 0o777).toBe(0o700);
+    }
+    await expect(store.get("model:openai:chatgpt")).resolves.toBe("encrypted-state");
+  });
+
+  it.skipIf(process.platform !== "linux")("rejects Linux basic_text storage instead of saving plaintext credentials", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "coworker-basic-text-"));
+    temporaryPaths.push(directory);
+    safeStorage.getSelectedStorageBackend.mockReturnValue("basic_text");
+    const store = new SecureCredentialStore(directory);
+    await expect(store.set("model:openai:chatgpt", "never-save-this")).rejects.toThrow("Secure credential storage is not available");
+    await expect(readdir(directory)).resolves.toEqual([]);
   });
 
   it("reports identity-mismatched ciphertext without breaking status checks", async () => {
@@ -58,17 +84,17 @@ describe("secure credential storage", () => {
     const directory = await mkdtemp(join(tmpdir(), "coworker-credentials-"));
     temporaryPaths.push(directory);
     const store = new SecureCredentialStore(directory);
-    await store.set("model:openrouter", "old-secret");
+    await store.set("model:openai:chatgpt", "old-secret");
     safeStorage.decryptString.mockImplementation(() => {
       throw new Error("Could not decrypt");
     });
-    await expect(store.status("model:openrouter")).resolves.toBe("unreadable");
+    await expect(store.status("model:openai:chatgpt")).resolves.toBe("unreadable");
 
     safeStorage.decryptString.mockImplementation((value: Buffer) => value.toString("utf8"));
-    await store.set("model:openrouter", "new-secret");
+    await store.set("model:openai:chatgpt", "new-secret");
 
-    await expect(store.get("model:openrouter")).resolves.toBe("new-secret");
-    await expect(store.status("model:openrouter")).resolves.toBe("configured");
+    await expect(store.get("model:openai:chatgpt")).resolves.toBe("new-secret");
+    await expect(store.status("model:openai:chatgpt")).resolves.toBe("configured");
   });
 
   it("configures a model from a submitted key without reading legacy ciphertext", async () => {

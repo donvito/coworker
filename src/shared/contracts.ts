@@ -1,5 +1,6 @@
 import type { BaseEvent, RunAgentInput } from "@ag-ui/core";
 import type { UpdateMemoryInput, WorkspaceTextDocument } from "./workspace-context";
+import type { ChatGPTAuthStatus, OpenAIAuthMode } from "./chatgpt-auth";
 
 export const taskStatuses = [
   "QUEUED",
@@ -583,6 +584,13 @@ export interface ConfigureModelResult extends CredentialStatus {
   models: ModelOption[];
   /** True when this call also updated the global default model. */
   defaultApplied: boolean;
+  /** Active authentication choice for OpenAI, when this is the configured provider. */
+  authMode?: OpenAIAuthMode;
+}
+
+export interface DisconnectModelResult {
+  /** Present for ChatGPT subscription sign-out; false means remote revocation was not confirmed. */
+  revocationConfirmed?: boolean;
 }
 
 export interface DesktopApi {
@@ -691,6 +699,7 @@ export interface DesktopApi {
     configureModel(input: {
       provider: RemoteModelProvider;
       apiKey?: string;
+      authMode?: OpenAIAuthMode;
       baseUrl?: string;
       defaultModelName?: string;
       endpointName?: string;
@@ -710,7 +719,15 @@ export interface DesktopApi {
     credentialStatus(key: string): Promise<CredentialStatus>;
     removeCredential(key: string): Promise<void>;
     /** Forgets a built-in provider's key and base URL and restarts the coworkers using it. */
-    disconnectModel(provider: RemoteModelProvider): Promise<void>;
+    disconnectModel(provider: RemoteModelProvider): Promise<void | DisconnectModelResult>;
+    /** Current OpenAI subscription connection details; never includes credentials. */
+    chatgptStatus(): Promise<ChatGPTAuthStatus>;
+    chatgptSignIn(accountId?: string): Promise<ChatGPTAuthStatus>;
+    chatgptCancelSignIn(): Promise<ChatGPTAuthStatus>;
+    setOpenAIAuthMode(mode: OpenAIAuthMode): Promise<ChatGPTAuthStatus>;
+    chatgptSelectAccount(accountId: string): Promise<ChatGPTAuthStatus>;
+    chatgptAcknowledgeWelcome(): Promise<ChatGPTAuthStatus>;
+    chatgptManageUsage(): Promise<void>;
     configureWebSearch(input: {
       provider: WebSearchProvider;
       apiKey: string;

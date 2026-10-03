@@ -3,6 +3,7 @@ import type { ImageContent } from "@earendil-works/pi-ai";
 import type { Coworker } from "@shared/contracts";
 import type { WorkspaceTextDocument } from "@shared/workspace-context";
 import type { RequestContext } from "@shared/request-context";
+import type { OpenAIAuthMode } from "@shared/chatgpt-auth";
 
 export interface WorkerCoworkerConfig {
   coworker: Pick<
@@ -21,6 +22,8 @@ export interface WorkerCoworkerConfig {
   modelBaseUrl?: string;
   modelSupportsImages?: boolean;
   modelContextWindow?: number;
+  authMode: OpenAIAuthMode;
+  chatgptAccountId: string | null;
   globalOperatingInstructions: string;
   skills: Array<{ name: string; description: string }>;
   recentSkillUses: string[];
@@ -58,6 +61,11 @@ export type MainToWorkerMessage =
           }
         | { kind: "denied"; reason: string };
     }
+  | {
+      type: "auth.token.response";
+      requestId: string;
+      result: { kind: "token"; accessToken: string } | { kind: "error"; error: string };
+    }
   | { type: "abort"; runId: string }
   | { type: "shutdown" };
 
@@ -81,6 +89,21 @@ export type WorkerToMainMessage =
       arguments: unknown;
     }
   | {
+      type: "auth.token.request";
+      coworkerId: string;
+      taskId: string;
+      runId: string;
+      requestId: string;
+      expectedAccountId: string;
+    }
+  | {
+      type: "auth.token.cancel";
+      coworkerId: string;
+      taskId: string;
+      runId: string;
+      requestId: string;
+    }
+  | {
       type: "checkpoint";
       coworkerId: string;
       taskId: string;
@@ -101,4 +124,5 @@ export type WorkerToMainMessage =
       taskId: string;
       runId: string;
       error: string;
-    };
+    }
+  ;

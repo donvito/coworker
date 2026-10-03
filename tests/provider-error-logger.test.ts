@@ -60,4 +60,45 @@ describe("provider error diagnostics", () => {
     expect(report.text).not.toContain(secret);
     expect(report.text).not.toContain("/Users/alice/");
   });
+
+  it("redacts OAuth material and full authorization URLs from diagnostics and support reports", async () => {
+    const root = await mkdtemp(join(tmpdir(), "coworker-oauth-provider-log-"));
+    temporaryPaths.push(root);
+    const path = join(root, "logs", "provider-errors.jsonl");
+    const logger = new ProviderErrorLogger(path);
+    const secrets = [
+      "access-secret-value-101",
+      "refresh-secret-value-202",
+      "identity-secret-value-303",
+      "hint-secret-value-404",
+      "authorization-code-505",
+      "verifier-secret-value-606",
+      "eyJhbGciOiJub25lMTIz.eyJzdWIiOiJwcml2YXRlMTIz.signaturevalue123",
+    ];
+    const diagnostic =
+      "429 API failure at https://auth.openai.com/oauth/authorize?code=authorization-code-505&state=state-secret " +
+      "access_token=" + secrets[0] + " refresh_token=" + secrets[1] + " id_token=" + secrets[2] +
+      " id_token_hint=" + secrets[3] + " code=" + secrets[4] + " code_verifier=" + secrets[5] +
+      " bearer=" + secrets[6] + ". Keep this useful: stream interrupted after response.created.";
+
+    await logger.log(
+      {
+        phase: "inference",
+        provider: "openai",
+        model: "account-model",
+      },
+      new Error(diagnostic),
+    );
+
+    const contents = await readFile(path, "utf8");
+    const report = await logger.report({ "App version": "1.2.3" });
+    for (const secret of secrets) {
+      expect(contents).not.toContain(secret);
+      expect(report.text).not.toContain(secret);
+    }
+    expect(contents).not.toContain("https://auth.openai.com/oauth/authorize");
+    expect(report.text).not.toContain("https://auth.openai.com/oauth/authorize");
+    expect(contents).toContain("429 API failure");
+    expect(report.text).toContain("stream interrupted after response.created.");
+  });
 });

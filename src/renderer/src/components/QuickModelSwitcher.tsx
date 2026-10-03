@@ -11,6 +11,8 @@ import {
   remoteModelProviderDefinitions,
 } from "@shared/model-providers";
 import { modelOptionLabel, modelPricingLabel } from "../lib/model-pricing";
+import type { ChatGPTAuthStatus } from "@shared/chatgpt-auth";
+import { ChatGPTPlanIndicator, isChatGPTPlanConnected } from "./ChatGPTPlanIndicator";
 
 export function QuickModelSwitcher({
   coworker,
@@ -19,6 +21,8 @@ export function QuickModelSwitcher({
   onChanged,
   placement = "down",
   chip = false,
+  showPlanUsage = false,
+  usageLimitReached = false,
 }: {
   coworker: Coworker;
   disabled?: boolean;
@@ -28,6 +32,10 @@ export function QuickModelSwitcher({
   placement?: "down" | "up";
   /** Minimal pill trigger (model name + chevron) for tight spots like the composer. */
   chip?: boolean;
+  /** Shows ChatGPT plan attribution and usage controls beside the composer picker. */
+  showPlanUsage?: boolean;
+  /** Keeps the usage remedy close to a request that hit the plan limit. */
+  usageLimitReached?: boolean;
 }) {
   const initialProvider =
     coworker.modelProvider === "demo" ? "" : coworker.modelProvider;
@@ -40,6 +48,10 @@ export function QuickModelSwitcher({
     initialProvider,
   );
   const [configuredProviders, setConfiguredProviders] = useState<RemoteModelProvider[]>([]);
+  const [chatGPTStatus, setChatGPTStatus] = useState<ChatGPTAuthStatus | null>(null);
+  const activeChatGPTAccount = chatGPTStatus
+    ? chatGPTStatus.accounts.find((account) => account.id === chatGPTStatus.activeAccountId)
+    : undefined;
   const [providersLoading, setProvidersLoading] = useState(true);
   const [selectedOption, setSelectedOption] = useState<ModelOption | null>(null);
   const [loading, setLoading] = useState(true);
@@ -77,6 +89,8 @@ export function QuickModelSwitcher({
 
   useEffect(() => {
     let cancelled = false;
+    let generation = 0;
+    let hasLoaded = false;
     setProvidersLoading(true);
     const candidates: RemoteModelProvider[] = [
       ...remoteModelProviderDefinitions
@@ -84,45 +98,98 @@ export function QuickModelSwitcher({
         .map((definition) => definition.id),
       ...modelEndpoints.map((endpoint) => endpoint.id),
     ];
-    void Promise.all(
-      candidates.map(async (provider) => ({
-        provider,
-        configured: (
-          await window.coworker.integrations.credentialStatus(
-            modelProviderCredentialKey(provider),
-          )
-        ).configured,
-      })),
-    )
-      .then((statuses) => {
-        if (cancelled) return;
+
+    // Only a change to the selected auth mode/account should reload the OpenAI
+    // model list. Other integration and task events just refresh status data.
+    async function refreshProviderStatus() {
+      const requestGeneration = ++generation;
+      if (!hasLoaded) setProvidersLoading(true);
+      try {
+        const chatGPTStatusMethod = window.coworker.integrations.chatgptStatus;
+        const chatGPTStatusPromise =
+          typeof chatGPTStatusMethod === "function"
+            ? chatGPTStatusMethod().catch(() => null)
+            : Promise.resolve(null);
+        const [statuses, authStatus] = await Promise.all([
+          Promise.all(
+            candidates.map(async (provider) => ({
+              provider,
+              configured: (
+                await window.coworker.integrations.credentialStatus(
+                  modelProviderCredentialKey(provider),
+                )
+              ).configured,
+            })),
+          ),
+          chatGPTStatusPromise,
+        ]);
+        if (cancelled || requestGeneration !== generation) return;
+        setChatGPTStatus(authStatus);
+        const bridgeAvailable =
+          typeof chatGPTStatusMethod === "function";
+        // The saved key can remain present while subscription sign-in is active;
+        // only the selected access method determines OpenAI's availability.
         const available = statuses
-          .filter((status) => status.configured)
+          .filter((status) => {
+            if (status.provider !== "openai" || !bridgeAvailable) return status.configured;
+            if (!authStatus) return false;
+            return authStatus.mode === "chatgpt-subscription"
+              ? isChatGPTPlanConnected(authStatus)
+              : status.configured;
+          })
           .map((status) => status.provider);
         setConfiguredProviders(available);
         setCatalogProvider((current) =>
           current && available.includes(current) ? current : (available[0] ?? ""),
         );
-      })
-      .catch((loadError) => {
-        if (!cancelled) {
+      } catch (loadError) {
+        if (!cancelled && requestGeneration === generation) {
           setError(loadError instanceof Error ? loadError.message : String(loadError));
         }
-      })
-      .finally(() => {
-        if (!cancelled) setProvidersLoading(false);
-      });
+      } finally {
+        if (!cancelled && requestGeneration === generation) {
+          hasLoaded = true;
+          setProvidersLoading(false);
+        }
+      }
+    }
+
+    void refreshProviderStatus();
+    const unsubscribe =
+      typeof window.coworker.events?.subscribe === "function"
+        ? window.coworker.events.subscribe((event) => {
+            if (event.type === "entity.changed" && event.entity === "integrations") {
+              void refreshProviderStatus();
+              return;
+            }
+            // Runtime errors can be the only signal that a token refresh
+            // retired an account. Recheck auth metadata without polling models.
+            if (
+              event.type === "runtime.status" &&
+              event.coworkerId === coworker.id &&
+              event.status === "ERROR"
+            ) {
+              void refreshProviderStatus();
+            }
+          })
+        : () => undefined;
     return () => {
       cancelled = true;
+      generation += 1;
+      unsubscribe();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- endpoint list identity changes with each snapshot refresh
-  }, [coworker.modelProvider, modelEndpoints.map((endpoint) => endpoint.id).join("|")]);
+  }, [coworker.id, coworker.modelProvider, modelEndpoints.map((endpoint) => endpoint.id).join("|")]);
 
   useEffect(() => {
     let cancelled = false;
-    if (!catalogProvider) {
+    const openAIStatusPending =
+      catalogProvider === "openai" &&
+      typeof window.coworker.integrations.chatgptStatus === "function" &&
+      !chatGPTStatus;
+    if (!catalogProvider || openAIStatusPending) {
       setModels([]);
-      setLoading(false);
+      setLoading(openAIStatusPending);
       return;
     }
     setLoading(true);
@@ -145,7 +212,13 @@ export function QuickModelSwitcher({
     return () => {
       cancelled = true;
     };
-  }, [catalogProvider]);
+  }, [
+    catalogProvider,
+    catalogProvider === "openai" ? chatGPTStatus?.mode : null,
+    catalogProvider === "openai" ? chatGPTStatus?.activeAccountId : null,
+    catalogProvider === "openai" ? chatGPTStatus?.state : null,
+    catalogProvider === "openai" ? activeChatGPTAccount?.planUsageEnabled : null,
+  ]);
 
   // Keep the selected option (and its pricing) in sync with whichever model
   // list is loaded, including after the coworker refreshes post-save.
@@ -205,6 +278,12 @@ export function QuickModelSwitcher({
 
   return (
     <span className={rootClassName} ref={rootRef}>
+      {chip && showPlanUsage ? (
+        <ChatGPTPlanIndicator
+          status={chatGPTStatus}
+          usageLimitReached={usageLimitReached}
+        />
+      ) : null}
       <button
         aria-controls={listboxId}
         aria-expanded={open}

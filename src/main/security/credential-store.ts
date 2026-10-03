@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdir, open, readFile, rename, rm, chmod } from "node:fs/promises";
 import { join } from "node:path";
 import { safeStorage } from "electron";
 
@@ -25,6 +25,15 @@ export class CredentialDecryptionError extends Error {
   }
 }
 
+export class CredentialStorageUnavailableError extends Error {
+  readonly code = "CREDENTIAL_STORAGE_UNAVAILABLE";
+
+  constructor() {
+    super("Secure credential storage is not available on this computer");
+    this.name = "CredentialStorageUnavailableError";
+  }
+}
+
 export class SecureCredentialStore implements CredentialStore {
   constructor(private readonly directory: string) {}
 
@@ -33,17 +42,44 @@ export class SecureCredentialStore implements CredentialStore {
     return join(this.directory, `${name}.credential`);
   }
 
-  async set(key: string, value: string): Promise<void> {
-    if (!safeStorage.isEncryptionAvailable()) {
-      throw new Error("Secure credential storage is not available on this computer");
+  private ensureSecureStorage(): void {
+    if (!safeStorage.isEncryptionAvailable()) throw new CredentialStorageUnavailableError();
+    // Electron's Linux basic_text backend does not protect secrets at rest. Do
+    // not save OAuth refresh tokens or API keys when no desktop keyring exists.
+    if (
+      process.platform === "linux" &&
+      typeof safeStorage.getSelectedStorageBackend === "function" &&
+      safeStorage.getSelectedStorageBackend() === "basic_text"
+    ) {
+      throw new CredentialStorageUnavailableError();
     }
+  }
+
+  async set(key: string, value: string): Promise<void> {
+    this.ensureSecureStorage();
     await mkdir(this.directory, { recursive: true, mode: 0o700 });
+    await chmod(this.directory, 0o700);
     const encrypted = safeStorage.encryptString(value);
-    await writeFile(this.pathFor(key), encrypted, { mode: 0o600 });
+    const target = this.pathFor(key);
+    const temporary = `${target}.${process.pid}.${randomUUID()}.tmp`;
+    let handle: Awaited<ReturnType<typeof open>> | undefined;
+    try {
+      handle = await open(temporary, "wx", 0o600);
+      await handle.writeFile(encrypted);
+      await handle.sync();
+      await handle.close();
+      handle = undefined;
+      await rename(temporary, target);
+      await chmod(target, 0o600);
+    } finally {
+      await handle?.close().catch(() => undefined);
+      await rm(temporary, { force: true }).catch(() => undefined);
+    }
   }
 
   async get(key: string): Promise<string | null> {
     if (!safeStorage.isEncryptionAvailable()) return null;
+    this.ensureSecureStorage();
     let encrypted: Buffer;
     try {
       encrypted = await readFile(this.pathFor(key));
@@ -66,7 +102,10 @@ export class SecureCredentialStore implements CredentialStore {
     try {
       return (await this.get(key)) === null ? "missing" : "configured";
     } catch (error) {
-      if (error instanceof CredentialDecryptionError) return "unreadable";
+      if (
+        error instanceof CredentialDecryptionError ||
+        error instanceof CredentialStorageUnavailableError
+      ) return "unreadable";
       throw error;
     }
   }

@@ -99,6 +99,16 @@ New coworker capabilities are delivered as Agent Skills rather than hardcoded ap
 
 Installer and release workflow: [Releasing](releasing.md).
 
+### ChatGPT subscription authentication
+
+The OpenAI provider has two explicit access methods: API key and ChatGPT subscription. Authentication remains an application boundary; Pi continues running skills, tools, approvals, and the agent loop. The main-process session service owns browser authorization, verified identity, account registrations, encrypted persistence, and rotating-token renewal. The renderer receives safe connection details through the existing preload and administration boundaries.
+
+Subscription workers request a usable access token before each inference, including a continuation after a tool call or approval. Keep refresh and account selection in the main process. Do not initialize workers with renewable credentials, cache a token for an entire conversation, use the legacy ChatGPT backend endpoint, or select an API key after a subscription failure.
+
+Model choices come from the signed-in account's public model catalog. Subscription requests use public Responses streaming with `store: false`, a complete client-managed input history, and compatible namespaced function tools. The request adapter enforces the [current preview restrictions](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations). A stream must reach `response.completed` before inference is successful; failed, incomplete, cancelled, and interrupted streams remain distinct failures.
+
+Run the focused authentication, provider, settings, and runtime tests alongside `pnpm test`, `pnpm eval:contract`, and `pnpm test:cli:smoke`. OAuth and controlled inference fixtures establish boundary behavior, not account eligibility or live model quality. The [implementation and validation record](plans/chatgpt-sign-in.md) separates the unchanged baseline, mocked protocol checks, real-worker fixtures, live subscription checks, and platform installer checks. The current eval workflow is manual-only; missing CI checks are not verification.
+
 ### Retina rendering after background startup
 
 Use the application flag `--coworker-headless` when launching the Electron executable in background mode. Chromium consumes `--headless` itself and installs a synthetic 1× display on macOS; a subsequently opened window is then stretched on a Retina screen. The public `coworker start --headless` and `coworker run --headless` commands keep their existing syntax and translate to the application flag. Old direct executable invocations relaunch once with the safe flag before acquiring a profile lock. Login launch arguments use the same flag.
