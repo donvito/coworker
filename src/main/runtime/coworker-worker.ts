@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
+import { randomUUID } from "node:crypto";
 import { parentPort } from "node:worker_threads";
 import { EventType, type BaseEvent } from "@ag-ui/core";
 import { Agent, type AgentMessage, type AgentTool } from "@earendil-works/pi-agent-core";
@@ -11,9 +12,15 @@ import {
   fauxAssistantMessage,
   fauxProvider,
   fauxToolCall,
+  createAssistantMessageEventStream,
   toToolDeclaration,
+  type AssistantMessage,
+  type AssistantMessageEvent,
+  type AssistantMessageEventStream,
+  type Api,
   type Context,
   type JsonObject,
+  type Model,
   type MutableModels,
 } from "@earendil-works/pi-ai";
 import { getToolCatalogEntry } from "@shared/tool-catalog";
@@ -43,6 +50,13 @@ import {
   clearEchoedReasoningField,
   withOpenRouterReasoningCompat,
 } from "./openrouter-reasoning";
+import {
+  chatGPTSubscriptionTerminalFailure,
+  chatGPTResponsesBaseUrl,
+  createChatGPTSubscriptionModel,
+  createChatGPTSubscriptionProvider,
+  restrictChatGPTSubscriptionPayload,
+} from "./chatgpt-subscription-provider";
 
 if (!parentPort) throw new Error("Coworker worker must run inside a worker thread");
 
@@ -55,6 +69,8 @@ interface ActiveRun {
   assistantTextStarted: boolean;
   reasoningMessageId: string | null;
   abortRequested: boolean;
+  tokenRequestIds: Set<string>;
+  accessTokenForRedaction: string | null;
   approval: {
     approvalId: string;
     summary: string;
@@ -95,9 +111,189 @@ const pendingToolResponses = new Map<
   string,
   (response: Extract<MainToWorkerMessage, { type: "tool.response" }>["response"]) => void
 >();
+const pendingTokenResponses = new Map<
+  string,
+  {
+    resolve: (token: string) => void;
+    reject: (error: Error) => void;
+  }
+>();
 
 function post(message: WorkerToMainMessage): void {
   parentPort!.postMessage(message);
+}
+
+function failedAssistantStream(
+  model: Model<Api>,
+  message: string,
+  aborted: boolean,
+): AssistantMessageEventStream {
+  const stream = createAssistantMessageEventStream();
+  const result: AssistantMessage = {
+    role: "assistant",
+    content: [],
+    api: model.api,
+    provider: model.provider,
+    model: model.id,
+    usage: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    },
+    stopReason: aborted ? "aborted" : "error",
+    errorMessage: message,
+    timestamp: Date.now(),
+  };
+  stream.push({ type: "start", partial: result });
+  stream.push({
+    type: "error",
+    reason: aborted ? "aborted" : "error",
+    error: result,
+  });
+  return stream;
+}
+
+function redactExactToken(value: string, token: string): string {
+  return token ? value.split(token).join("[REDACTED]") : value;
+}
+
+function redactMessageToken(message: AssistantMessage, token: string): AssistantMessage {
+  return {
+    ...message,
+    ...(message.errorMessage
+      ? { errorMessage: redactExactToken(message.errorMessage, token) }
+      : {}),
+    content: message.content.map((part) => {
+      if (part.type === "text") return { ...part, text: redactExactToken(part.text, token) };
+      if (part.type === "thinking") {
+        return { ...part, thinking: redactExactToken(part.thinking, token) };
+      }
+      return part;
+    }),
+  };
+}
+
+/** Scrub the one in-flight bearer value before a Pi error can reach task state or diagnostics. */
+function redactSubscriptionStream(
+  source: AssistantMessageEventStream,
+  token: string,
+  run: ActiveRun,
+): AssistantMessageEventStream {
+  const stream = createAssistantMessageEventStream();
+  void (async () => {
+    try {
+      for await (const event of source) {
+        if (event.type === "error") {
+          const error = redactMessageToken(event.error, token);
+          stream.push({ ...event, error });
+        } else if (event.type === "done") {
+          stream.push({ ...event, message: redactMessageToken(event.message, token) });
+        } else {
+          stream.push(event);
+        }
+        if (event.type === "done" || event.type === "error") {
+          if (run.accessTokenForRedaction === token) run.accessTokenForRedaction = null;
+        }
+      }
+    } catch (error) {
+      const errorMessage = redactExactToken(
+        error instanceof Error ? error.message : String(error),
+        token,
+      );
+      stream.push({
+        type: "error",
+        reason: "error",
+        error: {
+          role: "assistant",
+          content: [],
+          api: "openai-responses",
+          provider: "openai",
+          model: "unknown",
+          usage: {
+            input: 0,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 0,
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+          },
+          stopReason: "error",
+          errorMessage,
+          timestamp: Date.now(),
+        },
+      });
+    } finally {
+      if (run.accessTokenForRedaction === token) run.accessTokenForRedaction = null;
+    }
+  })();
+  return stream;
+}
+
+function cancelChatGPTTokenRequests(run: ActiveRun): void {
+  for (const requestId of run.tokenRequestIds) {
+    pendingTokenResponses.get(requestId)?.reject(new Error("ChatGPT token request was cancelled."));
+    pendingTokenResponses.delete(requestId);
+    post({
+      type: "auth.token.cancel",
+      coworkerId: config!.coworker.id,
+      taskId: run.taskId,
+      runId: run.runId,
+      requestId,
+    });
+  }
+  run.tokenRequestIds.clear();
+}
+
+function requestChatGPTAccessToken(signal?: AbortSignal): Promise<string> {
+  if (!config || !activeRun || !config.chatgptAccountId) {
+    return Promise.reject(new Error("Sign in to the selected ChatGPT account before working."));
+  }
+  if (signal?.aborted) return Promise.reject(new Error("ChatGPT request was cancelled."));
+  const workerConfig = config;
+  const accountId = workerConfig.chatgptAccountId!;
+  const run = activeRun;
+  const requestId = randomUUID();
+  return new Promise<string>((resolve, reject) => {
+    const cleanUp = () => {
+      signal?.removeEventListener("abort", onAbort);
+      run.tokenRequestIds.delete(requestId);
+      pendingTokenResponses.delete(requestId);
+    };
+    const onAbort = () => {
+      cleanUp();
+      post({
+        type: "auth.token.cancel",
+        coworkerId: config!.coworker.id,
+        taskId: run.taskId,
+        runId: run.runId,
+        requestId,
+      });
+      reject(new Error("ChatGPT token request was cancelled."));
+    };
+    pendingTokenResponses.set(requestId, {
+      resolve: (token) => {
+        cleanUp();
+        resolve(token);
+      },
+      reject: (error) => {
+        cleanUp();
+        reject(error);
+      },
+    });
+    run.tokenRequestIds.add(requestId);
+    signal?.addEventListener("abort", onAbort, { once: true });
+    post({
+      type: "auth.token.request",
+      coworkerId: workerConfig.coworker.id,
+      taskId: run.taskId,
+      runId: run.runId,
+      requestId,
+      expectedAccountId: accountId,
+    });
+  });
 }
 
 function emit(event: BaseEvent): void {
@@ -529,10 +725,41 @@ async function initialize(workerConfig: WorkerCoworkerConfig): Promise<void> {
     models.setProvider(demo.provider);
     model = demo.getModel();
   } else {
+    const isChatGPTSubscription =
+      workerConfig.coworker.modelProvider === "openai" &&
+      workerConfig.authMode === "chatgpt-subscription";
     const provider =
       workerConfig.coworker.modelProvider === "anthropic"
         ? anthropicProvider()
-        : workerConfig.coworker.modelProvider === "openai"
+        : isChatGPTSubscription
+          ? (() => {
+              if (!workerConfig.chatgptAccountId) {
+                throw new Error("Sign in to a ChatGPT account before starting this coworker.");
+              }
+              const known = openaiProvider().getModels().find(
+                (item) => item.id === workerConfig.coworker.modelName,
+              );
+              const subscriptionModel = createChatGPTSubscriptionModel({
+                modelId: workerConfig.coworker.modelName,
+                name: known?.name ?? workerConfig.coworker.modelName,
+                supportsImages: workerConfig.modelSupportsImages ?? false,
+                contextWindow: workerConfig.modelContextWindow ?? 32_768,
+              });
+              const modelWithKnownReasoning = {
+                ...(known ?? {}),
+                ...subscriptionModel,
+                baseUrl: chatGPTResponsesBaseUrl,
+                provider: "openai" as const,
+                api: "openai-responses" as const,
+                input: subscriptionModel.input,
+                contextWindow: subscriptionModel.contextWindow,
+                reasoning: known?.reasoning ?? false,
+                ...(known?.thinkingLevelMap ? { thinkingLevelMap: known.thinkingLevelMap } : {}),
+                ...(known?.samplingParams ? { samplingParams: known.samplingParams } : {}),
+              };
+              return createChatGPTSubscriptionProvider(modelWithKnownReasoning);
+            })()
+          : workerConfig.coworker.modelProvider === "openai"
           ? openaiProvider()
           : workerConfig.coworker.modelProvider === "google"
             ? googleProvider()
@@ -562,7 +789,10 @@ async function initialize(workerConfig: WorkerCoworkerConfig): Promise<void> {
         `Model ${workerConfig.coworker.modelName} is not available from ${workerConfig.coworker.modelProvider}`,
       );
     }
-    if (workerConfig.coworker.modelProvider === "openrouter") {
+    if (
+      workerConfig.coworker.modelProvider === "openrouter" &&
+      workerConfig.authMode !== "chatgpt-subscription"
+    ) {
       model = withOpenRouterReasoningCompat(model);
     }
   }
@@ -634,15 +864,50 @@ Use this profile for the coworker's current name, role, and description. It take
       tools,
       messages: [],
     },
-    streamFn: (activeModel, context, options) =>
-      runtimeModels.streamSimple(activeModel, context, {
+    streamFn: async (activeModel, context, options) => {
+      if (
+        workerConfig.coworker.modelProvider === "openai" &&
+        workerConfig.authMode === "chatgpt-subscription"
+      ) {
+        try {
+          const requestingRun = activeRun;
+          const apiKey = await requestChatGPTAccessToken(options?.signal);
+          if (options?.signal?.aborted || !activeRun || activeRun !== requestingRun) {
+            throw new Error("ChatGPT request was cancelled.");
+          }
+          requestingRun.accessTokenForRedaction = apiKey;
+          const responseStream = runtimeModels.streamSimple(activeModel, context, {
+            ...options,
+            apiKey,
+            timeoutMs: 90_000,
+            // Quota, permission, and invalid-body failures must reach the task
+            // directly rather than being retried by Pi's generic request loop.
+            maxRetries: 0,
+            maxRetryDelayMs: 0,
+            onPayload: (payload) => restrictChatGPTSubscriptionPayload(payload),
+            onProviderStreamEvent: (event) => {
+              const failure = chatGPTSubscriptionTerminalFailure(event);
+              if (failure) throw failure;
+            },
+          });
+          return redactSubscriptionStream(responseStream, apiKey, requestingRun);
+        } catch (error) {
+          return failedAssistantStream(
+            activeModel,
+            error instanceof Error ? error.message : String(error),
+            options?.signal?.aborted === true,
+          );
+        }
+      }
+      return runtimeModels.streamSimple(activeModel, context, {
         ...options,
         // Pi's provider default can wait up to ten minutes. A bounded timeout and
         // retry delay make an unavailable/rate-limited OpenRouter route fail visibly.
         timeoutMs: 90_000,
         maxRetries: 2,
         maxRetryDelayMs: 10_000,
-      }),
+      });
+    },
     sessionId: workerConfig.coworker.id,
     toolExecution: "sequential",
   });
@@ -1080,6 +1345,8 @@ async function runTask(message: Extract<MainToWorkerMessage, { type: "run" }>): 
     assistantTextStarted: false,
     reasoningMessageId: null,
     abortRequested: false,
+    tokenRequestIds: new Set(),
+    accessTokenForRedaction: null,
     approval: null,
   };
   try {
@@ -1169,7 +1436,10 @@ async function runTask(message: Extract<MainToWorkerMessage, { type: "run" }>): 
       waitingForApproval: Boolean(finishedRun.approval),
     });
   } catch (error) {
-    const messageText = error instanceof Error ? error.message : String(error);
+    const rawMessage = error instanceof Error ? error.message : String(error);
+    const messageText = activeRun?.accessTokenForRedaction
+      ? redactExactToken(rawMessage, activeRun.accessTokenForRedaction)
+      : rawMessage;
     const aborted = activeRun?.abortRequested === true;
     emit({
       type: EventType.RUN_ERROR,
@@ -1207,14 +1477,25 @@ parentPort.on("message", (message: MainToWorkerMessage) => {
       }
       return;
     }
+    if (message.type === "auth.token.response") {
+      const pending = pendingTokenResponses.get(message.requestId);
+      if (!pending) return;
+      pendingTokenResponses.delete(message.requestId);
+      activeRun?.tokenRequestIds.delete(message.requestId);
+      if (message.result.kind === "token") pending.resolve(message.result.accessToken);
+      else pending.reject(new Error(message.result.error));
+      return;
+    }
     if (message.type === "abort") {
       if (activeRun?.runId === message.runId) {
         activeRun.abortRequested = true;
+        cancelChatGPTTokenRequests(activeRun);
         agent?.abort();
       }
       return;
     }
     if (message.type === "shutdown") {
+      if (activeRun) cancelChatGPTTokenRequests(activeRun);
       agent?.abort();
       await agent?.waitForIdle().catch(() => undefined);
       process.exit(0);

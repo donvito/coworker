@@ -344,11 +344,26 @@ export const configureModelSchema = z
   .object({
     provider: remoteModelProviderSchema,
     apiKey: z.string().trim().max(2_000).optional(),
+    authMode: z.enum(["api-key", "chatgpt-subscription"]).optional(),
     baseUrl: modelBaseUrlSchema.optional(),
     defaultModelName: z.string().trim().min(1).max(160).optional(),
     endpointName: z.string().trim().min(1).max(80).optional(),
   })
   .superRefine((value, context) => {
+    if (value.authMode !== undefined && value.provider !== "openai") {
+      context.addIssue({
+        code: "custom",
+        message: "OpenAI sign-in mode can only be set for OpenAI",
+        path: ["authMode"],
+      });
+    }
+    if (value.authMode === "chatgpt-subscription" && value.apiKey) {
+      context.addIssue({
+        code: "custom",
+        message: "Choose API key sign-in before saving an OpenAI API key",
+        path: ["apiKey"],
+      });
+    }
     if (value.provider === "openai-compatible" && !value.baseUrl) {
       context.addIssue({
         code: "custom",
@@ -357,6 +372,9 @@ export const configureModelSchema = z
       });
     }
   });
+
+export const openAIAuthModeSchema = z.enum(["api-key", "chatgpt-subscription"]);
+export const chatgptAccountIdSchema = identifier;
 
 export const addModelEndpointSchema = z.object({
   name: z.string().trim().min(1).max(80),

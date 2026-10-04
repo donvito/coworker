@@ -152,6 +152,7 @@
     "docx": "^9.7.1",
     "drizzle-orm": "1.0.0-rc.4",
     "exceljs": "^4.4.0",
+    "jose": "5.10.0",
     "jszip": "^3.10.1",
     "pdf-lib": "^1.17.1",
     "playwright": "^1.62.1",

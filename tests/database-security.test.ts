@@ -155,6 +155,35 @@ describe("durable state and queue invariants", () => {
     }
   });
 
+  it("claims an explicitly selected task atomically without taking older queued work", async () => {
+    const root = await temporaryDirectory("coworker-db-selected-claim-");
+    const database = new CoworkerDatabase(join(root, "coworker.db"));
+    try {
+      const ava = await createCoworker(database, root, "Ava");
+      const scheduled = database.createTask({
+        coworkerId: ava.id,
+        title: "Older schedule",
+        input: "Wait for automatic work",
+        source: "schedule",
+      });
+      const manual = database.createTask({
+        coworkerId: ava.id,
+        title: "Selected manual retry",
+        input: "Run only this request",
+        source: "manual",
+      });
+
+      expect(database.claimTask(manual.id)?.id).toBe(manual.id);
+      expect(database.getTask(scheduled.id).status).toBe("QUEUED");
+      expect(database.claimTask(scheduled.id)).toBeNull();
+      database.setTaskStatus(manual.id, "COMPLETED");
+      expect(database.claimTask(scheduled.id)?.id).toBe(scheduled.id);
+      expect(database.claimTask("missing")).toBeNull();
+    } finally {
+      database.close();
+    }
+  });
+
   it("recovers interrupted runs but preserves approval waits", async () => {
     const root = await temporaryDirectory("coworker-recovery-");
     const database = new CoworkerDatabase(join(root, "coworker.db"));

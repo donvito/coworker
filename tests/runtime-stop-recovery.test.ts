@@ -142,8 +142,9 @@ async function startTask(
   task: Task,
   workers: FakeWorker[],
 ): Promise<FakeWorker> {
+  const previousWorkerCount = workers.length;
   manager.enqueueTask(task.coworkerId);
-  await waitFor(() => workers.length > 0, "runtime worker");
+  await waitFor(() => workers.length > previousWorkerCount, "runtime worker");
   const worker = workers.at(-1)!;
   await waitFor(
     () =>
@@ -155,6 +156,38 @@ async function startTask(
 }
 
 describe("runtime stop recovery", () => {
+  it("keeps dispatch paused until every nested pause has resumed", async () => {
+    const root = await mkdtemp(join(tmpdir(), "coworker-runtime-nested-pause-"));
+    temporaryPaths.push(root);
+    const database = new CoworkerDatabase(join(root, "coworker.db"));
+    const coworker = createCoworker(database, root);
+    const workers: FakeWorker[] = [];
+    const manager = managerFor(database, root, workers);
+    const task = createTask(database, coworker.id, "Wait for all transitions");
+
+    try {
+      manager.pauseDispatch();
+      manager.pauseDispatch();
+      manager.enqueueTask(coworker.id);
+      manager.resumeDispatch();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(workers).toHaveLength(0);
+      expect(database.getTask(task.id).status).toBe("QUEUED");
+
+      manager.resumeDispatch();
+      await waitFor(() => workers.length === 1, "dispatch after final resume");
+      await waitFor(
+        () => workers[0]!.messages.some((message) => message.type === "run"),
+        "queued task after final resume",
+      );
+      manager.resumeDispatch();
+      expect(database.getTask(task.id).status).toBe("RUNNING");
+    } finally {
+      await manager.stopAll();
+      database.close();
+    }
+  });
+
   it("requeues a running task after an intentional stop and ignores stale worker events", async () => {
     const root = await mkdtemp(join(tmpdir(), "coworker-runtime-stop-"));
     temporaryPaths.push(root);

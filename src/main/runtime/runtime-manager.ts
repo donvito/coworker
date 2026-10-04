@@ -5,8 +5,12 @@ import { EventType } from "@ag-ui/core";
 import type { DesktopEvent, RuntimeStatus, Task } from "@shared/contracts";
 import type { CoworkerDatabase } from "@main/db/database";
 import type { CredentialStore } from "@main/security/credential-store";
+import type { ChatGPTAuthService } from "@main/security/chatgpt-auth";
 import { loadImageAttachments } from "@main/integrations/image-attachments";
-import { getRuntimeModelConfiguration } from "@main/integrations/model-catalog";
+import {
+  getRuntimeModelConfiguration,
+  type ModelCatalogFetch,
+} from "@main/integrations/model-catalog";
 import type { ToolGateway } from "@main/tools/tool-gateway";
 import type {
   MainToWorkerMessage,
@@ -17,6 +21,8 @@ import type { ProviderErrorSink } from "./provider-error-logger";
 import { loadWorkspaceContext } from "@main/tools/workspace-text";
 import { requestContextForTask } from "@shared/request-context";
 import { messagingCandidates } from "@main/integrations/integration-selection";
+import { redactProviderDiagnostic } from "./provider-error-logger";
+import { chatGPTUsageLimitCode, formatChatGPTSubscriptionFailure } from "./chatgpt-subscription-provider";
 
 interface RuntimeRecord {
   coworkerId: string;
@@ -39,12 +45,17 @@ interface RuntimeRecord {
   coworkerName: string;
   modelProvider: WorkerCoworkerConfig["coworker"]["modelProvider"];
   modelName: string;
+  generation: number;
+  authMode: WorkerCoworkerConfig["authMode"];
+  chatgptAccountId: string | null;
 }
 
 export interface CoworkerRuntimeManagerOptions {
   database: CoworkerDatabase;
   tools: ToolGateway;
   credentials: CredentialStore;
+  chatgptAuth?: ChatGPTAuthService;
+  modelCatalogFetch?: ModelCatalogFetch;
   emit: (event: DesktopEvent) => void;
   idleTimeoutMs?: number;
   workerFactory?: () => Worker;
@@ -65,10 +76,17 @@ export class CoworkerRuntimeManager {
   private readonly dispatching = new Set<string>();
   private readonly pendingDispatches = new Map<Promise<void>, string>();
   private readonly enqueueRequests = new Set<string>();
+  private readonly usageLimitedCoworkers = new Set<string>();
+  private readonly usageLimitedAccounts = new Set<string>();
+  private readonly userRetryTaskIds = new Map<string, string[]>();
+  private readonly pendingTokenRequests = new Map<string, {
+    runtime: RuntimeRecord;
+    cancel: () => void;
+  }>();
   private readonly stopGenerations = new Map<string, number>();
   private readonly operationContext = new AsyncLocalStorage<RuntimeRecord>();
   private readonly messageBuffers = new Map<string, { id: string; content: string }>();
-  private dispatchPaused = false;
+  private dispatchPauseDepth = 0;
   private stoppingAll = 0;
   private readonly idleTimeoutMs: number;
   private readonly workerFactory: () => Worker;
@@ -131,6 +149,9 @@ export class CoworkerRuntimeManager {
       coworkerName: coworker.name,
       modelProvider: coworker.modelProvider,
       modelName: coworker.modelName,
+      generation: this.currentStopGeneration(coworkerId),
+      authMode: "api-key",
+      chatgptAccountId: null,
     };
     this.runtimes.set(coworkerId, record);
     worker.on("message", (message: WorkerToMainMessage) => {
@@ -163,12 +184,23 @@ export class CoworkerRuntimeManager {
     worker.on("exit", (code) => this.observeWorkerExit(coworkerId, record, code));
 
     try {
-      const modelConfiguration = await getRuntimeModelConfiguration(
-        coworker.modelProvider,
-        coworker.modelName,
-        this.options.credentials,
-      );
+      // Catalog discovery may wait on OAuth refresh. A stop must not leave a
+      // dispatch stuck awaiting that refresh after its worker was retired.
+      const modelConfiguration = await Promise.race([
+        getRuntimeModelConfiguration(
+          coworker.modelProvider,
+          coworker.modelName,
+          this.options.credentials,
+          this.options.chatgptAuth,
+          this.options.modelCatalogFetch,
+        ),
+        record.physicalExit.then(() => {
+          throw new Error(`${coworker.name}'s runtime exited while loading model settings.`);
+        }),
+      ]);
       if (!this.isLiveRuntime(coworkerId, record)) return;
+      record.authMode = modelConfiguration.authMode;
+      record.chatgptAccountId = modelConfiguration.chatgptAccountId;
       const config: WorkerCoworkerConfig = {
         coworker,
         globalOperatingInstructions:
@@ -177,6 +209,8 @@ export class CoworkerRuntimeManager {
         modelBaseUrl: modelConfiguration.baseUrl,
         modelSupportsImages: modelConfiguration.supportsImages,
         modelContextWindow: modelConfiguration.contextWindow,
+        authMode: modelConfiguration.authMode,
+        chatgptAccountId: modelConfiguration.chatgptAccountId,
         skills: this.options.database.listCoworkerSkills(coworkerId).map((skill) => ({
           name: skill.name,
           description: skill.description,
@@ -222,6 +256,7 @@ export class CoworkerRuntimeManager {
       this.setStatus(coworkerId, "STOPPED");
       return;
     }
+    this.cancelTokenRequests(runtime);
     runtime.stopping = true;
     if (runtime.idleTimer) clearTimeout(runtime.idleTimer);
     if (!runtime.exitObserved) this.send(runtime, { type: "shutdown" });
@@ -259,17 +294,31 @@ export class CoworkerRuntimeManager {
   }
 
   enqueueTask(coworkerId: string): void {
-    if (this.dispatchPaused || this.stoppingAll > 0) return;
+    if (this.dispatchPauseDepth > 0 || this.stoppingAll > 0) return;
     this.enqueueRequests.add(coworkerId);
     queueMicrotask(() => this.scheduleDispatch(coworkerId));
   }
 
+  /** Remember the exact manual task allowed to pass a usage-limit pause. */
+  resumeAfterUserAction(coworkerId: string, taskId: string): void {
+    const task = this.options.database.getTask(taskId);
+    if (task.coworkerId !== coworkerId || task.source !== "manual" || task.status !== "QUEUED") {
+      throw new Error("Only a newly queued manual task can resume ChatGPT work.");
+    }
+    const queued = this.userRetryTaskIds.get(coworkerId) ?? [];
+    if (!queued.includes(taskId)) queued.push(taskId);
+    this.userRetryTaskIds.set(coworkerId, queued);
+    this.enqueueTask(coworkerId);
+  }
+
   pauseDispatch(): void {
-    this.dispatchPaused = true;
+    this.dispatchPauseDepth += 1;
   }
 
   resumeDispatch(): void {
-    this.dispatchPaused = false;
+    if (this.dispatchPauseDepth === 0) return;
+    this.dispatchPauseDepth -= 1;
+    if (this.dispatchPauseDepth > 0) return;
     for (const coworker of this.options.database.listCoworkers()) {
       if (this.options.database.listTasks(coworker.id).some((task) => task.status === "QUEUED")) {
         this.enqueueTask(coworker.id);
@@ -300,6 +349,7 @@ export class CoworkerRuntimeManager {
   async abort(coworkerId: string, runId: string): Promise<void> {
     const runtime = this.runtimes.get(coworkerId);
     if (!runtime || runtime.currentRunId !== runId) return;
+    this.cancelTokenRequests(runtime, runId);
     this.send(runtime, { type: "abort", runId });
   }
 
@@ -310,7 +360,7 @@ export class CoworkerRuntimeManager {
   }
 
   private async dispatch(coworkerId: string): Promise<void> {
-    if (this.dispatchPaused || this.stoppingAll > 0) return;
+    if (this.dispatchPauseDepth > 0 || this.stoppingAll > 0) return;
     if (this.dispatching.has(coworkerId)) return;
     const retiring = this.runtimes.get(coworkerId);
     if (retiring?.stopping || retiring?.exitObserved) return;
@@ -318,7 +368,15 @@ export class CoworkerRuntimeManager {
     this.enqueueRequests.delete(coworkerId);
     this.dispatching.add(coworkerId);
     let claimedTask: Task | null = null;
+    let requeuedInterruptedTask = false;
+    const requeueInterrupted = (taskId: string) => {
+      this.requeueInterruptedTask(taskId);
+      requeuedInterruptedTask = true;
+    };
     try {
+      const usagePaused = await this.isUsageLimitPaused(coworkerId);
+      const explicitlySelectedTask = usagePaused ? this.nextQueuedUserTask(coworkerId) : null;
+      if (usagePaused && !explicitlySelectedTask) return;
       const coworker = this.options.database.getCoworker(coworkerId);
       if (coworker.status !== "active") {
         this.setStatus(coworkerId, "STOPPED");
@@ -327,7 +385,9 @@ export class CoworkerRuntimeManager {
       const current = this.runtimes.get(coworkerId);
       if (current?.stopping || current?.currentTaskId) return;
       if (!this.isCurrentGeneration(coworkerId, generation)) return;
-      const task = this.options.database.claimNextTask(coworkerId);
+      const task = usagePaused
+        ? this.options.database.claimTask(explicitlySelectedTask!)
+        : this.options.database.claimNextTask(coworkerId);
       if (!task) {
         if (current) {
           this.setStatus(coworkerId, "IDLE");
@@ -337,7 +397,7 @@ export class CoworkerRuntimeManager {
       }
       claimedTask = task;
       if (!this.isCurrentGeneration(coworkerId, generation)) {
-        this.requeueInterruptedTask(task.id);
+        requeueInterrupted(task.id);
         return;
       }
       await this.start(coworkerId);
@@ -347,7 +407,7 @@ export class CoworkerRuntimeManager {
         runtime.stopping ||
         !this.isCurrentGeneration(coworkerId, generation)
       ) {
-        this.requeueInterruptedTask(task.id);
+        requeueInterrupted(task.id);
         return;
       }
       if (runtime.idleTimer) clearTimeout(runtime.idleTimer);
@@ -360,15 +420,15 @@ export class CoworkerRuntimeManager {
       let resume: Extract<MainToWorkerMessage, { type: "run" }>["resume"];
       if (approval && approval.status !== "PENDING") {
         if (!this.isCurrentDispatch(coworkerId, runtime, generation)) {
-          this.requeueInterruptedTask(task.id);
+          requeueInterrupted(task.id);
           return;
         }
-        const coworker = this.options.database.getCoworker(coworkerId);
+      const coworker = this.options.database.getCoworker(coworkerId);
         const execution = await this.trackOperation(runtime, () =>
           this.options.tools.executeApproval(approval, coworker),
         );
         if (!this.isCurrentDispatch(coworkerId, runtime, generation)) {
-          this.requeueInterruptedTask(task.id);
+          requeueInterrupted(task.id);
           return;
         }
         resume = {
@@ -410,7 +470,7 @@ export class CoworkerRuntimeManager {
           );
       const workspaceContext = await loadWorkspaceContext(coworker.workspacePath);
       if (!this.isCurrentDispatch(coworkerId, runtime, generation)) {
-        this.requeueInterruptedTask(task.id);
+        requeueInterrupted(task.id);
         return;
       }
       this.send(runtime, {
@@ -455,7 +515,7 @@ export class CoworkerRuntimeManager {
         (!this.isCurrentGeneration(coworkerId, generation) || runtime?.stopping)
       ) {
         this.options.tools.releaseBrowserTask(claimedTask.id);
-        this.requeueInterruptedTask(claimedTask.id);
+        requeueInterrupted(claimedTask.id);
         if (runtime && this.runtimes.get(coworkerId) === runtime) {
           runtime.currentTaskId = null;
           runtime.currentRunId = null;
@@ -505,7 +565,11 @@ export class CoworkerRuntimeManager {
       this.setStatus(coworkerId, "ERROR", taskId ?? undefined);
     } finally {
       this.dispatching.delete(coworkerId);
-      if (this.enqueueRequests.has(coworkerId) && !this.dispatchPaused) {
+      if (
+        (this.enqueueRequests.has(coworkerId) || requeuedInterruptedTask) &&
+        this.dispatchPauseDepth === 0 &&
+        this.stoppingAll === 0
+      ) {
         queueMicrotask(() => this.scheduleDispatch(coworkerId));
       }
     }
@@ -532,6 +596,15 @@ export class CoworkerRuntimeManager {
       runtime.readyResolved = true;
       runtime.resolveReady();
       if (!runtime.stopping) this.setStatus(message.coworkerId, "IDLE");
+      return;
+    }
+    if (message.type === "auth.token.cancel") {
+      const pending = this.pendingTokenRequests.get(message.requestId);
+      if (pending?.runtime === runtime) pending.cancel();
+      return;
+    }
+    if (message.type === "auth.token.request") {
+      await this.resolveWorkerToken(runtime, message);
       return;
     }
     if (message.type === "agui.event") {
@@ -633,6 +706,10 @@ export class CoworkerRuntimeManager {
         await this.options.onTaskCompleted?.(
           this.options.database.getTask(message.taskId),
         );
+        const completedFromUserAction = this.removeUserRetryTask(message.coworkerId, message.taskId);
+        if (completedFromUserAction) {
+          this.clearUsageLimitPause(runtime.chatgptAccountId, message.coworkerId);
+        }
         if (!this.isLiveRuntime(message.coworkerId, runtime)) {
           this.options.emit({ type: "entity.changed", entity: "tasks", id: message.taskId });
           this.options.emit({ type: "entity.changed", entity: "activity" });
@@ -640,6 +717,7 @@ export class CoworkerRuntimeManager {
         }
         this.setStatus(message.coworkerId, "IDLE");
       } else {
+        this.removeUserRetryTask(message.coworkerId, message.taskId);
         this.setStatus(message.coworkerId, "IDLE");
       }
       this.options.emit({ type: "entity.changed", entity: "tasks", id: message.taskId });
@@ -653,11 +731,23 @@ export class CoworkerRuntimeManager {
       runtime.currentTaskId = null;
       runtime.currentRunId = null;
       const task = this.options.database.getTask(message.taskId);
+      this.removeUserRetryTask(message.coworkerId, message.taskId);
+      if (
+        runtime.authMode === "chatgpt-subscription" &&
+        message.error.includes(chatGPTUsageLimitCode)
+      ) {
+        if (runtime.chatgptAccountId) this.usageLimitedAccounts.add(runtime.chatgptAccountId);
+        else this.usageLimitedCoworkers.add(message.coworkerId);
+      }
+      const userVisibleError =
+        runtime.authMode === "chatgpt-subscription" && message.error.includes(chatGPTUsageLimitCode)
+          ? formatChatGPTSubscriptionFailure(message.error)
+          : message.error;
       if (task.status !== "CANCELLED" && task.status !== "WAITING_FOR_APPROVAL") {
-        this.options.database.setTaskStatus(message.taskId, "FAILED", { error: message.error });
+        this.options.database.setTaskStatus(message.taskId, "FAILED", { error: userVisibleError });
         await this.options.onTaskFailed?.(
           this.options.database.getTask(message.taskId),
-          message.error,
+          userVisibleError,
         );
         if (this.isLiveRuntime(message.coworkerId, runtime)) {
           this.setStatus(message.coworkerId, "ERROR", message.taskId);
@@ -674,10 +764,206 @@ export class CoworkerRuntimeManager {
           taskId: message.taskId,
           runId: message.runId,
         },
-        message.error,
+        userVisibleError,
       );
       this.options.emit({ type: "entity.changed", entity: "tasks", id: message.taskId });
       if (this.isLiveRuntime(message.coworkerId, runtime)) this.enqueueTask(message.coworkerId);
+    }
+  }
+
+  private async resolveWorkerToken(
+    runtime: RuntimeRecord,
+    message: Extract<WorkerToMainMessage, { type: "auth.token.request" }>,
+  ): Promise<void> {
+    let cancelled = false;
+    let rejectCancelled!: (error: Error) => void;
+    const cancellation = new Promise<never>((_, reject) => {
+      rejectCancelled = reject;
+    });
+    const cancel = () => {
+      if (cancelled) return;
+      cancelled = true;
+      rejectCancelled(new Error("ChatGPT token request was cancelled."));
+    };
+    if (this.pendingTokenRequests.has(message.requestId)) {
+      this.sendTokenFailure(runtime, message, "ChatGPT sign-in could not be checked. Try again.");
+      return;
+    }
+    this.pendingTokenRequests.set(message.requestId, { runtime, cancel });
+    try {
+      if (
+        !this.isCurrentTokenRequest(runtime, message) ||
+        runtime.authMode !== "chatgpt-subscription" ||
+        !runtime.chatgptAccountId ||
+        message.expectedAccountId !== runtime.chatgptAccountId ||
+        !this.options.chatgptAuth
+      ) {
+        throw new Error("ChatGPT sign-in changed. Retry the task.");
+      }
+      const readActiveAccount = async () => {
+        const status = await this.options.chatgptAuth!.status();
+        if (
+          status.mode !== "chatgpt-subscription" ||
+          status.activeAccountId !== message.expectedAccountId ||
+          status.state !== "connected"
+        ) {
+          throw new Error("Sign in to the selected ChatGPT account again.");
+        }
+      };
+      // Pair the service's serialized refresh path with a cancellation race.
+      // beforeChange can now retire this worker without waiting for a token
+      // refresh that itself is waiting on auth state mutation.
+      const accessToken = await Promise.race([
+        (async () => {
+          await readActiveAccount();
+          const fresh = await this.options.chatgptAuth!.getAccessToken(message.expectedAccountId);
+          await readActiveAccount();
+          if (!this.isCurrentTokenRequest(runtime, message)) {
+            throw new Error("ChatGPT sign-in changed. Retry the task.");
+          }
+          return fresh;
+        })(),
+        cancellation,
+      ]);
+      if (!this.isCurrentTokenRequest(runtime, message)) return;
+      this.send(runtime, {
+        type: "auth.token.response",
+        requestId: message.requestId,
+        result: { kind: "token", accessToken },
+      });
+    } catch (error) {
+      if (!cancelled && this.isCurrentTokenRequest(runtime, message)) {
+        const currentAuth = await this.options.chatgptAuth?.status().catch(() => null);
+        if (
+          currentAuth &&
+          (currentAuth.state !== "connected" ||
+            !currentAuth.accounts.find((account) => account.id === currentAuth.activeAccountId)
+              ?.planUsageEnabled)
+        ) {
+          this.options.emit({ type: "entity.changed", entity: "integrations" });
+        }
+        const detail = error instanceof Error ? error.message : String(error);
+        this.sendTokenFailure(runtime, message, redactProviderDiagnostic(detail).slice(0, 500));
+      }
+    } finally {
+      const pending = this.pendingTokenRequests.get(message.requestId);
+      if (pending?.runtime === runtime) this.pendingTokenRequests.delete(message.requestId);
+    }
+  }
+
+  private async isUsageLimitPaused(coworkerId: string): Promise<boolean> {
+    const coworker = this.options.database.getCoworker(coworkerId);
+    if (
+      coworker.modelProvider !== "openai" ||
+      !this.options.chatgptAuth
+    ) {
+      return false;
+    }
+    const auth = await this.options.chatgptAuth.status();
+    if (auth.mode !== "chatgpt-subscription") return false;
+    if (this.usageLimitedCoworkers.has(coworkerId)) return true;
+    if (auth.activeAccountId && this.usageLimitedAccounts.has(auth.activeAccountId)) return true;
+
+    // The selected subscription is shared by every OpenAI coworker. Rebuild
+    // the account-wide pause from task history after restart so another
+    // coworker's queued automation cannot spend the same exhausted allowance.
+    const terminal = this.options.database
+      .listCoworkers()
+      .filter((item) => item.modelProvider === "openai")
+      .flatMap((item) => this.options.database.listTasks(item.id, 10_000))
+      .filter((task) => ["COMPLETED", "FAILED", "CANCELLED"].includes(task.status))
+      .map((task) => ({
+        task,
+        finishedAt: Date.parse(task.completedAt ?? task.startedAt ?? task.createdAt),
+      }))
+      .sort((left, right) => right.finishedAt - left.finishedAt);
+    const mostRecentLimit = terminal.find(
+      ({ task }) =>
+        task.status === "FAILED" &&
+        task.error?.includes(chatGPTUsageLimitCode),
+    )?.finishedAt ?? Number.NEGATIVE_INFINITY;
+    const mostRecentManualSuccess = terminal.find(
+      ({ task }) => task.status === "COMPLETED" && task.source === "manual",
+    )?.finishedAt ?? Number.NEGATIVE_INFINITY;
+    if (mostRecentLimit > mostRecentManualSuccess) {
+      if (auth.activeAccountId) this.usageLimitedAccounts.add(auth.activeAccountId);
+      else this.usageLimitedCoworkers.add(coworkerId);
+      return true;
+    }
+    return false;
+  }
+
+  private clearUsageLimitPause(accountId: string | null, coworkerId: string): void {
+    this.usageLimitedCoworkers.delete(coworkerId);
+    if (accountId) this.usageLimitedAccounts.delete(accountId);
+    for (const coworker of this.options.database.listCoworkers()) {
+      if (
+        coworker.modelProvider === "openai" &&
+        this.options.database.listTasks(coworker.id).some((task) => task.status === "QUEUED")
+      ) {
+        this.enqueueTask(coworker.id);
+      }
+    }
+  }
+
+  private nextQueuedUserTask(coworkerId: string): string | null {
+    const queued = this.userRetryTaskIds.get(coworkerId);
+    if (!queued) return null;
+    while (queued.length > 0) {
+      const taskId = queued[0]!;
+      const task = this.options.database.getTask(taskId);
+      if (task.status === "QUEUED") return taskId;
+      // An approval or active task remains selected but cannot be claimed yet.
+      if (task.status === "WAITING_FOR_APPROVAL" || task.status === "RUNNING") return null;
+      queued.shift();
+    }
+    this.userRetryTaskIds.delete(coworkerId);
+    return null;
+  }
+
+  private removeUserRetryTask(coworkerId: string, taskId: string): boolean {
+    const queued = this.userRetryTaskIds.get(coworkerId);
+    if (!queued) return false;
+    const index = queued.indexOf(taskId);
+    if (index < 0) return false;
+    queued.splice(index, 1);
+    if (queued.length === 0) this.userRetryTaskIds.delete(coworkerId);
+    return true;
+  }
+
+  private isCurrentTokenRequest(
+    runtime: RuntimeRecord,
+    message: Extract<WorkerToMainMessage, { type: "auth.token.request" }>,
+  ): boolean {
+    return (
+      this.isLiveRuntime(message.coworkerId, runtime) &&
+      runtime.generation === this.currentStopGeneration(message.coworkerId) &&
+      runtime.currentTaskId === message.taskId &&
+      runtime.currentRunId === message.runId
+    );
+  }
+
+  private sendTokenFailure(
+    runtime: RuntimeRecord,
+    message: Extract<WorkerToMainMessage, { type: "auth.token.request" }>,
+    error: string,
+  ): void {
+    if (!this.isCurrentTokenRequest(runtime, message)) return;
+    this.send(runtime, {
+      type: "auth.token.response",
+      requestId: message.requestId,
+      result: { kind: "error", error: error || "ChatGPT sign-in could not be checked. Try again." },
+    });
+  }
+
+  private cancelTokenRequests(runtime: RuntimeRecord, runId?: string): void {
+    for (const [requestId, pending] of this.pendingTokenRequests) {
+      if (pending.runtime !== runtime) continue;
+      // The key alone is deliberately opaque; cancellation is scoped by the
+      // owning runtime and its current run in the stored closure.
+      if (runId !== undefined && runtime.currentRunId !== runId) continue;
+      pending.cancel();
+      this.pendingTokenRequests.delete(requestId);
     }
   }
 
@@ -740,7 +1026,7 @@ export class CoworkerRuntimeManager {
     runtime.currentRunId = null;
     if (runtime.stopping) {
       this.setStatus(coworkerId, "STOPPED");
-      if (this.enqueueRequests.has(coworkerId) && !this.dispatchPaused) {
+      if (this.enqueueRequests.has(coworkerId) && this.dispatchPauseDepth === 0) {
         queueMicrotask(() => this.scheduleDispatch(coworkerId));
       }
       return;

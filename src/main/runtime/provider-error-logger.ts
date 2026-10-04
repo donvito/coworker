@@ -27,10 +27,22 @@ const maxLogBytes = 5 * 1024 * 1024;
 
 export function redactProviderDiagnostic(value: string): string {
   return value
+    .replace(
+      /https?:\/\/[^\s"'<>]*(?:\/oauth\/|\/authorize(?:\?|\/|$)|\/authorization(?:\?|\/|$)|\/sign-?in(?:\?|\/|$)|\/login(?:\?|\/|$)|[?&](?:access_token|refresh_token|id_token(?:_hint)?|code(?:_verifier)?|state|nonce|client_secret)=)[^\s"'<>]*/gi,
+      "[REDACTED_AUTH_URL]",
+    )
     .replace(/(authorization\s*[:=]\s*bearer\s+)[^\s,"'}]+/gi, "$1[REDACTED]")
     .replace(/(bearer\s+)[A-Za-z0-9._~+/=-]{12,}/gi, "$1[REDACTED]")
-    .replace(/((?:api[_-]?key|token|secret|key)\s*["']?\s*[:=]\s*["']?)[^\s,"'}&]+/gi, "$1[REDACTED]")
-    .replace(/([?&](?:key|api_key|token)=)[^&\s]+/gi, "$1[REDACTED]")
+    .replace(
+      /((?:access[_-]?token|refresh[_-]?token|id[_-]?token(?:[_-]?hint)?|code(?:[_-]?verifier)?|client[_-]?secret|api[_-]?key|token|secret|key)\s*["']?\s*[:=]\s*["']?)[^\s,"'}&]+/gi,
+      "$1[REDACTED]",
+    )
+    .replace(
+      /([?&](?:access_token|refresh_token|id_token(?:_hint)?|code(?:_verifier)?|state|nonce|client_secret|key|api_key|token)=)[^&\s]+/gi,
+      "$1[REDACTED]",
+    )
+    // JWT-shaped bearer credentials appear in OAuth logs without any sk- prefix.
+    .replace(/\b[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g, "[REDACTED_JWT]")
     .replace(/\b(?:sk|sk-or-v1|or)-[A-Za-z0-9_-]{12,}\b/g, "[REDACTED]")
     .replace(/\/Users\/[^/\s]+\//g, "/Users/[USER]/")
     .replace(/\/home\/[^/\s]+\//g, "/home/[USER]/")

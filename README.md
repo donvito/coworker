@@ -24,6 +24,7 @@ Coworker is a local-first desktop app for independent AI coworkers. There is **n
 - **Runs on your computer** — macOS, Windows, and Linux. Conversations, files, and app data are stored locally.
 - **Local models** — point it at [Ollama](https://ollama.com) or [LM Studio](https://lmstudio.ai) and inference never leaves your machine.
 - **Bring your own keys** — Anthropic, OpenAI, Google, OpenRouter, or any OpenAI-compatible endpoint. Credentials stay in OS-backed storage.
+- **Use your ChatGPT plan** — connect an eligible ChatGPT account through the OpenAI settings, without an API key. Eligible requests use that account's plan allowance.
 - **A team** — mark one coworker as primary to coordinate the others and post a daily team digest. Coworkers can hand work to each other, and Home shows what everyone is doing.
 - **Skills** — coworkers learn new capabilities from Agent Skills. Upload a `SKILL.md`, add an HTTPS URL, or paste a skill link into chat.
 - **Web search** — works right after install on Firecrawl's free tier. Add a Firecrawl, Tavily, Exa, or SerpAPI key for higher limits.
@@ -65,6 +66,10 @@ Unpackaged development builds use a separate **Coworker Development** data profi
 The app ships with two demo coworkers — **Ava** (accounting) and **Sarah** (sales) — that run on a built-in faux provider, so you can try the full flow without an API key.
 
 To connect a real model, open **Settings → Model Providers**, add credentials, and verify the provider. Ollama (`http://127.0.0.1:11434/v1`) and LM Studio (`http://127.0.0.1:1234/v1`) work without an API key.
+
+For ChatGPT, choose **OpenAI → Authentication method → ChatGPT subscription**, then **Continue with ChatGPT**. Finish sign-in and approve plan usage in your browser, return to Coworker, and select an available model. **Manage usage** opens your ChatGPT usage settings. You can return to a saved account or add another account from the same form.
+
+API keys and ChatGPT connections are saved separately. Coworker uses the method you explicitly select and never switches to API-key billing after a ChatGPT usage-limit error. **Disconnect** signs out the selected connection; coworkers using it need a connection again before they can continue. Your conversations stay in Coworker.
 
 Scripts, tests, evals, and packaging: [Development](docs/development.md)
 

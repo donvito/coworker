@@ -4899,6 +4899,85 @@ select:focus {
   color: var(--red);
 }
 
+.chatgpt-plan-indicator {
+  display: inline-flex;
+  min-width: 0;
+  max-width: min(390px, 48vw);
+  align-items: center;
+  gap: 7px;
+  padding: 3px 8px;
+  color: var(--ink-detail);
+  background: var(--blue-faint);
+  border: 1px solid color-mix(in srgb, var(--blue) 18%, var(--line));
+  border-radius: 999px;
+  font-size: 10px;
+}
+
+.chatgpt-plan-indicator-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  line-height: 1.25;
+}
+
+.chatgpt-plan-indicator-copy small {
+  overflow: hidden;
+  color: var(--ink-soft);
+  font-size: 10px;
+  text-overflow: ellipsis;
+}
+
+.chatgpt-plan-manage {
+  flex: 0 0 auto;
+  padding: 2px 3px;
+  color: var(--accent-text);
+  background: transparent;
+  border: 0;
+  font: inherit;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.chatgpt-plan-manage:hover {
+  text-decoration: underline;
+}
+
+.chatgpt-plan-indicator.usage-limit {
+  max-width: min(430px, 54vw);
+  padding: 6px 8px;
+  background: var(--red-soft);
+  border-color: var(--red-line);
+  border-radius: 9px;
+}
+
+.chatgpt-plan-indicator.usage-limit .chatgpt-plan-indicator-copy {
+  flex: 1 1 auto;
+  color: var(--red);
+}
+
+.chatgpt-plan-indicator.usage-limit .chatgpt-plan-indicator-copy small {
+  overflow: visible;
+  color: inherit;
+  white-space: normal;
+}
+
+.chatgpt-plan-indicator.usage-limit > .primary-button {
+  width: auto;
+  min-width: max-content;
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.chatgpt-plan-action-error {
+  flex-basis: 100%;
+  color: var(--red);
+}
+
+.chatgpt-welcome-modal {
+  width: min(440px, calc(100vw - 36px));
+}
+
 .quick-model-popover {
   position: absolute;
   z-index: 40;
@@ -5865,6 +5944,43 @@ select:focus {
 .conversation-thread .workroom-composer small {
   color: var(--ink-muted);
   text-align: center;
+}
+
+/* The composer sits in the center pane, so viewport-sized badges can be wider
+   than the available row. Give guidance and model controls separate rows. */
+.conversation-thread .workroom-composer .composer-footer {
+  align-items: flex-start;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  row-gap: 6px;
+}
+
+.conversation-thread .workroom-composer .composer-footer > small {
+  flex: 1 1 100%;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+.conversation-thread .workroom-composer .conversation-model-switcher.chip-mode {
+  min-width: 0;
+  max-width: 100%;
+  flex: 1 1 100%;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+}
+
+.conversation-thread .workroom-composer .conversation-model-switcher.chip-mode .chatgpt-plan-indicator {
+  max-width: 100%;
+}
+
+.conversation-thread .workroom-composer .conversation-model-switcher.chip-mode .chatgpt-plan-indicator.usage-limit {
+  max-width: 100%;
+  flex: 1 1 100%;
+}
+
+.conversation-thread .workroom-composer .conversation-model-switcher.chip-mode .quick-model-trigger.chip {
+  max-width: 100%;
 }
 
 .composer-file-input {
@@ -7360,6 +7476,39 @@ select:focus {
   .color-mode-picker {
     grid-template-columns: 1fr;
   }
+
+  .chatgpt-auth-choice {
+    grid-template-columns: 1fr;
+  }
+
+  .chatgpt-account-select {
+    flex-basis: 100%;
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .model-credential-form .chatgpt-account-settings .chatgpt-account-select {
+    align-items: flex-start;
+    flex-basis: 100%;
+    flex-direction: column;
+  }
+
+  .model-credential-form .chatgpt-account-settings .chatgpt-account-select select {
+    width: 100%;
+  }
+
+  .chatgpt-plan-indicator {
+    max-width: 46vw;
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 3px;
+    padding: 5px 7px;
+    border-radius: 9px;
+  }
+
+  .chatgpt-plan-indicator.usage-limit {
+    max-width: 52vw;
+  }
 }
 
 .theme-picker {
@@ -7590,6 +7739,178 @@ select:focus {
 .credential-form-heading small {
   color: var(--ink-soft);
   font-size: 11px;
+}
+
+.chatgpt-auth-settings {
+  display: grid;
+  width: 100%;
+  gap: 10px;
+}
+
+.chatgpt-auth-choice {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  border: 0;
+}
+
+.chatgpt-auth-choice legend {
+  margin-bottom: 7px;
+  color: var(--ink-soft);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.chatgpt-auth-choice label {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 10px 11px;
+  background: var(--white);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  cursor: pointer;
+}
+
+.chatgpt-auth-choice input {
+  flex: 0 0 auto;
+  margin: 2px 0 0;
+  accent-color: var(--blue);
+}
+
+/* Restore compact native sizing after the shared form-control styles set
+   every input to full width with large padding. */
+.model-credential-form .chatgpt-auth-choice input[type="radio"] {
+  width: 17px;
+  min-width: 17px;
+  max-width: 17px;
+  height: 17px;
+  min-height: 17px;
+  max-height: 17px;
+  flex: 0 0 17px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  appearance: auto;
+}
+
+.chatgpt-auth-choice label > span {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.chatgpt-auth-choice strong {
+  font-size: 12px;
+}
+
+.chatgpt-auth-choice small {
+  color: var(--ink-soft);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.chatgpt-auth-choice label:has(input:focus-visible) {
+  outline: 2px solid color-mix(in srgb, var(--blue) 36%, transparent);
+  outline-offset: 2px;
+}
+
+.chatgpt-account-settings {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+
+.chatgpt-account-settings > p {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.model-credential-form .chatgpt-account-select {
+  display: flex;
+  min-width: min(100%, 320px);
+  flex: 1 1 320px;
+  align-items: center;
+  flex-direction: row;
+  gap: 9px;
+  color: var(--ink-soft);
+  font-size: 11px;
+}
+
+.model-credential-form .chatgpt-account-select select {
+  width: auto;
+  min-width: 0;
+  flex: 1 1 auto;
+  height: 36px;
+  min-height: 0;
+  max-height: 40px;
+  padding: 6px 9px;
+}
+
+.chatgpt-signin-waiting {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink-soft);
+  font-size: 11px;
+}
+
+.chatgpt-account-connected strong {
+  color: var(--ink);
+}
+
+.chatgpt-account-permission,
+.chatgpt-account-error {
+  color: var(--red) !important;
+}
+
+.chatgpt-signin-button {
+  display: inline-flex;
+  min-height: 38px;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  padding: 7px 14px;
+  color: #fff;
+  background: #111;
+  border: 1px solid #111;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.chatgpt-signin-button:hover {
+  background: #252525;
+}
+
+.chatgpt-signin-button:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--blue) 34%, transparent);
+  outline-offset: 2px;
+}
+
+.chatgpt-signin-button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.chatgpt-signin-button img {
+  width: 18px;
+  height: 18px;
+}
+
+.chatgpt-add-account {
+  flex: 0 0 auto;
 }
 
 .credential-saved {

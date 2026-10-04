@@ -297,6 +297,7 @@ async function start(): Promise<void> {
     appVersion: app.getVersion(),
     applicationLogger,
     credentials,
+    chatgpt: { openExternal: (url) => shell.openExternal(url) },
     onSettingsChanged: async (settings) => {
       runInBackground = settings.runInBackground;
       nativeTheme.themeSource = settings.colorMode;

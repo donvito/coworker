@@ -93,6 +93,15 @@ const api: DesktopApi = {
   },
   integrations: {
     list: () => ipcRenderer.invoke(ipcChannels.integrationsList),
+    // Only connection metadata crosses the bridge. OAuth codes and renewable
+    // credentials remain in the main process and its encrypted store.
+    chatgptStatus: () => ipcRenderer.invoke(ipcChannels.integrationsChatgptStatus),
+    chatgptSignIn: (accountId) => ipcRenderer.invoke(ipcChannels.integrationsChatgptSignIn, accountId),
+    chatgptCancelSignIn: () => ipcRenderer.invoke(ipcChannels.integrationsChatgptCancelSignIn),
+    setOpenAIAuthMode: (mode) => ipcRenderer.invoke(ipcChannels.integrationsSetOpenAIAuthMode, mode),
+    chatgptSelectAccount: (accountId) => ipcRenderer.invoke(ipcChannels.integrationsChatgptSelectAccount, accountId),
+    chatgptAcknowledgeWelcome: () => ipcRenderer.invoke(ipcChannels.integrationsChatgptAcknowledgeWelcome),
+    chatgptManageUsage: () => ipcRenderer.invoke(ipcChannels.integrationsChatgptManageUsage),
     configureEmail: (input) =>
       ipcRenderer.invoke(ipcChannels.integrationsConfigureEmail, input),
     configureModel: (input) =>

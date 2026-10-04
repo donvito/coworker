@@ -93,12 +93,44 @@ export function createAdministration(input: {
     input.service.removeModelEndpoint(remoteModelProviderSchema.parse(id))],
     [ipcChannels.integrationsDisconnectModel, (provider) =>
     input.service.disconnectModelProvider(remoteModelProviderSchema.parse(provider))],
+    [ipcChannels.integrationsChatgptStatus, () => input.service.chatgptAuth.status()],
+    [ipcChannels.integrationsChatgptSignIn, async (accountId) =>
+      input.service.chatgptAuth.startSignIn(
+        accountId === undefined ? undefined : validation.chatgptAccountIdSchema.parse(accountId),
+      )],
+    [ipcChannels.integrationsChatgptCancelSignIn, async () => {
+      await input.service.chatgptAuth.cancelSignIn();
+      return input.service.chatgptAuth.status();
+    }],
+    [ipcChannels.integrationsSetOpenAIAuthMode, async (mode) => {
+      await input.service.chatgptAuth.setMode(validation.openAIAuthModeSchema.parse(mode));
+      return input.service.chatgptAuth.status();
+    }],
+    [ipcChannels.integrationsChatgptSelectAccount, async (accountId) => {
+      await input.service.chatgptAuth.selectAccount(validation.chatgptAccountIdSchema.parse(accountId));
+      return input.service.chatgptAuth.status();
+    }],
+    [ipcChannels.integrationsChatgptAcknowledgeWelcome, async () => {
+      await input.service.chatgptAuth.acknowledgeWelcome();
+      return input.service.chatgptAuth.status();
+    }],
+    [ipcChannels.integrationsChatgptManageUsage, () => input.service.chatgptManageUsage()],
     [ipcChannels.integrationsDisconnectWebSearch, (provider) =>
     input.service.disconnectWebSearch(validation.webSearchProviderSchema.parse(provider))],
     [ipcChannels.integrationsListModels, (provider) =>
     input.service.listModels(modelProviderSchema.parse(provider))],
     [ipcChannels.integrationsCredentialStatus, async (key) => {
     const credentialKey = credentialKeySchema.parse(key);
+    if (credentialKey === "model:openai") {
+      const authStatus = await input.service.chatgptAuth.status();
+      if (authStatus.mode === "chatgpt-subscription") {
+        return {
+          key: credentialKey,
+          configured: authStatus.state === "connected",
+          needsReentry: authStatus.state === "sign-in-required",
+        };
+      }
+    }
     const status = input.credentials.status
       ? await input.credentials.status(credentialKey)
       : (await input.credentials.has(credentialKey))
@@ -111,7 +143,17 @@ export function createAdministration(input: {
     };
   }],
     [ipcChannels.integrationsRemoveCredential, async (key) => {
-    await input.credentials.delete(credentialKeySchema.parse(key));
+    const credentialKey = credentialKeySchema.parse(key);
+    if (credentialKey === "model:openai") {
+      const authStatus = await input.service.chatgptAuth.status();
+      if (authStatus.mode === "chatgpt-subscription") {
+        await input.service.removeInactiveOpenAIApiKey();
+      } else {
+        await input.service.disconnectModelProvider("openai");
+      }
+      return;
+    }
+    await input.credentials.delete(credentialKey);
   }],
     [ipcChannels.skillsList, () => input.service.database.listSkills()],
     [ipcChannels.skillsInstallFromUrl, (value) => {
@@ -133,11 +175,19 @@ export function createAdministration(input: {
     [ipcChannels.skillsRemove, (id) =>
     input.service.removeSkill(idSchema.parse(id))],
     ["models.providers", async () => ({
-      providers: await Promise.all(modelProviderDefinitions.map(async (provider) => ({
-        ...provider,
-        credentialStatus: input.credentials.status ? await input.credentials.status(`model:${provider.id}`) :
-          await input.credentials.has(`model:${provider.id}`) ? "configured" : "missing",
-      }))),
+      providers: await Promise.all(modelProviderDefinitions.map(async (provider) => {
+        if (provider.id === "openai") {
+          const authStatus = await input.service.chatgptAuth.status();
+          if (authStatus.mode === "chatgpt-subscription") {
+            return { ...provider, credentialStatus: authStatus.state === "connected" ? "configured" : "missing" };
+          }
+        }
+        return {
+          ...provider,
+          credentialStatus: input.credentials.status ? await input.credentials.status(`model:${provider.id}`) :
+            await input.credentials.has(`model:${provider.id}`) ? "configured" : "missing",
+        };
+      })),
       endpoints: input.service.database.listModelEndpoints(),
       settings: input.service.database.getSettings(),
     })],
@@ -168,6 +218,7 @@ export function createAdministration(input: {
     ipcChannels.getSettings, ipcChannels.coworkersList, ipcChannels.approvalsList,
     ipcChannels.schedulesList, ipcChannels.integrationsListModels,
     ipcChannels.integrationsCredentialStatus, ipcChannels.skillsList,
+    ipcChannels.integrationsChatgptStatus,
     "models.providers", "coworkers.show", "skills.show", "schedules.show", "approvals.show",
     "conversations.show", "tasks.show", "startup.status",
   ]);
