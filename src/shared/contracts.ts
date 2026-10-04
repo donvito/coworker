@@ -531,7 +531,21 @@ export type EntityName =
   | "skills"
   | "settings";
 
+export type AppUpdateNotice =
+  | { kind: "checking" }
+  | { kind: "available"; version: string }
+  | { kind: "up-to-date" }
+  | { kind: "error"; message: string };
+
+export interface AppUpdateState {
+  checking: boolean;
+  /** Retained after dismissing the notice so the sidebar can reopen it. */
+  availableVersion: string | null;
+  notice: AppUpdateNotice | null;
+}
+
 export type DesktopEvent =
+  | { type: "app.update"; state: AppUpdateState }
   | { type: "entity.changed"; entity: EntityName; id?: string }
   | { type: "runtime.status"; coworkerId: string; status: RuntimeStatus; taskId?: string }
   | {
@@ -600,6 +614,10 @@ export interface DesktopApi {
     exportDataBackup(): Promise<string | null>;
     getSettings(): Promise<AppSettings>;
     updateSettings(settings: Partial<AppSettings>): Promise<AppSettings>;
+    getUpdateState(): Promise<AppUpdateState>;
+    checkForUpdates(): Promise<AppUpdateState>;
+    dismissUpdateNotice(): Promise<AppUpdateState>;
+    openUpdateRelease(): Promise<void>;
   };
   coworkers: {
     list(): Promise<Coworker[]>;

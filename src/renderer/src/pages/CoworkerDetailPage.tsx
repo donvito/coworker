@@ -54,6 +54,7 @@ import {
 } from "../components/ArtifactActions";
 import { ComposerTools } from "../components/ComposerTools";
 import { AppearancePicker } from "../components/AppearancePicker";
+import { AppUpdateSidebarButton } from "../components/AppUpdateSidebarButton";
 import { CoworkerSettingsModal } from "../components/CoworkerSettingsModal";
 import { WorkspaceTextApprovalCard } from "../components/WorkspaceTextApprovalCard";
 import { workspaceTextApproval } from "@shared/workspace-text-approval";
@@ -1118,6 +1119,7 @@ function GroupConversationSurface({
           ))}
         </nav>
         <div className="conversation-roster-footer">
+          <AppUpdateSidebarButton />
           <AppearancePicker />
           <button className="roster-settings-link" onClick={onOpenSettings} type="button">
             <Icon name="settings" />
@@ -2863,6 +2865,7 @@ function CoworkerSurface({
         </nav>
         {coworkerActions.element}
         <div className="conversation-roster-footer">
+          <AppUpdateSidebarButton />
           <AppearancePicker />
           <button className="roster-settings-link" onClick={onOpenSettings} type="button">
             <Icon name="settings" />

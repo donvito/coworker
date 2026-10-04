@@ -39,9 +39,17 @@ Prebuilt installers for **macOS**, **Windows**, and **Linux** are on every [GitH
 
 The builds are not code-signed yet, so the OS warns on first launch. See [install notes](docs/releasing.md#after-you-download).
 
+## App updates
+
+Coworker checks for new stable releases in the background when it starts. When an update is available, a modal offers **Download** to open its GitHub release page or **Later** to dismiss it for the current app session. A download icon stays at the bottom of the sidebar so you can reopen the notice. Download and install the new version manually.
+
+Check at any time with **Coworker → Check for Updates** on macOS or **Help → Check for Updates** on Windows and Linux. Results appear in a modal, and startup checks stay quiet when you are offline.
+
 ## Appearance
 
 Choose **Light**, **Dark**, or **System** mode with any of the five themes: **Graphite**, **Forest**, **Ocean**, **Plum**, and **Clay**. Open **Appearance** at the bottom of the workspace or coworker chat sidebar to switch without leaving your page or losing an unsent draft. Your choices are saved across restarts; System mode follows your device. These controls are also in **Settings → General → Appearance**.
+
+Upload a coworker photo from its settings, drag and zoom to crop it, and check the circular preview before applying. Photos save immediately after **Apply crop** or **Remove photo**. Updating only a photo keeps the coworker's work and browser session running.
 
 ## Development
 

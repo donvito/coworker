@@ -50,11 +50,30 @@ export function CoworkerSettingsModal({
   const [enabledSkillIds, setEnabledSkillIds] = useState(coworker.enabledSkillIds);
   const [tags, setTags] = useState(coworker.tags);
   const [avatarImage, setAvatarImage] = useState<string | null>(coworker.avatarImage ?? null);
+  const [photoSaving, setPhotoSaving] = useState(false);
+  const [photoNotice, setPhotoNotice] = useState<string | null>(null);
   const [isPrimary, setIsPrimary] = useState(coworker.isPrimary);
   const [sharedFolderPaths, setSharedFolderPaths] = useState(
     coworker.sharedFolders.map((folder) => folder.path),
   );
   const savedFolderPaths = new Set(coworker.sharedFolders.map((folder) => folder.path));
+
+  async function savePhoto(photo: string | null) {
+    setPhotoSaving(true);
+    setPhotoNotice(null);
+    try {
+      await window.coworker.coworkers.update(coworker.id, { avatarImage: photo });
+      setAvatarImage(photo);
+      setPhotoNotice(photo ? "Photo saved" : "Photo removed");
+      try {
+        await onChanged();
+      } catch (refreshError) {
+        setError(`Photo saved, but the view could not refresh: ${refreshError instanceof Error ? refreshError.message : String(refreshError)}`);
+      }
+    } finally {
+      setPhotoSaving(false);
+    }
+  }
 
   async function addSharedFolders() {
     setError(null);
@@ -97,6 +116,7 @@ export function CoworkerSettingsModal({
 
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (photoSaving) return;
     if (memoryDirty) {
       setError("Save or reload memory before saving other settings.");
       return;
@@ -116,7 +136,6 @@ export function CoworkerSettingsModal({
         systemPrompt: String(data.get("systemPrompt") ?? "").trim(),
         status: String(data.get("status")) as Coworker["status"],
         tags,
-        avatarImage,
         isPrimary,
         enabledSkillIds,
         sharedFolderPaths,
@@ -147,7 +166,7 @@ export function CoworkerSettingsModal({
 
   return (
     <ModalPortal>
-    <div className="modal-backdrop" onMouseDown={onClose}>
+    <div className="modal-backdrop" onMouseDown={() => { if (!photoSaving) onClose(); }}>
       <section
         aria-labelledby="coworker-settings-title"
         aria-modal="true"
@@ -155,14 +174,35 @@ export function CoworkerSettingsModal({
         onMouseDown={(event) => event.stopPropagation()}
         role="dialog"
       >
-        <span className="eyebrow">Coworker configuration</span>
-        <h2 id="coworker-settings-title">Manage {coworker.name}</h2>
-        <p>Changes restart this coworker’s isolated runtime. Queued work remains durable.</p>
+        <header className="coworker-settings-header">
+          <div>
+            <span className="eyebrow">Coworker configuration</span>
+            <h2 id="coworker-settings-title">Manage {coworker.name}</h2>
+          </div>
+          <button
+            aria-label="Close coworker settings"
+            className="icon-button"
+            disabled={working || photoSaving}
+            onClick={onClose}
+            title="Close settings"
+            type="button"
+          >
+            <Icon name="close" />
+          </button>
+        </header>
+        <p>Saving other settings restarts this coworker’s isolated runtime. Queued work remains durable.</p>
         <form className="form-stack" onSubmit={save}>
           <div className="avatar-picker">
             <span>Photo</span>
-            <CoworkerAvatar className="large-avatar" coworker={{ ...coworker, avatarImage }} />
-            <AvatarPhotoControl disabled={working} onChange={setAvatarImage} photo={avatarImage} />
+            <AvatarPhotoControl
+              disabled={working}
+              onChange={savePhoto}
+              photo={avatarImage}
+              preview={<CoworkerAvatar className="avatar-photo-preview" coworker={{ ...coworker, avatarImage }} />}
+            />
+            <small className="avatar-photo-notice" role={photoSaving || photoNotice ? "status" : undefined}>
+              {photoSaving ? "Saving photo…" : photoNotice ?? "Photos save automatically after cropping."}
+            </small>
           </div>
           <div className="form-split">
             <label>
@@ -364,14 +404,14 @@ export function CoworkerSettingsModal({
           {error ? <div className="inline-error">{error}</div> : null}
           {memoryDirty ? <small>Save or reload memory before saving other settings.</small> : null}
           <div className="modal-actions split-actions">
-            <button className="ghost-button danger" disabled={working} onClick={() => void remove()} type="button">
+            <button className="ghost-button danger" disabled={working || photoSaving} onClick={() => void remove()} type="button">
               Remove coworker
             </button>
             <span>
-              <button className="secondary-button" disabled={working} onClick={onClose} type="button">
+              <button className="secondary-button" disabled={working || photoSaving} onClick={onClose} type="button">
                 Cancel
               </button>
-              <button className="primary-button" disabled={working || memoryDirty}>
+              <button className="primary-button" disabled={working || photoSaving || memoryDirty}>
                 {working ? "Saving…" : "Save changes"}
               </button>
             </span>

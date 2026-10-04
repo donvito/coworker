@@ -23,6 +23,33 @@ async function fixture() {
 }
 
 describe("shared desktop and terminal administration", () => {
+  it("saves and removes avatar photos without interrupting the coworker runtime or browser", async () => {
+    const { service, admin } = await fixture();
+    const coworker = service.database.listCoworkers()[0]!;
+    const stop = vi.spyOn(service.runtime, "stop");
+    const releaseBrowser = vi.spyOn(service.browser, "releaseCoworker");
+    const enqueue = vi.spyOn(service.runtime, "enqueueTask");
+    const events = vi.fn();
+    const unsubscribe = service.subscribe(events);
+    try {
+      const photo = "data:image/jpeg;base64,/9j/4AAQSkZJRg==";
+      await admin.invoke(ipc.coworkersUpdate, [coworker.id, { avatarImage: photo }]);
+      expect(service.database.getCoworker(coworker.id).avatarImage).toBe(photo);
+      await admin.invoke(ipc.coworkersUpdate, [coworker.id, { avatarImage: null }]);
+      expect(service.database.getCoworker(coworker.id).avatarImage).toBeNull();
+      expect(stop).not.toHaveBeenCalled();
+      expect(releaseBrowser).not.toHaveBeenCalled();
+      expect(enqueue).not.toHaveBeenCalled();
+      expect(events).toHaveBeenCalledWith({ type: "entity.changed", entity: "coworkers", id: coworker.id });
+      // Runtime-affecting changes keep their existing restart behavior.
+      await admin.invoke(ipc.coworkersUpdate, [coworker.id, { role: "Updated role", avatarImage: photo }]);
+      expect(stop).toHaveBeenCalledWith(coworker.id);
+      expect(releaseBrowser).toHaveBeenCalledWith(coworker.id);
+    } finally {
+      unsubscribe();
+    }
+  });
+
   it("shares login registration between CLI and desktop and leaves unrelated settings independent", async () => {
     const { service, credentials, root } = await fixture();
     let state: StartupStatus = { supported: true, scope: "user-login", registered: false, enabled: false,
