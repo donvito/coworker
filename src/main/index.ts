@@ -4,6 +4,8 @@ import { exportLogs, readLogs, logQuerySchema } from "@main/control/logs";
 import { installCli } from "@main/control/launcher";
 import { loginRelaunchArguments, parseLaunchOptions, retinaSafeRelaunchArguments, shouldShowSecondInstance } from "@shared/launch-options";
 import { LoginStartup, readStartupConfiguration } from "@main/app/login-startup";
+import { AppUpdateChecker } from "@main/app/update-checker";
+import { applicationMenuTemplate } from "@main/app/application-menu";
 import { z } from "zod";
 import { join } from "node:path";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -68,6 +70,7 @@ let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let service: DesktopAppService | null = null;
 let unregisterIpc: (() => void) | null = null;
+let updates: AppUpdateChecker | null = null;
 let isQuitting = false;
 let shutdownStarted = false;
 let shutdownCompleted = false;
@@ -310,12 +313,14 @@ async function start(): Promise<void> {
   }
   await service.initialize();
   if (isQuitting) return;
+  updates = new AppUpdateChecker({ currentVersion: app.getVersion(), openExternal: (url) => shell.openExternal(url) });
   unregisterIpc = registerIpc({
     service,
     credentials,
     getMainWindow: () => mainWindow,
     logger: applicationLogger,
     startup,
+    updates,
   });
   if (process.platform === "darwin" && !app.isPackaged) {
     const icon = appIcon();
@@ -360,12 +365,22 @@ async function start(): Promise<void> {
   });
   if (isQuitting) return;
   ready = true;
+  Menu.setApplicationMenu(Menu.buildFromTemplate(applicationMenuTemplate({
+    platform: process.platform,
+    onCheckForUpdates: () => {
+      if (isQuitting || shutdownStarted) return;
+      showDesktop();
+      void updates?.check(true);
+    },
+  })));
   if (!headless || showWhenReady) showDesktop();
   else if (process.platform === "darwin") app.dock?.hide();
   service.subscribe((event) => {
     if (event.type === "entity.changed" && event.entity === "approvals") rebuildTrayMenu();
   });
   rebuildTrayMenu();
+  // This request runs independently of startup and never blocks the workroom.
+  void updates.check();
   powerMonitor.on("resume", () => {
     void service?.scheduler.wake();
     void service?.telegram.wake();

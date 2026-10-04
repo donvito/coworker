@@ -449,9 +449,13 @@ export class DesktopAppService {
         this.emit({ type: "entity.changed", entity: "coworkers", id: primaryBefore });
       }
     }
-    if (this.runtime) await this.runtime.stop(id);
-    this.browser.releaseCoworker(id);
-    if (coworker.status === "active") this.runtime.enqueueTask(id);
+    // Appearance-only edits should not interrupt an active task or browser session.
+    const needsRuntimeRestart = Object.keys(input).some((key) => key !== "avatarImage" && key !== "avatarIndex");
+    if (needsRuntimeRestart) {
+      if (this.runtime) await this.runtime.stop(id);
+      this.browser.releaseCoworker(id);
+      if (coworker.status === "active") this.runtime.enqueueTask(id);
+    }
     this.emit({ type: "entity.changed", entity: "coworkers", id });
     this.emit({ type: "entity.changed", entity: "activity" });
     return coworker;

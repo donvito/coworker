@@ -34,6 +34,7 @@ import { resolveArtifactFile } from "@main/integrations/artifact-files";
 import type { ApplicationLogger } from "@main/runtime/application-logger";
 import type { CredentialStore } from "@main/security/credential-store";
 import type { LoginStartup } from "@main/app/login-startup";
+import type { AppUpdateChecker } from "@main/app/update-checker";
 
 const mutationChannels = new Set<string>([
   ipcChannels.updateSettings,
@@ -85,6 +86,7 @@ export function registerIpc(input: {
   getMainWindow: () => BrowserWindow | null;
   logger?: ApplicationLogger;
   startup?: Pick<LoginStartup, "status" | "enable" | "disable">;
+  updates: AppUpdateChecker;
 }): () => void {
   const administration = createAdministration(input);
   const channels: string[] = [];
@@ -115,6 +117,11 @@ export function registerIpc(input: {
   }
 
   handle(ipcChannels.bootstrap, () => input.service.snapshot());
+  handle(ipcChannels.getUpdateState, () => input.updates.getState());
+  handle(ipcChannels.checkForUpdates, () => input.updates.check(true));
+  handle(ipcChannels.dismissUpdateNotice, () => input.updates.dismiss());
+  // The renderer supplies no URL; only the verified release can be opened.
+  handle(ipcChannels.openUpdateRelease, () => input.updates.openRelease());
   handle(ipcChannels.openDataFolder, async () => {
     await shell.openPath(input.service.snapshot().dataPath);
   });
@@ -363,9 +370,16 @@ export function registerIpc(input: {
       window.webContents.send(ipcChannels.event, event);
     }
   });
+  const unsubscribeUpdates = input.updates.subscribe((state) => {
+    const window = input.getMainWindow();
+    if (window && !window.isDestroyed()) {
+      window.webContents.send(ipcChannels.event, { type: "app.update", state });
+    }
+  });
 
   return () => {
     unsubscribe();
+    unsubscribeUpdates();
     for (const channel of channels) ipcMain.removeHandler(channel);
   };
 }

@@ -406,7 +406,7 @@ describe("Coworkers navigation", () => {
       configurable: true,
       value: {
         platform: "darwin",
-        app: { bootstrap: async () => snapshot },
+        app: { bootstrap: async () => snapshot, getUpdateState: async () => ({ checking: false, availableVersion: null, notice: null }) },
         events: { subscribe: () => () => undefined },
         messages: { listConversation },
       },
@@ -469,6 +469,7 @@ describe("Coworkers navigation", () => {
     const overrides: Record<string, unknown> = {
       platform: "darwin",
       "app.bootstrap": async () => snapshot,
+      "app.getUpdateState": async () => ({ checking: false, availableVersion: null, notice: null }),
       "events.subscribe": () => () => undefined,
       "integrations.credentialStatus": async () => ({ configured: false }),
       "diagnostics.listProviderErrors": async () => [],

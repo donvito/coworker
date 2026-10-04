@@ -16,6 +16,10 @@ const api: DesktopApi = {
     exportDataBackup: () => ipcRenderer.invoke(ipcChannels.exportDataBackup),
     getSettings: () => ipcRenderer.invoke(ipcChannels.getSettings),
     updateSettings: (settings) => ipcRenderer.invoke(ipcChannels.updateSettings, settings),
+    getUpdateState: () => ipcRenderer.invoke(ipcChannels.getUpdateState),
+    checkForUpdates: () => ipcRenderer.invoke(ipcChannels.checkForUpdates),
+    dismissUpdateNotice: () => ipcRenderer.invoke(ipcChannels.dismissUpdateNotice),
+    openUpdateRelease: () => ipcRenderer.invoke(ipcChannels.openUpdateRelease),
   },
   coworkers: {
     list: () => ipcRenderer.invoke(ipcChannels.coworkersList),

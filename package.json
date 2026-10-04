@@ -1,6 +1,6 @@
 {
   "name": "coworker",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "A local-first desktop app for independent AI coworkers.",
   "type": "module",
   "productName": "Coworker",
@@ -162,6 +162,7 @@
     "remark-breaks": "^4.0.0",
     "remark-gfm": "4.0.1",
     "rxjs": "7.8.1",
+    "semver": "^7.8.5",
     "unpdf": "^1.8.1",
     "zod": "^4.4.3"
   },
@@ -172,6 +173,7 @@
     "@types/node": "^26.2.0",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
+    "@types/semver": "^7",
     "@vitejs/plugin-react": "^5.2.0",
     "drizzle-kit": "1.0.0-rc.4",
     "electron": "^43.4.1",

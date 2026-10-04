@@ -45,6 +45,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       setLastEvent(event);
       if (
         event.type === "agent.event" ||
+        event.type === "app.update" ||
         event.type === "notification" ||
         event.type === "navigation.requested"
       )

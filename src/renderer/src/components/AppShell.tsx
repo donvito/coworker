@@ -3,6 +3,8 @@ import appIcon from "../assets/app-icon.png";
 import type { PageId } from "../navigation";
 import { AppearancePicker } from "./AppearancePicker";
 import { Icon, type IconName } from "./Icon";
+import { AppUpdatesProvider } from "../state/AppUpdatesProvider";
+import { AppUpdateSidebarButton } from "./AppUpdateSidebarButton";
 
 const navigation: Array<{ id: PageId; label: string; icon: IconName }> = [
   { id: "home", label: "Home", icon: "home" },
@@ -29,55 +31,60 @@ export function AppShell({
   children: ReactNode;
 }) {
   return (
-    <div className={conversationMode ? "app-frame conversation-mode" : "app-frame"}>
-      <div className="app-window-drag" />
-      {!conversationMode ? (
-        <aside className="sidebar">
-          <div className="window-drag-region" />
-          <button className="brand" onClick={() => onNavigate("home")}>
-            <img className="brand-mark" src={appIcon} alt="" />
-            <span>
-              <strong>Coworker</strong>
-              <small>AI Agents</small>
-            </span>
-          </button>
-
-          <nav className="primary-nav" aria-label="Main navigation">
-            <span className="nav-eyebrow">Your workspace</span>
-            {navigation.map((item) => (
-              <button
-                key={item.id}
-                className={activePage === item.id ? "nav-item active" : "nav-item"}
-                onClick={() => onNavigate(item.id)}
-                aria-current={activePage === item.id ? "page" : undefined}
-              >
-                <Icon name={item.icon} />
-                <span>{item.label}</span>
-                {item.id === "approvals" && pendingApprovals > 0 ? (
-                  <span className="nav-badge">{pendingApprovals}</span>
-                ) : null}
-              </button>
-            ))}
-            <button
-              className={activePage === "settings" ? "nav-item active" : "nav-item"}
-              onClick={() => onNavigate("settings")}
-              aria-current={activePage === "settings" ? "page" : undefined}
-            >
-              <Icon name="settings" />
-              <span>Settings</span>
+    <AppUpdatesProvider>
+      <div className={conversationMode ? "app-frame conversation-mode" : "app-frame"}>
+        <div className="app-window-drag" />
+        {!conversationMode ? (
+          <aside className="sidebar">
+            <div className="window-drag-region" />
+            <button className="brand" onClick={() => onNavigate("home")}>
+              <img className="brand-mark" src={appIcon} alt="" />
+              <span>
+                <strong>Coworker</strong>
+                <small>AI Agents</small>
+              </span>
             </button>
-          </nav>
 
-          <div className="sidebar-spacer" />
-          {version ? (
-            <span className="sidebar-version" title={`Coworker ${version}`}>
-              {/^\d/.test(version) ? `v${version}` : version}
-            </span>
-          ) : null}
-          <AppearancePicker />
-        </aside>
-      ) : null}
-      <main className="main-stage">{children}</main>
-    </div>
+            <nav className="primary-nav" aria-label="Main navigation">
+              <span className="nav-eyebrow">Your workspace</span>
+              {navigation.map((item) => (
+                <button
+                  key={item.id}
+                  className={activePage === item.id ? "nav-item active" : "nav-item"}
+                  onClick={() => onNavigate(item.id)}
+                  aria-current={activePage === item.id ? "page" : undefined}
+                >
+                  <Icon name={item.icon} />
+                  <span>{item.label}</span>
+                  {item.id === "approvals" && pendingApprovals > 0 ? (
+                    <span className="nav-badge">{pendingApprovals}</span>
+                  ) : null}
+                </button>
+              ))}
+              <button
+                className={activePage === "settings" ? "nav-item active" : "nav-item"}
+                onClick={() => onNavigate("settings")}
+                aria-current={activePage === "settings" ? "page" : undefined}
+              >
+                <Icon name="settings" />
+                <span>Settings</span>
+              </button>
+            </nav>
+
+            <div className="sidebar-spacer" />
+            <AppUpdateSidebarButton />
+            {version ? (
+              <span className="sidebar-version" title={`Coworker ${version}`}>
+                {/^\d/.test(version) ? `v${version}` : version}
+              </span>
+            ) : null}
+            <AppearancePicker />
+          </aside>
+        ) : null}
+        <main className="main-stage">
+          <div className="main-stage-content">{children}</div>
+        </main>
+      </div>
+    </AppUpdatesProvider>
   );
 }
