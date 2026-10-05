@@ -1,3 +1,8 @@
+import { WorkspaceFiles } from "../components/WorkspaceFiles";
+import { CoworkerFolderAccess } from "../components/CoworkerFolderAccess";
+import { SidebarClock } from "../components/SidebarClock";
+import { hasConfiguredModel, modelNotConfiguredMessage } from "@shared/model-configuration";
+import { conversationAgent, selectedConversations, subscribeConversationEvents } from "../copilot/conversation-store";
 import {
   Fragment,
   useEffect,
@@ -518,9 +523,10 @@ export function CoworkerDetailPage({
     (initialConversationId &&
       conversations.some((conversation) => conversation.id === initialConversationId) &&
       initialConversationId) ||
-      (latestConversation?.id ?? `coworker:${coworker.id}`),
+      (selectedConversations.get(coworker.id) ?? latestConversation?.id ?? `coworker:${coworker.id}`),
   );
   const activeConversationId = selectedConversationId;
+  useEffect(() => { selectedConversations.set(coworker.id, selectedConversationId); }, [coworker.id, selectedConversationId]);
   // Filter by conversation id, not task binding: messages injected from
   // outside this surface (the Telegram bridge, and desktop-typed user
   // messages) are stored with taskId null and must still count below so the
@@ -548,7 +554,7 @@ export function CoworkerDetailPage({
 
   useEffect(() => {
     const next = latestDirectConversation(conversations, coworker.id);
-    setSelectedConversationId(next?.id ?? `coworker:${coworker.id}`);
+    setSelectedConversationId(selectedConversations.get(coworker.id) ?? next?.id ?? `coworker:${coworker.id}`);
     // A different coworker must not show the previous coworker's thread while
     // its own history loads.
     setLoadedConversationHistory(null);
@@ -616,7 +622,7 @@ export function CoworkerDetailPage({
 
   const agent = useMemo(
     () =>
-      new IpcCoworkerAgent(coworker.id, {
+      conversationAgent(coworker.id, {
         agentId: coworker.id,
         description: `${coworker.name} · ${coworker.role}`,
         threadId: displayConversationId,
@@ -879,7 +885,7 @@ function GroupConversationSurface({
   }, [conversation.id, messages]);
 
   useEffect(() => {
-    return window.coworker.events.subscribe((event) => {
+    return subscribeConversationEvents((event) => {
       if (event.type !== "agent.event" || event.conversationId !== conversation.id) return;
       setLiveResponses((current) => {
         if (event.event.type === EventType.RUN_FINISHED) {
@@ -1745,11 +1751,6 @@ export function CoworkerRosterItem({
         <span>
           <span className="roster-name-line">
             <strong>{coworker.name}</strong>
-            {coworker.role ? (
-              <span className="roster-role-chip" title={coworker.role}>
-                {coworker.role}
-              </span>
-            ) : null}
             {coworker.isPrimary ? (
               <span className="roster-primary-badge" title="Primary coworker: your main point of contact">
                 Primary
@@ -1761,6 +1762,11 @@ export function CoworkerRosterItem({
             {showActions ? <CoworkerMoreButton coworker={coworker} onOpen={onOpenContextMenu} /> : null}
           </span>
         </span>
+        {coworker.role ? (
+          <span className="roster-role-chip" title={coworker.role}>
+            {coworker.role}
+          </span>
+        ) : null}
         <span>
           {working ? (
             <small className="roster-working">
@@ -1877,6 +1883,8 @@ function CoworkerSurface({
   >(null);
   const [conversationSearchLoading, setConversationSearchLoading] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [filesOpen, setFilesOpen] = useState(false);
+  const [filesRoot, setFilesRoot] = useState<string>();
   const [conversationBusy, setConversationBusy] = useState(false);
   const [conversationError, setConversationError] = useState<string | null>(null);
   const [pendingArchive, setPendingArchive] = useState<Conversation | null>(null);
@@ -2005,17 +2013,17 @@ function CoworkerSurface({
 
   useEffect(() => {
     const ipcAgent = agent instanceof IpcCoworkerAgent ? agent : null;
-    return window.coworker.events.subscribe((event) => {
+    return subscribeConversationEvents((event) => {
       if (
         event.type !== "agent.event" ||
         event.coworkerId !== coworker.id ||
         event.conversationId !== conversationId ||
-        ipcAgent?.ownsRun(event.runId)
+        ipcAgent?.ownsRun(event.runId, event.sequence)
       ) {
         return;
       }
       const type = event.event.type;
-      if (type === EventType.RUN_STARTED || type === EventType.TEXT_MESSAGE_CONTENT) {
+      if (type === EventType.RUN_STARTED || type === EventType.TEXT_MESSAGE_START || type === EventType.TEXT_MESSAGE_CONTENT || type === EventType.TOOL_CALL_START || type === EventType.TOOL_CALL_END) {
         externalRunIds.current.add(event.runId);
         setExternalLiveResponses((current) => updateLiveResponses(current, event));
         return;
@@ -2037,18 +2045,21 @@ function CoworkerSurface({
         window.coworker.messages.listConversation(conversationId),
       ])
         .then(([, history]) => {
-          agent.setMessages(
-            history
-              .filter((message) => message.role === "user" || message.role === "assistant")
-              .map((message) => ({
-                id: message.id,
-                role: message.role as "user" | "assistant",
-                content: message.content,
-              })),
-          );
+          const currentIds = new Set(agent.messages.map(message => message.id));
+          const saved = history.filter(message => message.role === "user" || message.role === "assistant");
+          const savedById = new Map(saved.map(message => [message.id, message]));
+          agent.setMessages([
+            ...agent.messages.map(message => {
+              const persisted = savedById.get(message.id);
+              return persisted && (message.role === "user" || message.role === "assistant") && typeof message.content === "string" ? { ...message, content: persisted.content } : message;
+            }),
+            ...saved.filter(message => !currentIds.has(message.id)).map(message => ({ id: message.id, role: message.role as "user" | "assistant", content: message.content })),
+          ]);
         })
+        .catch(() => undefined)
         .finally(() => {
           externalRunIds.current.delete(event.runId);
+          if (type === EventType.RUN_ERROR) return;
           setExternalLiveResponses((current) => {
             const next = { ...current };
             delete next[event.runId];
@@ -2237,7 +2248,7 @@ function CoworkerSurface({
             <Icon name="file" />
             <span>
               {artifactConfirmed
-                ? "Saved to the local workspace"
+                ? "File saved"
                 : status === "complete"
                   ? "No saved file confirmed"
                   : "Creating local invoice file…"}
@@ -2486,6 +2497,10 @@ function CoworkerSurface({
   async function submitMessage(value: string) {
     const text = value.trim();
     if ((!text && pendingImages.length === 0) || !isReady || agent.isRunning || readingImages) return;
+    if (!hasConfiguredModel(coworker)) {
+      setImageError(modelNotConfiguredMessage);
+      return;
+    }
     const tagged = mentionedCoworkerIdsInText(text, tagCandidates);
     if (tagged.length > 0) {
       if (pendingImages.length > 0) {
@@ -2525,9 +2540,13 @@ function CoworkerSurface({
     try {
       await agent.runAgent();
     } catch (error) {
-      agent.setMessages(previousMessages);
-      setDraft(submittedDraft);
-      setPendingImages(submittedImages);
+      const priorIds = new Set(previousMessages.map(message => message.id));
+      const hasPartialReply = agent.messages.some(message => message.role === "assistant" && !priorIds.has(message.id));
+      if (!hasPartialReply) {
+        agent.setMessages(previousMessages);
+        setDraft(submittedDraft);
+        setPendingImages(submittedImages);
+      }
       setImageError(error instanceof Error ? error.message : String(error));
     }
   }
@@ -2697,8 +2716,8 @@ function CoworkerSurface({
       }
       title={
         railHidden
-          ? "Show the files and approvals panel"
-          : "Hide the files and approvals panel"
+          ? "Show sidebar"
+          : "Hide sidebar"
       }
       type="button"
     >
@@ -2942,6 +2961,8 @@ function CoworkerSurface({
                 <Icon name="archive" />
               </button>
             ) : null}
+            <button type="button" className="conversation-history-trigger" onClick={() => { setFilesRoot(undefined); setFilesOpen(true); }}><Icon name="file" /><span>Files</span></button>
+            {filesOpen && <WorkspaceFiles coworkerId={coworker.id} name={coworker.name} initialRoot={filesRoot} onClose={() => setFilesOpen(false)} />}
             <div className="conversation-history-control" ref={historyRef}>
               <button
                 aria-expanded={historyOpen}
@@ -3067,10 +3088,6 @@ function CoworkerSurface({
         <div className="conversation-thread">
           {agent.messages.length === 0 && Object.keys(externalLiveResponses).length === 0 ? (
             <div className="conversation-welcome">
-              <span className="welcome-glyph">
-                <Icon name="spark" />
-              </span>
-              <span className="eyebrow">Start a conversation</span>
               <h2>What should {coworker.name} take care of?</h2>
               <p>
                 Give a clear outcome. Work stays local, controlled tools stay in the coworker
@@ -3298,7 +3315,8 @@ function CoworkerSurface({
                   key={runId}
                 >
                   <div className="workroom-bubble">
-                    {response.content ? (
+                    {response.activity && <div className="muted">{Object.entries(response.activity).map(([id, activity]) => <div key={id}>{activity.done ? "✓" : "…"} {activity.name}</div>)}</div>}
+                    {response.content && !agent.messages.some(message => message.id === response.messageId) ? (
                       <span className="workroom-message-text">
                         <ChatMarkdown artifacts={artifacts}>{response.content}</ChatMarkdown>
                       </span>
@@ -3563,6 +3581,7 @@ function CoworkerSurface({
               </div>
             </form>
             <ComposerTools
+              key={coworker.id}
               coworker={coworker}
               disabled={agent.isRunning}
               onChanged={onChanged}
@@ -3573,6 +3592,10 @@ function CoworkerSurface({
       </section>
 
       <aside className="conversation-approval-rail conversation-right-rail">
+        <div className="conversation-rail-header">
+          <SidebarClock />
+          {!railHidden && railToggle}
+        </div>
         <header className="conversation-rail-tabs" role="tablist" aria-label="Coworker details">
           <button
             aria-controls="conversation-files-panel"
@@ -3613,7 +3636,6 @@ function CoworkerSurface({
             <span>Schedules</span>
             <b>{coworkerSchedules.length}</b>
           </button>
-          {railToggle}
         </header>
 
         {rightRailTab === "schedules" ? (
@@ -3738,10 +3760,12 @@ function CoworkerSurface({
             <header className="conversation-file-rail-head">
               <span>
                 <strong>Files by {coworker.name}</strong>
-                <small>Saved in this coworker’s local workspace</small>
+                <small>Created files and folder access</small>
               </span>
             </header>
             <div className="conversation-file-rail-list">
+              <CoworkerFolderAccess coworker={coworker} onOpen={root => { setFilesRoot(root); setFilesOpen(true); }} />
+              <h3 className="conversation-file-section-title">Created files</h3>
               {sortedArtifacts.length === 0 ? (
                 <div className="conversation-file-empty">
                   <span>

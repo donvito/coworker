@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { parentPort } from "node:worker_threads";
 import { EventType, type BaseEvent } from "@ag-ui/core";
+import { modelNotConfiguredMessage } from "@shared/model-configuration";
 import { Agent, type AgentMessage, type AgentTool } from "@earendil-works/pi-agent-core";
 import {
   InMemoryCredentialStore,
@@ -171,6 +172,8 @@ const parameterSchemas: Record<string, ReturnType<typeof Type.Object>> = {
       }),
     ),
   }),
+  "skills.run": Type.Object({ skill: Type.String(), script: Type.String(), inputs: Type.Array(Type.Object({ root: Type.String(), path: Type.String() })), destination: Type.Object({ root: Type.String(), path: Type.String() }), options: Type.Optional(Type.Record(Type.String(), Type.Unknown())) }),
+  "files.roots": Type.Object({}),
   "coworkers.list": Type.Object({}),
   "coworkers.send_message": Type.Object({
     coworker: Type.String({ description: "Id or exact name of the coworker to message" }),
@@ -256,12 +259,15 @@ const parameterSchemas: Record<string, ReturnType<typeof Type.Object>> = {
   }),
   "browser.close": Type.Object({}),
   "files.list": Type.Object({
+    root: Type.Optional(Type.String({ description: "Root ID from files.roots; defaults to workspace" })),
     path: Type.Optional(Type.String({ description: "Relative directory path; use . for the root" })),
   }),
   "files.read": Type.Object({
+    root: Type.Optional(Type.String({ description: "Root ID from files.roots; defaults to workspace" })),
     path: Type.String({ description: "Relative file path inside the coworker workspace" }),
   }),
   "files.write": Type.Object({
+    root: Type.Optional(Type.String({ description: "Root ID from files.roots; defaults to workspace" })),
     path: Type.String({ description: "Relative destination path inside the coworker workspace" }),
     content: Type.String({ description: "UTF-8 file contents" }),
     expectedRevision: Type.Optional(Type.String({ description: "Revision from files.read; rejects intervening edits. Required for managed context files." })),
@@ -276,7 +282,7 @@ const parameterSchemas: Record<string, ReturnType<typeof Type.Object>> = {
     folder: Type.Optional(
       Type.String({
         description:
-          "Alias of a granted read-only folder. Omit to list every folder the user granted.",
+          "Alias of a granted folder. Omit to list every folder the user granted.",
       }),
     ),
     path: Type.Optional(
@@ -284,10 +290,11 @@ const parameterSchemas: Record<string, ReturnType<typeof Type.Object>> = {
     ),
   }),
   "folders.read": Type.Object({
-    folder: Type.String({ description: "Alias of a granted read-only folder from folders.list" }),
+    folder: Type.String({ description: "Alias of a granted folder from folders.list" }),
     path: Type.String({ description: "Relative file path inside that granted folder" }),
   }),
   "invoice.create": Type.Object({
+    root: Type.Optional(Type.String({ description: "Output root ID from files.roots. Omit to use the configured default output folder, or workspace when none is configured. An explicit root overrides the default." })),
     client: Type.String(),
     recipientEmail: Type.Optional(Type.String()),
     lineItems: Type.Array(
@@ -310,6 +317,7 @@ const parameterSchemas: Record<string, ReturnType<typeof Type.Object>> = {
     }),
   }),
   "documents.export": Type.Object({
+    root: Type.Optional(Type.String({ description: "Output root ID from files.roots. Omit to use the configured default output folder, or workspace when none is configured. An explicit root overrides the default." })),
     sourcePath: Type.Optional(Type.String({
       description: "Relative path to an existing Markdown or plain-text workspace file",
     })),
@@ -525,6 +533,7 @@ async function initialize(workerConfig: WorkerCoworkerConfig): Promise<void> {
 
   let model;
   if (workerConfig.coworker.modelProvider === "demo") {
+    if (!workerConfig.allowTestModel) throw new Error(modelNotConfiguredMessage);
     demo = fauxProvider({ tokensPerSecond: 80 });
     models.setProvider(demo.provider);
     model = demo.getModel();
@@ -570,7 +579,7 @@ async function initialize(workerConfig: WorkerCoworkerConfig): Promise<void> {
   imageInputSupported = model.input.includes("image");
   controlledToolNamesByProviderName.clear();
   const usePortableToolNames = workerConfig.coworker.modelProvider !== "demo";
-  const skillToolNames = workerConfig.skills.length > 0 ? ["skills.read"] : [];
+  const skillToolNames = workerConfig.skills.length > 0 ? ["skills.read", "skills.run"] : [];
   skillToolNames.push(...toolNamesForSkills(workerConfig.skills));
   const folderToolNames =
     workerConfig.coworker.sharedFolders.length > 0 ? ["folders.list", "folders.read"] : [];

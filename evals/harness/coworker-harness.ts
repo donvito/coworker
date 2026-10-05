@@ -229,6 +229,7 @@ export const coworkerHarness = createHarness<CoworkerEvalInput, CoworkerEvalOutp
         createSchedule: (scheduleInput) => scheduler.create(scheduleInput),
       });
       manager = new CoworkerRuntimeManager({
+        allowTestModel: true,
         database,
         credentials,
         tools,

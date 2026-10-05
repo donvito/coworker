@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { Artifact } from "@shared/contracts";
 import { readableError } from "../lib/errors";
 import { Icon } from "./Icon";
+import { useArtifactStatus } from "../lib/use-artifact-status";
 
 export interface ArtifactTarget {
   id: string;
@@ -18,6 +19,7 @@ export function ArtifactActions({
   const [pendingAction, setPendingAction] = useState<"open" | "download" | "delete" | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleted, setDeleted] = useState(false);
+  const { status, refresh } = useArtifactStatus(target.id);
   const [feedback, setFeedback] = useState<{ message: string; error: boolean } | null>(null);
 
   async function act(action: "open" | "download" | "delete") {
@@ -37,17 +39,19 @@ export function ArtifactActions({
       }
     } catch (error) {
       setFeedback({ message: readableError(error), error: true });
+      void refresh();
     } finally {
       if (action === "delete") setConfirmingDelete(false);
       setPendingAction(null);
     }
   }
 
-  if (deleted) {
+  if (deleted || status === "deleted" || status === "missing" || status === "unavailable") {
+    const label = deleted || status === "deleted" ? "Deleted" : status === "missing" ? "File missing" : "File unavailable";
     return (
       <span className="artifact-actions artifact-deleted" role="status">
-        <Icon name="trash" />
-        <small>Deleted</small>
+        <Icon name={deleted || status === "deleted" ? "trash" : "file"} />
+        <small>{label}</small>
       </span>
     );
   }
@@ -60,7 +64,7 @@ export function ArtifactActions({
             Delete “{target.name}” everywhere?
           </small>
           <button
-            disabled={pendingAction !== null}
+            disabled={pendingAction !== null || status === null}
             onClick={() => setConfirmingDelete(false)}
             type="button"
           >
@@ -68,7 +72,7 @@ export function ArtifactActions({
           </button>
           <button
             className="danger"
-            disabled={pendingAction !== null}
+            disabled={pendingAction !== null || status === null}
             onClick={() => void act("delete")}
             type="button"
           >
@@ -80,7 +84,7 @@ export function ArtifactActions({
         <>
           <button
             aria-label={`Open ${target.name}`}
-            disabled={pendingAction !== null}
+            disabled={pendingAction !== null || status === null}
             onClick={() => void act("open")}
             title="Open with the default app"
             type="button"
@@ -90,7 +94,7 @@ export function ArtifactActions({
           </button>
           <button
             aria-label={`Download ${target.name}`}
-            disabled={pendingAction !== null}
+            disabled={pendingAction !== null || status === null}
             onClick={() => void act("download")}
             title="Download a copy"
             type="button"
@@ -102,7 +106,7 @@ export function ArtifactActions({
             <button
               aria-label={`Delete ${target.name}`}
               className="artifact-delete-trigger"
-              disabled={pendingAction !== null}
+              disabled={pendingAction !== null || status === null}
               onClick={() => {
                 setFeedback(null);
                 setConfirmingDelete(true);
@@ -137,6 +141,10 @@ export function artifactExtension(artifact: Artifact): string {
 }
 
 export function artifactKind(artifact: Artifact): string {
+  if (artifact.mimeType === "application/zip") return "ZIP archive";
+  if (artifact.mimeType === "application/json") return "JSON data";
+  if (artifact.mimeType === "text/tab-separated-values") return "TSV spreadsheet";
+  if (artifact.mimeType.includes("presentationml")) return "PowerPoint presentation";
   if (artifact.mimeType === "application/pdf") return "PDF document";
   if (artifact.mimeType.includes("wordprocessingml")) return "Word document";
   if (artifact.mimeType.includes("spreadsheetml")) return "Excel workbook";

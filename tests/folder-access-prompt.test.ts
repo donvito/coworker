@@ -10,10 +10,8 @@ describe("granted folder prompt", () => {
 
     expect(prompt).toContain("- Downloads — /Users/mel/Downloads");
     expect(prompt).toContain("- Notes — /Users/mel/Library/Notes");
-    expect(prompt).toContain("rather than answering only from your coworker workspace");
-    expect(prompt).toContain("folders.list");
-    expect(prompt).toContain("folders.read");
-    expect(prompt).toContain("never create, change, or delete");
+    expect(prompt).toContain("root: Downloads; read");
+    expect(prompt).not.toContain("default output");
   });
 
   it("stays empty when no folder has been granted", () => {

@@ -1,6 +1,6 @@
 ---
 name: document-authoring
-description: Create, save, or export user-facing written content and polished office documents, presentations, data reports, creative text, poems, and simple notes in PDF, Word DOCX, Excel XLSX, CSV, PowerPoint PPTX, Markdown, or plain text. Use when the user requests a document or file artifact, revises an existing document, or asks for saving content from the conversation to a document or file. Do not use for merely reviewing, reading, or summarizing a document; for code, configuration, or raw operational file writes; or for drafting, rewriting, or creative writing that stays in chat without an artifact request.
+description: Create, save, or export user-facing written content and polished office documents, presentations, data reports, creative text, poems, and simple notes in PDF, Word DOCX, Excel XLSX, CSV, PowerPoint PPTX, HTML, JSON, TSV, Markdown, or plain text. Use when the user requests a document or file artifact, revises an existing document, or asks for saving content from the conversation to a document or file. Do not use for merely reviewing, reading, or summarizing a document; for code, configuration, or raw operational file writes; or for drafting, rewriting, or creative writing that stays in chat without an artifact request.
 ---
 
 # Document authoring
@@ -56,3 +56,9 @@ For PowerPoint PPTX:
 - If export fails, explain the actual error and preserve the draft for a corrected attempt. Never claim that a file was created when the tool did not succeed.
 - A tool-not-found or argument-validation error means no file was created. Correct the tool name or arguments and retry the confirmed export, then verify the saved artifact. If it still fails, report the failure instead of presenting a filename as a completed file.
 - Before finishing, re-read the complete content for hierarchy, consistency, missing placeholders, unsupported claims, and whether a reader without the conversation context can understand it.
+
+## Output folders and additional formats
+
+Honor an explicit destination; otherwise use the user's configured default output folder. For `documents.export` and `invoice.create`, omit `root` to use that default automatically (Workspace only when no default is configured). Do not explicitly pass `workspace` unless the user selected it. Call `files.roots` when selecting a specific authorized destination and pass its ID as `root`. For Markdown or plain-text deliverables using `files.write`, inspect `files.roots` and explicitly pass the default output root. Keep internal memory in the workspace.
+
+For HTML, JSON, or TSV deliverables, call `skills.run` with skill `document-authoring`, script `scripts/text-formats.js`, inputs `[]`, and destination `{root, path}` with the requested extension. Options are `{format: "html", title, content}` for escaped prose HTML, `{format: "json", content}` for valid JSON data or JSON text, or `{format: "tsv", rows: [[header1, header2], [value1, value2]]}`. This script does not convert arbitrary binary documents. Verify the returned artifact before linking it.

@@ -89,6 +89,8 @@ export const toolCatalog = [
     defaultPolicy: "automatic",
     volatile: true,
   },
+  { name: "skills.run", label: "Run skill script", description: "Execute a packaged script from an enabled skill with explicit authorized input files and an output destination. Returns registered artifacts.", risk: "medium", defaultPolicy: "automatic", idempotency: "call" },
+  { name: "files.roots", label: "List file roots", description: "List workspace and granted folder root IDs, permissions, and default output destination.", risk: "low", defaultPolicy: "automatic", volatile: true },
   {
     name: "files.list",
     label: "List workspace files",
@@ -124,7 +126,7 @@ export const toolCatalog = [
     name: "folders.list",
     label: "List shared folders",
     description:
-      "List the read-only folders the user granted this coworker, or browse the files inside one of them. Call without arguments to see every granted folder.",
+      "List the folders and access modes the user granted this coworker, or browse the files inside one of them. Call without arguments to see every granted folder.",
     risk: "low",
     defaultPolicy: "automatic",
   },
@@ -132,7 +134,7 @@ export const toolCatalog = [
     name: "folders.read",
     label: "Read shared folder document",
     description:
-      "Read a document or file from a user-granted read-only folder. Extracts text from PDF, Word DOCX, and Excel XLSX documents and reads text files directly. Granted folders can never be written to.",
+      "Read a document or file from a user-granted folder. Extracts text from PDF, Word DOCX, Excel XLSX, and PowerPoint PPTX documents and reads text files directly. Writing requires an explicit read-write grant.",
     risk: "low",
     defaultPolicy: "automatic",
   },

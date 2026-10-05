@@ -1,26 +1,15 @@
 ---
 name: folder-access
-description: Find and read documents in the read-only folders the user granted this coworker on their computer. Use when the user references files, documents, reports, or folders on their machine that are not in the coworker workspace and not attached to the message. Do not use for files in the coworker workspace, for attachments, or when no shared folder is granted.
+description: Find, read, or save work files in folders the user explicitly granted, or help the user remove files through the Files explorer. Use for files outside the coworker workspace, a requested shared output folder, or file deletion. Do not use for message attachments or workspace-only operations other than file deletion.
 ---
+# Granted folders
 
-# Reading the user's shared folders
+Call `folders.list` to see granted folders, their root IDs, and access modes; browse with its alias and relative path. Use `folders.read` for PDF, DOCX, XLSX, PPTX and text extraction. Report truncation or binary-only metadata honestly.
 
-The user can grant this coworker read-only access to specific folders on their computer. Those grants are the only parts of their machine you can see.
+For deliverables, honor the user's explicit destination; otherwise inspect `files.roots` and use the default output root. Pass `root` to `files.write` or `documents.export`; use the root ID in `skills.run` file references. Writable grants allow creating or updating work files; read-only grants allow reading only. Never claim a write succeeded without a successful result. For an explicit edit read first and pass its revision; do not overwrite an unrelated file.
 
-## Workflow
+If access is missing, explain which folders are available and direct the user to this coworker's Folder access settings. Cite the folder alias and relative path for referenced files. Do not use grants to access internal app data.
 
-1. Call `folders.list` with no arguments to see every granted folder and its alias.
-2. Browse a folder with `folders.list` using its alias and a relative path (`.` is the folder root).
-3. Read a file with `folders.read` using the alias and the file's relative path.
-   - PDF, Word DOCX, and Excel XLSX documents return extracted text.
-   - Text files (Markdown, CSV, JSON, source code, and similar) return their contents.
-   - Other binary files return name, size, and type only; report that honestly instead of guessing contents.
-4. Very large documents are truncated; the result says so. Mention the truncation when it matters to the answer.
+## Removing files
 
-## Rules
-
-- Shared folders are strictly read-only. You cannot create, modify, or delete anything in them, and no tool will ever let you. Never claim to have edited a shared file.
-- To work on a copy of a shared document, read it with `folders.read` and write the material you need into the workspace with `files.write`, then continue from the workspace copy.
-- If the user names a file you cannot find, browse the likely folder with `folders.list` before concluding it does not exist, then tell them which granted folder you searched.
-- If no granted folder plausibly contains what the user wants, say which folders you can access and ask them to grant the right folder in this coworker's settings.
-- Cite the folder alias and relative path of every shared document you rely on so the user can find it themselves.
+For deletion, direct the user to Files in the coworker header. They can select files or folders and choose Delete, or use an item's Delete action, then confirm the listed paths in the app. Individually selected files move to Trash or Recycle Bin. Folders and all their contents are permanently deleted after a warning that they cannot be recovered. Deletion requires current write access. Workspace and granted-folder roots, symbolic-link selections, and managed memory files (including their containing folders) are protected. Do not use scripts or write tools to simulate deletion, and do not claim that items were removed unless the app reports success. Cancellation leaves the items untouched.

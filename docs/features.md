@@ -105,3 +105,17 @@ On upgrade, existing bots stay paired and future messages start in fresh bot-spe
 Each coworker can connect one Telegram bot and one Discord bot. Configure them in the coworker’s settings or in the global **Settings → Channels** page; both views manage the same connections. Messaging changes save independently of the coworker’s other settings. Unpairing keeps the platform slot occupied; disconnecting frees it. Conversations started on desktop remain local, while conversations started through a bot sync with that bot.
 
 If an older profile has several active bots on the same platform for one coworker, the upgrade pauses those conflicting connections and keeps their credentials, pairings, and history. Reconnect the desired bot or move a bot to a coworker with a free slot. Reconnecting a paused bot can reuse its stored token; explicitly disconnecting it removes that token.
+
+### Coworker files and output folders
+
+Open **Files** beside **History** and **New** in a coworker conversation to browse its workspace and granted folders. Preview documents or images, open or reveal files, download individual files, or select files/folders and choose **Download ZIP**. Unregistered files are included. PDF, DOCX, XLSX, PPTX, and text content can be previewed; HTML and SVG appear as source.
+
+Navigate with the folder tree or choose **All files** to search across locations. ZIP downloads save only to the location selected in the save dialog. **Delete** moves selected regular files to Trash or Recycle Bin after confirming their paths. Folders can also be deleted: a separate confirmation warns that all files and subfolders will be permanently deleted and cannot be recovered. Deletion requires current write access; workspace and granted-folder roots, symbolic-link selections, and managed memory files are protected. Files changed while confirmation is open must be reviewed again.
+
+Historical tool-result file cards show **Deleted** after their artifact record is removed, without Open or Download buttons. File actions check availability when mounted, when artifacts or folder grants change, and when the app regains focus. Files removed outside the app show **File missing**; their records are retained so restoring the file restores its actions. Access failures show **File unavailable** instead of marking the file deleted.
+
+In coworker settings, add a folder and optionally enable **Allow writing**. Choose **Default output** to save work deliverables there. Existing grants remain read-only. Memory and internal working files stay in the coworker workspace. Removing a generated external artifact from the artifact list leaves its original file in your folder.
+
+Document and invoice exports use the configured output folder when no destination is supplied. An explicit destination takes precedence; Workspace is the fallback only when no output folder is configured. If the configured folder is unavailable or no longer writable, export reports an error instead of saving elsewhere.
+
+The bundled file-archiving skill creates ZIP deliverables. Document authoring also supports HTML, JSON, and TSV through packaged scripts, alongside the existing Office and PDF formats.

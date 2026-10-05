@@ -1,6 +1,6 @@
 {
   "name": "coworker",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "description": "A local-first desktop app for independent AI coworkers.",
   "type": "module",
   "productName": "Coworker",
@@ -36,7 +36,8 @@
     "dist": "pnpm build && electron-builder --publish never",
     "dist:mac": "pnpm build && electron-builder --mac --publish never",
     "dist:win": "pnpm build && electron-builder --win --publish never",
-    "dist:linux": "pnpm build && electron-builder --linux --publish never"
+    "dist:linux": "pnpm build && electron-builder --linux --publish never",
+    "test:files:smoke": "pnpm build && node scripts/smoke-work-files.mjs"
   },
   "build": {
     "appId": "com.localcoworker.desktop",

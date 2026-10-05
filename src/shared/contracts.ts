@@ -1,3 +1,4 @@
+import type { FileRef, FileRoot, FileEntry, FilePreview } from "./files";
 import type { BaseEvent, RunAgentInput } from "@ag-ui/core";
 import type { UpdateMemoryInput, WorkspaceTextDocument } from "./workspace-context";
 
@@ -119,7 +120,10 @@ export const webSearchProviders = ["firecrawl", "tavily", "exa", "serpapi"] as c
 export type WebSearchProvider = (typeof webSearchProviders)[number];
 
 export interface SharedFolder {
-  /** Absolute path of a folder this coworker may read (never write). */
+  id?: string;
+  access?: "read" | "read-write";
+  defaultOutput?: boolean;
+  /** Absolute path of a folder explicitly granted to this coworker. */
   path: string;
   /** Stable name the coworker uses to address the folder in tools. */
   alias: string;
@@ -166,6 +170,7 @@ export interface CreateCoworkerInput {
   enabledSkillIds?: string[];
   policies?: Record<string, ToolPolicy>;
   sharedFolderPaths?: string[];
+  sharedFolderGrants?: Array<{ path: string; access: "read" | "read-write"; defaultOutput?: boolean }>;
 }
 
 export interface UpdateCoworkerInput {
@@ -185,6 +190,7 @@ export interface UpdateCoworkerInput {
   enabledSkillIds?: string[];
   policies?: Record<string, ToolPolicy>;
   sharedFolderPaths?: string[];
+  sharedFolderGrants?: Array<{ path: string; access: "read" | "read-write"; defaultOutput?: boolean }>;
 }
 
 export interface Task {
@@ -419,6 +425,8 @@ export interface UpdateScheduleInput {
   enabled?: boolean;
 }
 
+export type ArtifactFileStatus = "available" | "deleted" | "missing" | "unavailable";
+
 export interface Artifact {
   id: string;
   taskId: string | null;
@@ -554,6 +562,7 @@ export type DesktopEvent =
       conversationId: string;
       runId: string;
       taskId: string;
+      sequence?: number;
       event: BaseEvent;
     }
   | { type: "notification"; title: string; body: string }
@@ -628,6 +637,17 @@ export interface DesktopApi {
   browser: {
     clearProfile(coworkerId: string): Promise<void>;
   };
+  files: {
+    roots(coworkerId: string): Promise<FileRoot[]>;
+    list(coworkerId: string, ref: FileRef): Promise<FileEntry[]>;
+    preview(coworkerId: string, ref: FileRef): Promise<FilePreview>;
+    open(coworkerId: string, ref: FileRef): Promise<void>;
+    reveal(coworkerId: string, ref: FileRef): Promise<void>;
+    download(coworkerId: string, ref: FileRef): Promise<string | null>;
+    zip(coworkerId: string, refs: FileRef[]): Promise<string | null>;
+    prepareDelete(coworkerId: string, refs: FileRef[]): Promise<import('./files').FileDeleteConfirmation>;
+    delete(coworkerId: string, token: string, confirmed: boolean): Promise<import('./files').FileDeleteResult>;
+  };
   folders: {
     /** Open the native directory picker; returns the selected absolute paths. */
     pick(): Promise<string[]>;
@@ -660,6 +680,7 @@ export interface DesktopApi {
     decide(input: ApprovalDecisionInput): Promise<Approval>;
   };
   artifacts: {
+    status(id: string): Promise<ArtifactFileStatus>;
     open(id: string): Promise<void>;
     download(id: string): Promise<string | null>;
     remove(id: string): Promise<void>;
@@ -747,6 +768,7 @@ export interface DesktopApi {
     remove(id: string): Promise<void>;
   };
   agents: {
+    snapshot(): Promise<Extract<DesktopEvent, { type: "agent.event" }>[]>;
     run(request: AgentRunRequest): Promise<AgentRunReceipt>;
     abort(coworkerId: string, runId: string): Promise<void>;
   };

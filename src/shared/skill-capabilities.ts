@@ -1,4 +1,7 @@
 export const skillToolCapabilities = {
+  "file-archiving": ["skills.run", "files.roots", "files.list"],
+  "document-authoring": ["skills.run", "files.roots"],
+  "folder-access": ["files.roots", "files.write"],
   "coworker-memory": ["files.read", "files.edit", "files.write"],
   "web-search": ["web.search"],
   "coworker-messaging": ["coworkers.list", "coworkers.send_message"],
@@ -16,6 +19,7 @@ export const defaultEnabledBundledSkillNames = new Set([
   "coworker-administration",
   "web-search",
   "document-authoring",
+  "file-archiving",
   "team-channel-collaboration",
   "coworker-messaging",
   "folder-access",

@@ -1667,6 +1667,7 @@ svg {
   flex-direction: column;
   gap: 6px;
   padding: 0 2px;
+  text-align: center;
 }
 
 .team-clock strong {
@@ -4569,23 +4570,26 @@ select:focus {
   margin-top: 3px;
 }
 
-/* The rail toggle rides the top-right: inside the rail's tab header when the
-   panel is open, at the end of the header controls when hidden. The active
-   state means "panel visible", not a tab, so keep the icon-button look. */
-.conversation-rail-tabs .conversation-rail-toggle,
-.conversation-rail-tabs .conversation-rail-toggle.active {
+/* Keep the visibility control beside the clock, separate from the tabs. */
+.conversation-rail-header { position: relative; flex: 0 0 auto; }
+
+.conversation-rail-header .conversation-rail-toggle,
+.conversation-rail-header .conversation-rail-toggle.active {
+  position: absolute;
+  top: 8px;
+  right: 8px;
   width: 30px;
   min-width: 30px;
   height: 30px;
-  margin-bottom: 5px;
   padding: 0;
-  align-self: center;
   color: var(--ink-soft);
-  border: 1px solid var(--line);
+  background: transparent;
+  border: 0;
   border-radius: 8px;
+  -webkit-app-region: no-drag;
 }
 
-.conversation-rail-tabs .conversation-rail-toggle:hover {
+.conversation-rail-header .conversation-rail-toggle:hover {
   color: var(--ink);
   background: var(--forest-soft);
 }
@@ -5983,6 +5987,12 @@ select:focus {
 .conversation-thread .workroom-composer .composer-error {
   color: var(--ember);
   text-align: left;
+  white-space: normal;
+  overflow: visible;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+  flex: 1;
+  line-height: 1.45;
 }
 
 .conversation-thread .workroom-composer .composer-capability-note {
@@ -6043,11 +6053,20 @@ select:focus {
   flex-direction: column;
 }
 
+.conversation-sidebar-clock {
+  padding: 8px 14px 16px;
+  flex: 0 0 auto;
+  text-align: center;
+}
+
+.conversation-sidebar-clock strong { font-size: 32px; }
+.conversation-sidebar-clock span { font-size: 12px; }
+
 .conversation-rail-tabs {
   position: relative;
   z-index: 13;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   min-height: 52px;
   padding: 5px 7px 0;
   background: color-mix(in srgb, var(--white) 72%, transparent);
@@ -6153,6 +6172,60 @@ select:focus {
   gap: 8px;
   scrollbar-width: thin;
 }
+
+.conversation-folder-access {
+  display: grid;
+  gap: 3px;
+  flex: 0 0 auto;
+  min-width: 0;
+  margin-bottom: 8px;
+}
+
+.conversation-folder-access h3,
+.conversation-file-section-title {
+  margin: 2px 4px 5px;
+  color: var(--ink-soft);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.conversation-folder-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  padding: 3px 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+.conversation-folder-toggle:hover { color: var(--ink); }
+.conversation-folder-toggle > span { width: 10px; }
+
+.conversation-folder-row {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  width: 100%;
+  padding: 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+}
+
+.conversation-folder-row:hover { background: var(--cloud); }
+.conversation-folder-row > svg { width: 17px; height: 17px; margin-top: 1px; color: var(--ink-soft); }
+.conversation-folder-row > span { display: grid; gap: 3px; min-width: 0; }
+.conversation-folder-row strong { font-size: 12px; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.conversation-folder-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; color: var(--ink-soft); }
+.conversation-folder-permissions { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; font-size: 10px; color: var(--ink-soft); }
+.conversation-folder-permissions > span { padding: 1px 5px; border-radius: 4px; background: var(--forest-soft); color: var(--accent-text); }
 
 .conversation-file-card {
   display: grid;
@@ -9339,6 +9412,179 @@ button.activity-entry:hover {
   font-size: 11.5px;
 }
 
+.composer-tool-list .composer-folder-row {
+  align-items: flex-start;
+}
+
+.composer-folder-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  font-size: 11px;
+}
+
+.composer-folder-option input[type="checkbox"] {
+  width: 13px;
+  height: 13px;
+  min-height: 0;
+  margin: 0;
+  flex: 0 0 auto;
+}
+
+.composer-folder-pending {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 12px;
+}
+
+.composer-folder-popover {
+  width: min(500px, 72vw);
+  padding: 16px;
+}
+
+.composer-folder-popover > header {
+  margin-bottom: 14px;
+}
+
+.composer-folder-popover.has-pending-folder {
+  width: min(500px, 72vw);
+  padding: 12px;
+}
+
+.composer-folder-heading {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+}
+
+.composer-folder-heading > strong {
+  flex-shrink: 0;
+  font-size: 12px;
+}
+
+.composer-folder-heading .composer-folder-selection {
+  min-width: 0;
+}
+
+.composer-folder-selection {
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+.composer-folder-identity {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 0;
+}
+
+.composer-folder-identity > svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  color: var(--ink-soft);
+}
+
+.composer-folder-identity > span {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.composer-folder-identity strong,
+.composer-folder-identity small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-folder-identity small {
+  font-size: 10px;
+  color: var(--ink-soft);
+}
+
+.composer-folder-access-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.composer-folder-saved-access {
+  margin-top: 7px;
+}
+
+.composer-folder-access-options > label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px;
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.composer-folder-access-options > label.selected {
+  background: color-mix(in srgb, var(--accent-text) 6%, var(--white));
+}
+
+.composer-folder-access-options input[type="radio"] {
+  width: 13px;
+  height: 13px;
+  min-height: 0;
+  flex: 0 0 auto;
+  margin: 1px 0 0;
+  accent-color: var(--accent-text);
+}
+
+.composer-folder-access-options label > span {
+  display: flex;
+  flex-direction: row;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 3px 7px;
+}
+
+.composer-folder-access-options strong {
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.composer-folder-output {
+  margin-top: 0;
+  margin-right: auto;
+}
+
+.composer-folder-footer {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  padding-top: 0;
+}
+
+.composer-folder-footer button {
+  min-height: 30px;
+  padding: 6px 12px;
+  border-radius: 7px;
+  font-size: 11px;
+}
+
+.composer-folder-cancel {
+  border: 0;
+  background: transparent;
+  color: var(--ink-soft);
+}
+
+.composer-folder-cancel:hover:not(:disabled) {
+  background: var(--cloud);
+  color: var(--ink);
+}
+
 .composer-tool-error {
   margin-top: 8px;
   color: var(--red);
@@ -9837,9 +10083,10 @@ button.tag-chip[aria-pressed="true"] {
   border-radius: 5px;
 }
 
-/* Shrinks well before the name does, so a long role truncates first. */
-.roster-role-chip {
-  flex: 0 10 auto;
+.conversation-roster-copy > .roster-role-chip {
+  display: block;
+  align-self: flex-start;
+  max-width: 100%;
   min-width: 0;
   overflow: hidden;
   padding: 0 6px;
@@ -10165,3 +10412,62 @@ button.tag-chip[aria-pressed="true"] {
 .roster-card-wrap:focus-within .roster-card-more {
   opacity: 1;
 }
+
+.workspace-files-backdrop { position: fixed; inset: 0; z-index: 200; background: #0006; display: flex; justify-content: flex-end; }
+.workspace-files { width: min(1000px, 94vw); height: 100%; background: var(--paper); color: var(--ink); padding: 24px; display: flex; flex-direction: column; gap: 14px; box-shadow: -8px 0 40px #0002; }
+.workspace-files header, .workspace-files-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.workspace-files h2 { margin: 0; font-size: 20px; }
+.workspace-files button { cursor: pointer; }
+.workspace-files button:disabled { cursor: default; opacity: .5; }
+.workspace-files-toolbar input { flex: 1; min-width: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--white); color: inherit; font-size: 12px; }
+.workspace-files-content { overflow: auto; min-height: 0; flex: 1; }
+.workspace-file-row { display: flex; align-items: center; gap: 10px; border-bottom: 1px solid #8883; padding: 12px 0; }
+.workspace-file-name { flex: 1; text-align: left; min-width: 0; overflow-wrap: anywhere; }
+.workspace-file-name small { display: block; opacity: .65; font-size: 11px; margin-top: 5px; }
+.workspace-file-preview { border-top: 1px solid #8884; padding-top: 12px; margin-top: 16px; }
+.workspace-file-preview pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
+.workspace-file-preview img { max-width: 100%; max-height: 55vh; object-fit: contain; }
+.workspace-files button { border: 1px solid var(--line); border-radius: 7px; background: var(--white); color: var(--ink); padding: 7px 10px; font: inherit; font-size: 12px; white-space: nowrap; }
+.workspace-files button:hover:not(:disabled) { background: var(--cloud); }
+.workspace-files .workspace-delete { color: var(--red); }
+.workspace-files .workspace-delete svg { width: 14px; height: 14px; vertical-align: middle; }
+.workspace-explorer-layout { display: grid; grid-template-columns: 210px minmax(0, 1fr); flex: 1; min-height: 0; border-top: 1px solid var(--line); }
+.workspace-folder-tree { overflow: auto; border-right: 1px solid var(--line); padding: 12px 10px 12px 0; }
+.workspace-folder-tree ul { list-style: none; padding: 0; margin: 0; }
+.workspace-folder-tree ul ul { padding-left: 14px; }
+.workspace-tree-row { display: flex; align-items: center; border-radius: 6px; min-width: 0; }
+.workspace-folder-tree .active { background: color-mix(in srgb, var(--accent-text) 9%, transparent); }
+.workspace-folder-tree button { border: 0; background: transparent; padding: 7px 5px; }
+.workspace-folder-tree .workspace-tree-toggle { width: 22px; flex: 0 0 22px; padding: 7px 0; color: var(--ink-soft); }
+.workspace-folder-tree .workspace-tree-folder { display: flex; align-items: center; gap: 7px; flex: 1; min-width: 0; text-align: left; }
+.workspace-tree-folder span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.workspace-folder-tree svg, .workspace-file-row > svg { width: 15px; height: 15px; flex-shrink: 0; color: var(--ink-soft); }
+.workspace-folder-tree .workspace-all-files { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; padding: 8px; font-weight: 600; }
+.workspace-tree-heading { display: block; margin: 18px 8px 7px; color: var(--ink-soft); font-size: 10px; text-transform: uppercase; letter-spacing: .07em; }
+.workspace-tree-note { padding: 6px 8px; color: var(--ink-soft); font-size: 11px; overflow-wrap: anywhere; }
+.workspace-explorer-layout > .workspace-files-content { padding: 12px 0 12px 16px; }
+.workspace-breadcrumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; min-height: 30px; margin-bottom: 5px; font-size: 12px; color: var(--ink-soft); }
+.workspace-breadcrumbs button { padding: 4px 5px; border: 0; background: transparent; }
+@media (max-width: 800px) { .workspace-explorer-layout { grid-template-columns: 160px minmax(0, 1fr); } }
+.workspace-files p { overflow-wrap: anywhere; }
+.workspace-files-status { min-height: 20px; font-size: 12px; }
+.workspace-files-status p { margin: 0; }
+.file-delete-backdrop { position: fixed; inset: 0; z-index: 220; display: grid; place-items: center; padding: 20px; background: #0005; }
+.file-delete-dialog { width: min(480px, 100%); max-height: 85vh; overflow: auto; padding: 22px; border: 1px solid var(--line); border-radius: 14px; background: var(--white); color: var(--ink); box-shadow: 0 20px 70px #0003; }
+.file-delete-dialog h2 { margin: 0 0 14px; font-size: 19px; line-height: 1.3; }
+.file-delete-dialog p { margin: 12px 0; font-size: 13px; line-height: 1.5; }
+.file-delete-warning { padding: 10px 12px; border-radius: 7px; background: var(--red-soft); color: var(--red); }
+.file-delete-items { max-height: 200px; overflow: auto; margin: 14px 0; padding: 0; list-style: none; }
+.file-delete-items li { display: flex; align-items: flex-start; gap: 10px; padding: 7px 0; }
+.file-delete-items svg { width: 18px; height: 18px; flex-shrink: 0; margin-top: 2px; color: var(--ink-soft); }
+.file-delete-items span { display: flex; min-width: 0; flex-direction: column; gap: 3px; }
+.file-delete-items strong { font-size: 13px; overflow-wrap: anywhere; }
+.file-delete-items small { font-size: 11px; color: var(--ink-soft); overflow-wrap: anywhere; line-height: 1.4; }
+.file-delete-dialog footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+.file-delete-dialog footer button { min-height: 34px; padding: 7px 12px; font-size: 12px; }
+.workspace-files .workspace-file-row > input[type="checkbox"] { flex: 0 0 16px; width: 16px; height: 16px; margin: 0 4px; accent-color: var(--forest); }
+.workspace-files .workspace-file-name { border: 0; background: transparent; padding: 4px; white-space: normal; }
+.workspace-file-row > button:not(.workspace-file-name) { flex-shrink: 0; }
+.folder-picker input[type="checkbox"], .folder-picker input[type="radio"] { width: 16px; height: 16px; margin-right: 6px; }
+.folder-picker-list label { display: flex; align-items: center; gap: 4px; font-size: 12px; }
+@media (max-width: 800px) { .workspace-file-row { flex-wrap: wrap; } .workspace-file-name { flex-basis: calc(100% - 50px); } }

@@ -1,6 +1,10 @@
+import { createHash } from "node:crypto";
+import { resolveWorkspacePath } from "./workspace-path";
 import { lstat, realpath } from "node:fs/promises";
 import { basename, isAbsolute, relative, resolve, sep } from "node:path";
 import type { SharedFolder } from "@shared/contracts";
+
+export function folderId(path: string): string { return "folder-" + createHash("sha256").update(path).digest("hex").slice(0, 24); }
 
 export const maxSharedFolders = 20;
 
@@ -38,7 +42,7 @@ function uniqueAlias(name: string, taken: Set<string>): string {
  * confinement checks compare against the true on-disk location.
  */
 export async function resolveSharedFolderGrants(
-  paths: readonly string[],
+  paths: readonly (string | { path: string; access: "read" | "read-write"; defaultOutput?: boolean })[],
   options: { dataPath: string },
 ): Promise<SharedFolder[]> {
   if (paths.length > maxSharedFolders) {
@@ -49,7 +53,7 @@ export async function resolveSharedFolderGrants(
   const takenAliases = new Set<string>();
   const folders: SharedFolder[] = [];
   for (const requested of paths) {
-    const trimmed = requested.trim();
+    const trimmed = (typeof requested === "string" ? requested : requested.path).trim();
     if (!trimmed || trimmed.includes("\0") || !isAbsolute(trimmed)) {
       throw new Error("Shared folders must be absolute paths");
     }
@@ -68,27 +72,33 @@ export async function resolveSharedFolderGrants(
     }
     if (seen.has(canonical)) continue;
     seen.add(canonical);
-    folders.push({ path: canonical, alias: uniqueAlias(basename(canonical), takenAliases) });
+    const access = typeof requested === "string" ? "read" : requested.access;
+    if (access === "read-write" && isInside(canonical, dataRoot)) throw new Error("Writable folders cannot contain the app data directory");
+    const defaultOutput = typeof requested !== "string" && requested.defaultOutput === true;
+    if (defaultOutput && access !== "read-write") throw new Error("The output folder must allow writing");
+    folders.push({ id: folderId(canonical), path: canonical, alias: uniqueAlias(basename(canonical), takenAliases), access, defaultOutput });
   }
+  if (folders.filter(folder => folder.defaultOutput).length > 1) throw new Error("Choose only one default output folder");
   return folders;
 }
 
 /**
- * Resolve a read path inside a granted shared folder. Strictly read-only:
- * nothing is ever created, the target must exist, and symlinks may not lead
- * outside the granted folder or into the app's data directory.
+ * Resolve a path inside a granted folder. Reads never create files; writes
+ * require an explicit writable grant and create only confined parent folders.
+ * Symlinks cannot escape the grant or expose protected application data.
  */
 export async function resolveSharedFolderPath(
   folders: readonly SharedFolder[],
   alias: string,
   requestedPath: string,
-  options: { dataPath?: string } = {},
+  options: { dataPath?: string; write?: boolean } = {},
 ): Promise<string> {
-  const folder = folders.find((candidate) => candidate.alias === alias);
+  const folder = folders.find((candidate) => candidate.alias === alias || candidate.id === alias || folderId(candidate.path) === alias);
   if (!folder) {
     const available = folders.map((candidate) => candidate.alias).join(", ") || "none";
     throw new Error(`Unknown shared folder "${alias}". Available folders: ${available}`);
   }
+  if (options.write && folder.access !== "read-write") throw new Error("This folder has read-only access");
   validateRelativePath(requestedPath);
 
   let root: string;
@@ -97,6 +107,11 @@ export async function resolveSharedFolderPath(
   } catch {
     throw new Error(`Shared folder "${alias}" is no longer available at ${folder.path}`);
   }
+  if (options.write && options.dataPath) {
+    const dataRoot = await realpath(options.dataPath).catch(() => resolve(options.dataPath!));
+    if (isInside(root, dataRoot) || isInside(dataRoot, root)) throw new Error("The app data directory cannot be accessed through writable grants");
+  }
+  if (root !== folder.path && folder.id) throw new Error(`Shared folder "${alias}" has moved or was replaced. Grant it again in settings.`);
   const candidate = resolve(root, requestedPath);
   if (!isInside(root, candidate)) {
     throw new Error("Path traversal outside the shared folder is blocked");
@@ -104,9 +119,12 @@ export async function resolveSharedFolderPath(
 
   let target: string;
   try {
-    target = await realpath(candidate);
-  } catch {
-    throw new Error(`${requestedPath} was not found in shared folder "${alias}"`);
+    target = options.write
+      ? await resolveWorkspacePath(root, requestedPath, { createParent: true })
+      : await realpath(candidate);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new Error(`${requestedPath} was not found in shared folder "${alias}"`);
+    throw error;
   }
   if (!isInside(root, target)) {
     throw new Error("Shared folder symlinks may not escape the granted folder");

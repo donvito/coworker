@@ -6,7 +6,7 @@ export function workspaceTextApproval(approval: Pick<Approval, "actionType" | "p
   if (!["files.edit", "files.write"].includes(approval.actionType) || !payload || typeof payload !== "object" || Array.isArray(payload)) return null;
   const args = payload as Record<string, unknown>;
   if (typeof args.path !== "string") return null;
-  const context = declaredWorkspaceContextFile(args.path);
+  const context = !args.root || args.root === "workspace" ? declaredWorkspaceContextFile(args.path) : undefined;
   const field = approval.actionType === "files.edit" ? "newText" : "content";
   const text = args[field];
   const oldText = approval.actionType === "files.edit" ? args.oldText : undefined;
@@ -40,7 +40,7 @@ export function validateWorkspaceTextApprovalEdit(approval: Approval, payload: u
   const edited = workspaceTextApproval(approval, payload);
   const before = approval.proposedPayload as Record<string, unknown>;
   const after = payload as Record<string, unknown> | null;
-  if (!edited || edited.path !== original.path || edited.oldText !== original.oldText || after?.expectedRevision !== before.expectedRevision) {
+  if (!edited || edited.path !== original.path || edited.oldText !== original.oldText || after?.expectedRevision !== before.expectedRevision || (after?.root ?? "workspace") !== (before.root ?? "workspace")) {
     throw new Error("Edit only the proposed text. The file, original text, and revision must stay unchanged.");
   }
 }

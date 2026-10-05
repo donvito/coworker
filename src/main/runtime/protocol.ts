@@ -5,6 +5,7 @@ import type { WorkspaceTextDocument } from "@shared/workspace-context";
 import type { RequestContext } from "@shared/request-context";
 
 export interface WorkerCoworkerConfig {
+  allowTestModel?: boolean;
   coworker: Pick<
     Coworker,
     | "id"

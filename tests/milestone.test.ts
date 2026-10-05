@@ -53,6 +53,7 @@ describe("first architecture milestone", () => {
       const tools = new ToolGateway(database, credentials, join(root, "outbox"));
       const events: DesktopEvent[] = [];
       const manager = new CoworkerRuntimeManager({
+        allowTestModel: true,
         database,
         credentials,
         tools,

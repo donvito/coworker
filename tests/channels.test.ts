@@ -322,6 +322,7 @@ describe("multi-coworker channels", () => {
       tools: service.tools,
       emit: (event) => events.push(event),
       idleTimeoutMs: 60_000,
+      allowTestModel: true,
       workerFactory: () =>
         new Worker(resolve(process.cwd(), "out/main/runtime/coworker-worker.js")),
     });
@@ -585,6 +586,7 @@ describe("multi-coworker channels", () => {
       dataPath: root,
       database,
       credentials: credentials(),
+      allowTestModel: true,
       workerFactory: () =>
         new Worker(resolve(process.cwd(), "out/main/runtime/coworker-worker.js")),
     });

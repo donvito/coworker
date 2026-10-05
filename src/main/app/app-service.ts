@@ -1,3 +1,9 @@
+import { runSkillScript } from "@main/integrations/skill-script-runner";
+import { deleteWorkFiles } from "@main/integrations/delete-work-files";
+import type { FileRef } from "@shared/files";
+import { hasConfiguredModel, modelNotConfiguredMessage } from "@shared/model-configuration";
+import type { ScriptRequest } from "@shared/files";
+import { RunEventJournal } from "@shared/run-event-journal";
 import { withConnectionOperation } from "@main/integrations/connection-operations";
 import { randomBytes, randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
@@ -108,6 +114,8 @@ import { configureDiscordSchema, configureTelegramSchema, updateMemorySchema } f
 import { readWorkspaceText, writeWorkspaceText } from "@main/tools/workspace-text";
 
 export interface DesktopAppServiceOptions {
+  /** Test harness only; never exposed through IPC or saved settings. */
+  allowTestModel?: boolean;
   dataPath: string;
   appVersion?: string;
   applicationLogger?: ApplicationLogger;
@@ -175,6 +183,7 @@ export class DesktopAppService {
   readonly browser: BrowserAutomationService;
   readonly peers: PeerMessaging;
   readonly providerErrors: ProviderErrorLogger;
+  readonly liveEvents = new RunEventJournal();
   private readonly listeners = new Set<(event: DesktopEvent) => void>();
   private initialized = false;
   private readonly integrationMutations = new Map<string, Promise<unknown>>();
@@ -210,6 +219,7 @@ export class DesktopAppService {
       },
     );
     this.runtime = new CoworkerRuntimeManager({
+      allowTestModel: options.allowTestModel,
       database: this.database,
       tools: this.tools,
       credentials: options.credentials,
@@ -402,8 +412,24 @@ export class DesktopAppService {
     });
   }
 
+  async runPackagedScript(coworkerId: string, request: ScriptRequest) {
+    const result = await runSkillScript(this.database, this.options.dataPath, coworkerId, request);
+    this.emit({ type: "entity.changed", entity: "artifacts" });
+    this.emit({ type: "entity.changed", entity: "activity" });
+    return result;
+  }
+
+  async deleteFiles(coworkerId: string, refs: FileRef[], confirm: (paths: string[], permanentFolders: string[]) => Promise<boolean>, trash: (path: string) => Promise<void>) {
+    const result = await deleteWorkFiles(this.database, this.options.dataPath, coworkerId, refs, confirm, trash);
+    if (!result.cancelled) {
+      this.emit({ type: "entity.changed", entity: "artifacts" });
+      this.emit({ type: "entity.changed", entity: "activity" });
+    }
+    return result;
+  }
+
   async createCoworker(input: CreateCoworkerInput) {
-    const sharedFolders = await resolveSharedFolderGrants(input.sharedFolderPaths ?? [], {
+    const sharedFolders = await resolveSharedFolderGrants(input.sharedFolderGrants ?? input.sharedFolderPaths ?? [], {
       dataPath: this.options.dataPath,
     });
     const provisionalPath = join(
@@ -434,9 +460,9 @@ export class DesktopAppService {
 
   async updateCoworker(id: string, input: UpdateCoworkerInput) {
     const sharedFolders =
-      input.sharedFolderPaths === undefined
+      input.sharedFolderPaths === undefined && input.sharedFolderGrants === undefined
         ? undefined
-        : await resolveSharedFolderGrants(input.sharedFolderPaths, {
+        : await resolveSharedFolderGrants(input.sharedFolderGrants ?? input.sharedFolderPaths!, {
             dataPath: this.options.dataPath,
           });
     const primaryBefore = this.database.listCoworkers().find((item) => item.isPrimary)?.id;
@@ -1293,6 +1319,7 @@ export class DesktopAppService {
     const existing = this.database.getTaskByRunId(request.input.runId);
     if (existing) return { runId: existing.runId, taskId: existing.id };
     const coworker = this.database.getCoworker(request.coworkerId);
+    if (!hasConfiguredModel(coworker)) throw new Error(modelNotConfiguredMessage);
     const prompt = parseAgentPrompt(request.input);
     const skillUrl = skillUrlFromPrompt(prompt.text);
     const installedSkill = skillUrl
@@ -1331,9 +1358,12 @@ export class DesktopAppService {
             source: "manual",
             runId: request.input.runId,
             threadId: request.input.threadId,
+            persistUserMessage: false,
           },
           taskId,
         );
+        const userMessageId = request.input.messages.filter(message => message.role === "user").at(-1)!.id;
+        this.database.addMessage({ conversationId: created.threadId, coworkerId: null, taskId: created.id, role: "user", content: prompt.text }, userMessageId);
         for (const attachment of attachments) {
           this.database.addTaskImageAttachment({
             ...attachment,
@@ -2198,6 +2228,7 @@ export class DesktopAppService {
   }
 
   private emit(event: DesktopEvent): void {
+    if (event.type === "agent.event") event = this.liveEvents.append(event);
     for (const listener of this.listeners) listener(event);
   }
 
@@ -2244,10 +2275,16 @@ export class DesktopAppService {
       ) {
         this.database.upsertSkill(bundledSkill);
       }
+      this.database.replaceSkillResources(bundledSkill.id, 'resources' in bundledSkill ? bundledSkill.resources : []);
     }
   }
 
   private enableBundledSkills(): void {
+    const archiveMigration = "file-archiving-enabled-v1";
+    if (this.database.getMetadata(archiveMigration) !== "true") {
+      for (const coworker of this.database.listCoworkers()) this.database.setCoworkerSkills(coworker.id, [...coworker.enabledSkillIds, "bundled:file-archiving"]);
+      this.database.setMetadata(archiveMigration, "true");
+    }
     const migrationKey = "bundled-skills-enabled-v5";
     if (this.database.getMetadata(migrationKey) === "true") return;
     const bundledIds = this.database

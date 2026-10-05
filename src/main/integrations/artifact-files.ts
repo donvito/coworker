@@ -1,12 +1,34 @@
+import { artifactRef, resolveFile } from "@main/tools/file-access";
 import { realpath, stat, unlink } from "node:fs/promises";
 import { basename, dirname, join, relative, sep } from "node:path";
-import type { Artifact } from "@shared/contracts";
+import type { Artifact, ArtifactFileStatus } from "@shared/contracts";
 import type { CoworkerDatabase } from "@main/db/database";
 import { resolveWorkspacePath } from "@main/tools/workspace-path";
 
 export interface ResolvedArtifactFile {
   artifact: Artifact;
   path: string;
+}
+
+/** Read-only availability check. Missing external files retain their records so restoration works. */
+export async function artifactFileStatus(database: CoworkerDatabase, artifactId: string): Promise<ArtifactFileStatus> {
+  let artifact: Artifact;
+  try {
+    artifact = database.getArtifact(artifactId);
+  } catch (error) {
+    if (error instanceof Error && error.message === `Artifact ${artifactId} was not found`) return "deleted";
+    throw error;
+  }
+  try {
+    // Check the recorded path first: shared-folder resolution can wrap ENOENT.
+    const details = await stat(artifact.filePath);
+    if (!details.isFile()) return "missing";
+    await resolveArtifactFile(database, artifactId);
+    return "available";
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    return code === "ENOENT" || code === "ENOTDIR" ? "missing" : "unavailable";
+  }
 }
 
 const caseInsensitiveFilesystem =
@@ -64,7 +86,9 @@ export async function resolveArtifactFile(
     canonicalPath(artifact.filePath),
   ]);
   const workspacePath = workspaceRelativePath(canonicalRoot, canonicalFile) || ".";
-  const path = await resolveWorkspacePath(coworker.workspacePath, workspacePath);
+  const path = escapesRoot(workspacePath)
+    ? await resolveFile(coworker, await artifactRef(coworker, artifact.filePath), dirname(database.path))
+    : await resolveWorkspacePath(coworker.workspacePath, workspacePath);
   const details = await stat(path);
   if (!details.isFile()) {
     throw new Error(`The file for ${artifact.name} is no longer available`);
@@ -77,9 +101,16 @@ export async function deleteArtifactFile(
   artifactId: string,
 ): Promise<Artifact> {
   const artifact = database.getArtifact(artifactId);
+  const owner = database.getCoworker(artifact.coworkerId);
+  if (escapesRoot(workspaceRelativePath(await canonicalPath(owner.workspacePath), await canonicalPath(artifact.filePath)))) {
+    database.deleteArtifact(artifactId);
+    return artifact;
+  }
   try {
     const { path } = await resolveArtifactFile(database, artifactId);
-    await unlink(path);
+    const coworker = database.getCoworker(artifact.coworkerId);
+    const root = await canonicalPath(coworker.workspacePath);
+    if (!escapesRoot(workspaceRelativePath(root, await canonicalPath(path)))) await unlink(path);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }

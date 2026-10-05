@@ -126,7 +126,7 @@ describe("coworker folder access settings", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(update).toHaveBeenCalledOnce());
     expect(update.mock.calls[0]?.[1]).toMatchObject({
-      sharedFolderPaths: ["/Users/melvin/Reports", "/Users/melvin/Contracts"],
+      sharedFolderGrants: ["/Users/melvin/Reports", "/Users/melvin/Contracts"].map(path => ({path, access: "read", defaultOutput: false})),
     });
     expect(onChanged).toHaveBeenCalledOnce();
   });
@@ -155,9 +155,21 @@ describe("coworker folder access settings", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(update).toHaveBeenCalledOnce());
     const patch = update.mock.calls[0]?.[1] as Record<string, unknown>;
-    expect(patch.sharedFolderPaths).toEqual(["/Users/melvin/Reports"]);
+    expect(patch.sharedFolderGrants).toEqual([{path: "/Users/melvin/Reports", access: "read", defaultOutput: false}]);
     expect(patch).not.toHaveProperty("modelProvider");
     expect(patch).not.toHaveProperty("modelName");
+  });
+
+  it("saves explicit write access and default output selection", async () => {
+    const { update } = mockDesktopApi();
+    render(<CoworkerSettingsModal coworker={coworker} onChanged={vi.fn().mockResolvedValue(undefined)} onClose={vi.fn()} onRemoved={vi.fn()} skills={[]} />);
+    const output = screen.getByRole("radio", { name: "Use /Users/melvin/Reports for output" });
+    expect((output as HTMLInputElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("checkbox", { name: "Allow writing to /Users/melvin/Reports" }));
+    fireEvent.click(output);
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(update).toHaveBeenCalledOnce());
+    expect(update.mock.calls[0]?.[1]).toMatchObject({ sharedFolderGrants: [{path: "/Users/melvin/Reports", access: "read-write", defaultOutput: true}] });
   });
 
   it("drops a removed folder from the saved grants", async () => {
@@ -184,6 +196,6 @@ describe("coworker folder access settings", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(update).toHaveBeenCalledOnce());
-    expect(update.mock.calls[0]?.[1]).toMatchObject({ sharedFolderPaths: [] });
+    expect(update.mock.calls[0]?.[1]).toMatchObject({ sharedFolderGrants: [] });
   });
 });

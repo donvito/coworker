@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { DesktopAppService } from "@main/app/app-service";
 import { CoworkerDatabase } from "@main/db/database";
 import {
+  folderId,
   resolveSharedFolderGrants,
   resolveSharedFolderPath,
 } from "@main/tools/shared-folders";
@@ -62,8 +63,8 @@ describe("shared folder grants", () => {
       { dataPath },
     );
     expect(folders).toEqual([
-      { path: join(root, "left", "docs"), alias: "docs" },
-      { path: join(root, "right", "docs"), alias: "docs-2" },
+      { path: join(root, "left", "docs"), alias: "docs", id: folderId(join(root,"left","docs")), access: "read", defaultOutput: false },
+      { path: join(root, "right", "docs"), alias: "docs-2", id: folderId(join(root,"right","docs")), access: "read", defaultOutput: false },
     ]);
   });
 
@@ -76,7 +77,7 @@ describe("shared folder grants", () => {
     const folders = await resolveSharedFolderGrants([join(root, "linked")], {
       dataPath: join(root, "data"),
     });
-    expect(folders).toEqual([{ path: target, alias: "actual" }]);
+    expect(folders).toEqual([{ path: target, alias: "actual", id: folderId(target), access: "read", defaultOutput: false }]);
   });
 
   it("rejects relative paths, missing folders, and plain files", async () => {
@@ -254,7 +255,7 @@ describe("shared folder tools through the gateway", () => {
       if (listAll.kind === "completed") {
         expect(listAll.result).toEqual({
           readOnly: true,
-          folders: [{ folder: "docs", path: shared }],
+          folders: [{ folder: "docs", path: shared, root: folderId(shared), access: "read", defaultOutput: false }],
         });
       }
 
@@ -364,9 +365,9 @@ describe("shared folder configuration through the service", () => {
         enabledTools: [],
         sharedFolderPaths: [shared, shared],
       });
-      expect(coworker.sharedFolders).toEqual([{ path: shared, alias: "Documents" }]);
+      expect(coworker.sharedFolders).toEqual([{ path: shared, alias: "Documents", id: folderId(shared), access: "read", defaultOutput: false }]);
       expect(database.getCoworker(coworker.id).sharedFolders).toEqual([
-        { path: shared, alias: "Documents" },
+        { path: shared, alias: "Documents", id: folderId(shared), access: "read", defaultOutput: false },
       ]);
 
       const updated = await service.updateCoworker(coworker.id, {

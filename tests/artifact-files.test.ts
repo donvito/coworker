@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { CoworkerDatabase } from "@main/db/database";
 import {
+  artifactFileStatus,
   deleteArtifactFile,
   resolveArtifactFile,
 } from "@main/integrations/artifact-files";
@@ -19,6 +20,32 @@ afterEach(async () => {
 });
 
 describe("artifact file access", () => {
+  it("distinguishes missing files from deleted records and recovers after restoration", async () => {
+    const root = await mkdtemp(join(tmpdir(), "coworker-artifact-status-"));
+    temporaryPaths.push(root);
+    const workspace = join(root, "workspace");
+    await mkdir(workspace);
+    const database = new CoworkerDatabase(join(root, "coworker.db"));
+    try {
+      const owner = database.createCoworker({ name: "Ava", role: "Analyst", systemPrompt: "Help.", modelProvider: "demo", modelName: "faux-1", enabledTools: [] }, workspace);
+      const filePath = join(workspace, "report.txt");
+      const artifact = database.createArtifact({ coworkerId: owner.id, taskId: null, name: "report.txt", mimeType: "text/plain", filePath });
+      expect(await artifactFileStatus(database, artifact.id)).toBe("missing");
+      expect(database.getArtifact(artifact.id)).toEqual(artifact);
+      await writeFile(filePath, "Restored");
+      expect(await artifactFileStatus(database, artifact.id)).toBe("available");
+      await rm(filePath);
+      expect(await artifactFileStatus(database, artifact.id)).toBe("missing");
+      database.deleteArtifact(artifact.id);
+      expect(await artifactFileStatus(database, artifact.id)).toBe("deleted");
+      const outside = join(root, "private.txt");
+      await writeFile(outside, "Private");
+      const forbidden = database.createArtifact({ coworkerId: owner.id, taskId: null, name: "private.txt", mimeType: "text/plain", filePath: outside });
+      expect(await artifactFileStatus(database, forbidden.id)).toBe("unavailable");
+    } finally {
+      database.close();
+    }
+  });
   it("resolves recorded files inside the owning coworker workspace", async () => {
     const root = await mkdtemp(join(tmpdir(), "coworker-artifacts-"));
     temporaryPaths.push(root);
@@ -169,11 +196,10 @@ describe("artifact file access", () => {
       await expect(resolveArtifactFile(database, artifact.id)).rejects.toThrow(
         /traversal|workspace|relative/i,
       );
-      await expect(deleteArtifactFile(database, artifact.id)).rejects.toThrow(
-        /traversal|workspace|relative/i,
-      );
+      await deleteArtifactFile(database, artifact.id);
+      expect((await stat(outsidePath)).isFile()).toBe(true);
       await expect(stat(outsidePath)).resolves.toMatchObject({ size: 3 });
-      expect(database.getArtifact(artifact.id).id).toBe(artifact.id);
+      expect(() => database.getArtifact(artifact.id)).toThrow("not found");
     } finally {
       database.close();
     }
