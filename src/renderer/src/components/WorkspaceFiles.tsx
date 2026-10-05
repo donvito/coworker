@@ -42,6 +42,7 @@ function FolderBranch({ coworkerId, location, label, current, onSelect, revision
 }
 
 export function WorkspaceFiles({ coworkerId, name, initialRoot, onClose }: { coworkerId: string; name: string; initialRoot?: string; onClose: () => void }) {
+  const recycle = window.coworker.platform === 'win32' ? 'Recycle Bin' : 'Trash';
   const [roots, setRoots] = useState<FileRoot[]>([]);
   // Undefined waits for the configured default; null is the user's All files view.
   const [location, setLocation] = useState<FileRef | null>();
@@ -158,7 +159,7 @@ export function WorkspaceFiles({ coworkerId, name, initialRoot, onClose }: { cow
         const trashed = result.trashed ?? result.deleted;
         if (result.deleted.length) setNotice([
           folders.length ? `Permanently deleted ${folders.length} ${folders.length === 1 ? 'folder and all its contents' : 'folders and all their contents'}.` : '',
-          trashed.length ? `Moved ${trashed.length} ${trashed.length === 1 ? 'file' : 'files'} to ${window.coworker.platform === 'win32' ? 'Recycle Bin' : 'Trash'}.` : '',
+          trashed.length ? `Moved ${trashed.length} ${trashed.length === 1 ? 'file' : 'files'} to ${recycle}.` : '',
         ].filter(Boolean).join(' '));
         if (result.errors.length) setError(result.errors.map(error => `${error.ref.path}: ${error.message}`).join('\n'));
       }
@@ -211,7 +212,7 @@ export function WorkspaceFiles({ coworkerId, name, initialRoot, onClose }: { cow
                 <button type="button" disabled={busy || entry.type === 'symlink'} onClick={() => void act(() => window.coworker.files.open(coworkerId, ref))}>Open</button>
                 <button type="button" disabled={busy || entry.type === 'symlink'} onClick={() => void act(() => window.coworker.files.reveal(coworkerId, ref))}>Reveal</button>
                 {entry.type === 'file' && <button type="button" disabled={busy} onClick={() => void act(() => window.coworker.files.download(coworkerId, ref))}>Download</button>}
-                {entry.type !== 'symlink' && <button type="button" className="workspace-delete" title={canDelete(entry) ? (entry.type === 'directory' ? 'Permanently delete folder and all contents' : 'Move file to Trash') : 'Write access is required; managed memory files are protected'} aria-label={`Delete ${entry.name}`} disabled={busy || !canDelete(entry)} onClick={() => void remove([ref])}><Icon name="trash" /></button>}
+                {entry.type !== 'symlink' && <button type="button" className="workspace-delete" title={canDelete(entry) ? (entry.type === 'directory' ? 'Permanently delete folder and all contents' : `Move file to ${recycle}`) : 'Write access is required; managed memory files are protected'} aria-label={`Delete ${entry.name}`} disabled={busy || !canDelete(entry)} onClick={() => void remove([ref])}><Icon name="trash" /></button>}
               </div>;
             })}
           </div>}

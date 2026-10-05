@@ -67,7 +67,7 @@ it('browses the folder tree and exports same-named files from separate roots wit
   await screen.findByText('No files match your search.');
 });
 
-it('deletes in place across entity/focus events and preserves remaining selection, preview, and list position', async () => {
+it.each([['darwin', 'Trash'], ['win32', 'Recycle Bin'], ['linux', 'Trash']])('deletes in place on %s with consistent %s labels and preserves selection, preview, and list position', async (platform, recycle) => {
   let notify = (_event: { type: string; entity: string }) => {};
   let finishRefresh!: (entries: FileEntry[]) => void;
   const backgroundRead = new Promise<FileEntry[]>(resolve => { finishRefresh = resolve; });
@@ -79,7 +79,7 @@ it('deletes in place across entity/focus events and preserves remaining selectio
     return { cancelled: false, deleted: [{ root: 'workspace', path: 'gone.txt' }], errors: [] };
   });
   Object.defineProperty(window, 'coworker', { configurable: true, value: {
-    platform: 'darwin',
+    platform,
     files: {
       roots: async () => [roots[0]],
       list: async () => deleting ? backgroundRead : [entry('gone.txt'), entry('keep.txt')],
@@ -96,8 +96,11 @@ it('deletes in place across entity/focus events and preserves remaining selectio
   const listNode = document.querySelector('.workspace-file-list');
   const content = document.querySelector('.workspace-files-content')!;
   content.scrollTop = 140;
-  fireEvent.click(screen.getByRole('button', { name: 'Delete gone.txt' }));
-  fireEvent.click(await screen.findByRole('button', { name: 'Move to Trash' }));
+  const deleteButton = screen.getByRole('button', { name: 'Delete gone.txt' });
+  expect(deleteButton.title).toBe(`Move file to ${recycle}`);
+  fireEvent.click(deleteButton);
+  const confirmation = await screen.findByRole('alertdialog', { name: `Move file to ${recycle}?` });
+  fireEvent.click(within(confirmation).getByRole('button', { name: `Move to ${recycle}` }));
   await waitFor(() => expect(screen.queryByRole('button', { name: 'Delete gone.txt' })).toBeNull());
   expect(screen.queryByText('Loading files…')).toBeNull();
   expect(document.querySelector('.workspace-file-list')).toBe(listNode);
@@ -105,7 +108,7 @@ it('deletes in place across entity/focus events and preserves remaining selectio
   expect(screen.getByText('Keep this preview')).toBeTruthy();
   expect((screen.getByRole('checkbox', { name: 'Select keep.txt' }) as HTMLInputElement).checked).toBe(true);
   finishRefresh([entry('keep.txt')]);
-  await screen.findByText('Moved 1 file to Trash.');
+  await screen.findByText(`Moved 1 file to ${recycle}.`);
   expect(document.querySelector('.workspace-file-list')).toBe(listNode);
   expect(screen.getByText('Keep this preview')).toBeTruthy();
 });

@@ -1,7 +1,7 @@
 import { deleteWorkFiles } from '@main/integrations/delete-work-files';
 import { mkdtemp, mkdir, readFile, rm, symlink, writeFile, stat, rename, readdir, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import JSZip from 'jszip';
 import { CoworkerDatabase } from '@main/db/database';
@@ -42,7 +42,7 @@ it('defaults document and invoice exports to the configured output folder while 
   expect((await readFile(join(f.output, 'poem.pdf'))).subarray(0, 5).toString()).toBe('%PDF-');
   await expect(stat(join(f.workspace, 'poem.pdf'))).rejects.toMatchObject({ code: 'ENOENT' });
   expect(f.db.listArtifacts()[0]!.filePath).toBe(join(await realpath(f.output), 'poem.pdf'));
-  expect(JSON.stringify(result)).toContain(join(await realpath(f.output), 'poem.pdf'));
+  expect(result).toMatchObject({ kind: 'completed', result: { files: [{ path: join(await realpath(f.output), 'poem.pdf') }] } });
   await request('documents.export', { ...pdf, root: 'workspace' });
   expect((await stat(join(f.workspace, 'poem.pdf'))).isFile()).toBe(true);
   await writeFile(join(f.workspace, 'source.md'), '# Source\n\nFrom the workspace.');
@@ -51,7 +51,7 @@ it('defaults document and invoice exports to the configured output folder while 
   const invoice = await request('invoice.create', { client: 'Acme', lineItems: [{ description: 'Services', quantity: 1, rate: 10 }], format: 'pdf' });
   expect(invoice.kind).toBe('completed');
   const savedInvoice = f.db.listArtifacts().find(a => a.name.startsWith('INV-'))!;
-  expect(savedInvoice.filePath.startsWith(join(await realpath(f.output), 'invoices') + '/')).toBe(true);
+  expect(dirname(savedInvoice.filePath)).toBe(join(await realpath(f.output), 'invoices'));
   expect((await readFile(savedInvoice.filePath)).subarray(0, 5).toString()).toBe('%PDF-');
   await expect(request('documents.export', { ...pdf, root: f.read })).rejects.toThrow('read-only');
   // An unavailable configured folder must fail, never silently fall back to Workspace.
