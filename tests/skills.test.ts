@@ -54,11 +54,13 @@ describe("Agent Skills support", () => {
     expect(parseSkillMarkdown(bundledFolderAccessSkill.content)).toMatchObject({
       name: "folder-access",
       description: expect.stringContaining(
-        "Do not use for files in the coworker workspace",
+        "workspace-only operations",
       ),
     });
     expect(bundledFolderAccessSkill.bundled).toBe(true);
-    expect(bundledFolderAccessSkill.content).toContain("strictly read-only");
+    expect(bundledFolderAccessSkill.content).toContain("read-only grants allow reading only");
+    expect(bundledFolderAccessSkill.description).toContain("file deletion");
+    expect(bundledFolderAccessSkill.content).toContain("then confirm the listed paths");
   });
 
   it("seeds and enables the bundled authoring skill for existing coworkers", async () => {

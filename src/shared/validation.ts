@@ -73,6 +73,7 @@ export const createCoworkerSchema = z.object({
   enabledTools: z.array(z.string().min(1).max(128)).max(50),
   enabledSkillIds: z.array(identifier).max(100).optional(),
   policies: policyRecord.optional(),
+  sharedFolderGrants: z.array(z.object({ path: z.string().trim().min(1).max(1000), access: z.enum(["read", "read-write"]), defaultOutput: z.boolean().optional() })).max(20).optional(),
   sharedFolderPaths: z.array(z.string().trim().min(1).max(1_000)).max(20).optional(),
 });
 

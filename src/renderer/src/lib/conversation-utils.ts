@@ -5,6 +5,8 @@ export interface LiveResponse {
   coworkerId: string;
   taskId: string;
   content: string;
+  messageId?: string;
+  activity?: Record<string, {name: string; done: boolean}>;
   status: "queued" | "running" | "failed";
   error?: string;
 }
@@ -19,6 +21,15 @@ export function updateLiveResponses(
     content: "",
     status: "queued" as const,
   };
+  if (input.event.type === EventType.TEXT_MESSAGE_START) {
+    return { ...current, [input.runId]: { ...existing, messageId: String(input.event["messageId"]), content: "", status: "running" } };
+  }
+  if ([EventType.TOOL_CALL_START, EventType.TOOL_CALL_END].includes(input.event.type as EventType.TOOL_CALL_START)) {
+    const id = String(input.event["toolCallId"] ?? "tool");
+    const activity = { ...existing.activity };
+    activity[id] = { name: String(input.event["toolCallName"] ?? activity[id]?.name ?? "Tool"), done: input.event.type === EventType.TOOL_CALL_END };
+    return { ...current, [input.runId]: { ...existing, activity, status: "running" } };
+  }
   if (input.event.type === EventType.TEXT_MESSAGE_CONTENT && "delta" in input.event) {
     return {
       ...current,

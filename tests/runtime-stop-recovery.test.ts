@@ -109,6 +109,7 @@ function managerFor(
     onTaskCompleted,
     emit: (event) => events.push(event),
     idleTimeoutMs: 60_000,
+    allowTestModel: true,
     workerFactory: () => {
       const worker = new FakeWorker();
       workers.push(worker);
@@ -379,6 +380,7 @@ describe("runtime stop recovery", () => {
     const service = new DesktopAppService({
       dataPath: root,
       credentials: new MemoryCredentialStore(),
+      allowTestModel: true,
       workerFactory: () => {
         const worker = new FakeWorker();
         workers.push(worker);
@@ -455,6 +457,7 @@ describe("runtime stop recovery", () => {
     const service = new DesktopAppService({
       dataPath: root,
       credentials: new MemoryCredentialStore(),
+      allowTestModel: true,
       workerFactory: () => {
         const worker = new FakeWorker();
         workers.push(worker);

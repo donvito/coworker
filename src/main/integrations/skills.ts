@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { isIP } from "node:net";
 import { extname, join } from "node:path";
 import JSZip from "jszip";
@@ -40,6 +40,15 @@ function loadBundledSkill(folderName: string, id: string) {
     ...parseSkillMarkdown(content),
     sourceUrl: null,
     bundled: true,
+    resources: ["scripts", "references", "resources", "assets"].flatMap(directory => {
+      const root = join(path, "..", directory);
+      if (!existsSync(root)) return [];
+      return readdirSync(root, { recursive: true, withFileTypes: true }).filter(entry => entry.isFile()).map(entry => {
+        const absolute = join(entry.parentPath, entry.name);
+        const relativePath = absolute.slice(join(path, "..").length + 1).replaceAll("\\", "/");
+        return { path: relativePath, mimeType: resourceMimeType(relativePath), content: readFileSync(absolute) };
+      });
+    }),
   } as const;
 }
 
@@ -266,6 +275,7 @@ export const bundledPrimaryCoordinatorSkill = loadBundledSkill(
 );
 
 export const bundledSkills = [
+  loadBundledSkill("file-archiving", "bundled:file-archiving"),
   loadBundledSkill("coworker-memory", "bundled:coworker-memory"),
   loadBundledSkill("coworker-administration", "bundled:coworker-administration"),
   bundledWebSearchSkill,

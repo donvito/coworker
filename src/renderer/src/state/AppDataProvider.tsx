@@ -1,3 +1,4 @@
+import { startConversationEvents } from "../copilot/conversation-store";
 import {
   createContext,
   useCallback,
@@ -40,6 +41,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
+    startConversationEvents();
     void refresh();
     return window.coworker.events.subscribe((event) => {
       setLastEvent(event);

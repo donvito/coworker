@@ -10,7 +10,7 @@ export const maxExtractedCharacters = 400_000;
 export interface DocumentTextContent {
   kind: "text";
   name: string;
-  format: "text" | "pdf" | "docx" | "xlsx";
+  format: "text" | "pdf" | "docx" | "xlsx" | "pptx";
   content: string;
   truncated: boolean;
   totalPages?: number;
@@ -112,6 +112,21 @@ async function readXlsx(name: string, buffer: Buffer): Promise<DocumentTextConte
   return { kind: "text", name, format: "xlsx", ...truncated(lines.join("\n").trim()) };
 }
 
+async function readPptx(name: string, buffer: Buffer): Promise<DocumentTextContent> {
+  const zip = await JSZip.loadAsync(buffer);
+  const names = Object.keys(zip.files).filter(path => /^ppt\/slides\/slide\d+\.xml$/.test(path)).sort((a,b) => Number(a.match(/slide(\d+)/)?.[1]) - Number(b.match(/slide(\d+)/)?.[1]));
+  if (!names.length) throw new Error(`${name} is not a readable PowerPoint presentation`);
+  const lines: string[] = []; let length = 0;
+  for (const path of names) {
+    const xml = await zip.file(path)!.async('string');
+    const text = [...xml.matchAll(/<a:t(?:\s[^>]*)?>([\s\S]*?)<\/a:t>/g)].map(match => decodeXmlEntities(match[1] ?? '')).join('\n');
+    lines.push(`# Slide ${path.match(/slide(\d+)/)?.[1]}\n${text}`);
+    length += text.length;
+    if (length > maxExtractedCharacters) break;
+  }
+  return { kind: 'text', name, format: 'pptx', ...truncated(lines.join('\n\n')) };
+}
+
 async function readPdf(name: string, buffer: Buffer): Promise<DocumentTextContent> {
   const { totalPages, text } = await extractText(new Uint8Array(buffer), { mergePages: true });
   return { kind: "text", name, format: "pdf", totalPages, ...truncated(text.trim()) };
@@ -166,7 +181,7 @@ export async function readDocumentText(path: string): Promise<DocumentTextResult
   }
   const extension = extname(name).toLowerCase();
   if (stats.size > maxDocumentBytes) {
-    if (extension === ".pdf" || extension === ".docx" || extension === ".xlsx" || knownTextExtensions.has(extension)) {
+    if (extension === ".pdf" || extension === ".docx" || extension === ".xlsx" || extension === ".pptx" || knownTextExtensions.has(extension)) {
       throw new Error(`${name} is larger than ${Math.round(maxDocumentBytes / 1_000_000)} MB and cannot be read`);
     }
     return {
@@ -182,6 +197,7 @@ export async function readDocumentText(path: string): Promise<DocumentTextResult
   if (extension === ".pdf") return readPdf(name, buffer);
   if (extension === ".docx") return readDocx(name, buffer);
   if (extension === ".xlsx") return readXlsx(name, buffer);
+  if (extension === ".pptx") return readPptx(name, buffer);
 
   const text = decodeText(buffer);
   if (text !== null) {

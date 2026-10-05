@@ -17,6 +17,7 @@ import type { ProviderErrorSink } from "./provider-error-logger";
 import { loadWorkspaceContext } from "@main/tools/workspace-text";
 import { requestContextForTask } from "@shared/request-context";
 import { messagingCandidates } from "@main/integrations/integration-selection";
+import { hasConfiguredModel, modelNotConfiguredMessage } from "@shared/model-configuration";
 
 interface RuntimeRecord {
   coworkerId: string;
@@ -42,6 +43,8 @@ interface RuntimeRecord {
 }
 
 export interface CoworkerRuntimeManagerOptions {
+  /** Explicit fixture opt-in for tests and evaluation harnesses; never enabled by the app. */
+  allowTestModel?: boolean;
   database: CoworkerDatabase;
   tools: ToolGateway;
   credentials: CredentialStore;
@@ -87,6 +90,9 @@ export class CoworkerRuntimeManager {
       return;
     }
     const coworker = this.options.database.getCoworker(coworkerId);
+    if (!hasConfiguredModel(coworker) && !(coworker.modelProvider === "demo" && this.options.allowTestModel)) {
+      throw new Error(modelNotConfiguredMessage);
+    }
     if (coworker.status !== "active") throw new Error(`${coworker.name} is paused`);
     this.setStatus(coworkerId, "STARTING");
 
@@ -170,6 +176,7 @@ export class CoworkerRuntimeManager {
       );
       if (!this.isLiveRuntime(coworkerId, record)) return;
       const config: WorkerCoworkerConfig = {
+        allowTestModel: this.options.allowTestModel === true,
         coworker,
         globalOperatingInstructions:
           this.options.database.getSettings().globalOperatingInstructions,
@@ -704,7 +711,7 @@ export class CoworkerRuntimeManager {
           taskId,
           role: "assistant",
           content: buffer.content,
-        });
+        }, buffer.id);
       }
       this.messageBuffers.delete(runId);
       this.options.emit({ type: "entity.changed", entity: "activity" });

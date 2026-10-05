@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { Coworker, Skill } from "@shared/contracts";
+import type { Coworker, Skill, UpdateCoworkerInput } from "@shared/contracts";
 import { Icon } from "./Icon";
 
 function folderDisplayName(path: string): string {
@@ -26,9 +26,17 @@ export function ComposerTools({
   const [open, setOpen] = useState<"folders" | "skills" | null>(null);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pendingPaths, setPendingPaths] = useState<string[]>([]);
+  const [pendingAccess, setPendingAccess] = useState<"read" | "read-write">("read");
+  const [pendingOutput, setPendingOutput] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
   const folderPaths = coworker.sharedFolders.map((folder) => folder.path);
+  const grants = coworker.sharedFolders.map(folder => ({
+    path: folder.path,
+    access: folder.access ?? "read",
+    defaultOutput: folder.defaultOutput ?? false,
+  }));
   const enabledSkills = skills.filter((skill) =>
     coworker.enabledSkillIds.includes(skill.id),
   );
@@ -49,28 +57,43 @@ export function ComposerTools({
     };
   }, [open]);
 
-  async function save(patch: { sharedFolderPaths?: string[]; enabledSkillIds?: string[] }) {
+  async function save(patch: UpdateCoworkerInput) {
     setWorking(true);
     setError(null);
     try {
       await window.coworker.coworkers.update(coworker.id, patch);
       await onChanged();
+      return true;
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : String(saveError));
+      return false;
     } finally {
       setWorking(false);
     }
   }
 
   async function addFolders() {
+    setWorking(true);
     setError(null);
     try {
       const picked = await window.coworker.folders.pick();
       if (picked.length === 0) return;
-      await save({ sharedFolderPaths: [...new Set([...folderPaths, ...picked])] });
+      setPendingPaths([...new Set(picked)].filter(path => !folderPaths.includes(path)));
+      setPendingAccess("read");
+      setPendingOutput(false);
     } catch (pickError) {
       setError(pickError instanceof Error ? pickError.message : String(pickError));
+    } finally {
+      setWorking(false);
     }
+  }
+
+  async function grantFolders() {
+    const useOutput = pendingAccess === "read-write" && pendingOutput && pendingPaths.length === 1;
+    if (await save({ sharedFolderGrants: [
+      ...grants.map(folder => ({ ...folder, defaultOutput: useOutput ? false : folder.defaultOutput })),
+      ...pendingPaths.map(path => ({ path, access: pendingAccess, defaultOutput: useOutput })),
+    ] })) setPendingPaths([]);
   }
 
   async function toggleSkill(skill: Skill, enabled: boolean) {
@@ -109,21 +132,35 @@ export function ComposerTools({
           <span>{folderLabel}</span>
         </button>
         {open === "folders" ? (
-          <div className="composer-tool-popover" role="dialog" aria-label="Folder access">
-            <header>
-              <strong>Folder access</strong>
-              <small>Read-only — nothing in them can be changed.</small>
-            </header>
-            {folderPaths.length === 0 ? (
+          <div className={`composer-tool-popover composer-folder-popover${pendingPaths.length > 0 ? " has-pending-folder" : ""}`} role="dialog" aria-label="Folder access">
+            {pendingPaths.length === 0 ? <header><strong>Folder access</strong></header> : null}
+            {pendingPaths.length > 0 ? null : folderPaths.length === 0 ? (
               <p className="composer-tool-empty">No folders yet.</p>
             ) : (
               <ul className="composer-tool-list">
                 {coworker.sharedFolders.map((folder) => (
-                  <li key={folder.path}>
+                  <li key={folder.path} className="composer-folder-row">
                     <Icon name="folder" />
                     <span>
                       <strong>{folder.alias ?? folderDisplayName(folder.path)}</strong>
                       <small title={folder.path}>{folder.path}</small>
+                      <span className="composer-folder-access-options composer-folder-saved-access" role="radiogroup" aria-label={`Access for ${folder.path}`}>
+                        {(["read", "read-write"] as const).map(access => <label key={access} className={(folder.access ?? "read") === access ? "selected" : ""}>
+                          <input type="radio" name={`folder-access-${folder.path}`} checked={(folder.access ?? "read") === access} disabled={working}
+                            onChange={() => void save({ sharedFolderGrants: grants.map(grant => grant.path === folder.path
+                              ? { ...grant, access, defaultOutput: access === "read-write" && grant.defaultOutput }
+                              : grant) })} />
+                          <span><strong>{access === "read" ? "Read-only" : "Read and write"}</strong></span>
+                        </label>)}
+                      </span>
+                      {folder.access === "read-write" ? <label className="composer-folder-option">
+                        <input type="checkbox" checked={folder.defaultOutput ?? false} disabled={working}
+                          aria-label={`Use ${folder.path} for output`}
+                          onChange={event => void save({ sharedFolderGrants: grants.map(grant => ({ ...grant,
+                            defaultOutput: event.target.checked ? grant.path === folder.path : false,
+                          })) })} />
+                        Default output folder
+                      </label> : null}
                     </span>
                     <button
                       aria-label={`Remove folder ${folder.path}`}
@@ -131,9 +168,7 @@ export function ComposerTools({
                       disabled={working}
                       onClick={() =>
                         void save({
-                          sharedFolderPaths: folderPaths.filter(
-                            (path) => path !== folder.path,
-                          ),
+                          sharedFolderGrants: grants.filter(grant => grant.path !== folder.path),
                         })
                       }
                       type="button"
@@ -144,7 +179,32 @@ export function ComposerTools({
                 ))}
               </ul>
             )}
-            <button
+            {pendingPaths.length > 0 ? <div className="composer-folder-pending">
+              <div className="composer-folder-heading">
+              <strong>Add folder</strong>
+              <div className="composer-folder-selection">
+                {pendingPaths.map(path => <div className="composer-folder-identity" key={path}>
+                  <Icon name="folder" />
+                  <span><strong>{folderDisplayName(path)}</strong><small title={path}>{path}</small></span>
+                </div>)}
+              </div>
+              </div>
+              <div className="composer-folder-access-options" role="radiogroup" aria-label="Access for selected folders">
+                {(["read", "read-write"] as const).map(access => <label key={access} className={pendingAccess === access ? "selected" : ""}>
+                  <input type="radio" name="new-folder-access" value={access} checked={pendingAccess === access} disabled={working}
+                    onChange={() => { setPendingAccess(access); setPendingOutput(false); }} />
+                  <span><strong>{access === "read" ? "Read-only" : "Read and write"}</strong></span>
+                </label>)}
+              </div>
+              <div className="composer-folder-footer">
+              {pendingAccess === "read-write" && pendingPaths.length === 1 ? <label className="composer-folder-option composer-folder-output">
+                <input type="checkbox" aria-label="Default output folder" checked={pendingOutput} disabled={working} onChange={event => setPendingOutput(event.target.checked)} />
+                Save new files here
+              </label> : null}
+                <button className="composer-folder-cancel" disabled={working} onClick={() => setPendingPaths([])} type="button">Cancel</button>
+                <button className="primary-button" disabled={working} onClick={() => void grantFolders()} type="button">{working ? "Adding…" : "Grant access"}</button>
+              </div>
+            </div> : <button
               className="composer-tool-action"
               disabled={working}
               onClick={() => void addFolders()}
@@ -152,7 +212,7 @@ export function ComposerTools({
             >
               <Icon name="plus" />
               Add folder…
-            </button>
+            </button>}
             {error ? <p className="composer-tool-error">{error}</p> : null}
           </div>
         ) : null}

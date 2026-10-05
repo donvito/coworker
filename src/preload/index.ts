@@ -31,6 +31,17 @@ const api: DesktopApi = {
     clearProfile: (coworkerId) =>
       ipcRenderer.invoke(ipcChannels.browserClearProfile, coworkerId),
   },
+  files: {
+    list: (id, ref) => ipcRenderer.invoke(ipcChannels.filesList, id, ref),
+    preview: (id, ref) => ipcRenderer.invoke(ipcChannels.filesPreview, id, ref),
+    open: (id, ref) => ipcRenderer.invoke(ipcChannels.filesOpen, id, ref),
+    reveal: (id, ref) => ipcRenderer.invoke(ipcChannels.filesReveal, id, ref),
+    download: (id, ref) => ipcRenderer.invoke(ipcChannels.filesDownload, id, ref),
+    zip: (id, ref) => ipcRenderer.invoke(ipcChannels.filesZip, id, ref),
+    prepareDelete: (id, refs) => ipcRenderer.invoke(ipcChannels.filesPrepareDelete, id, refs),
+    delete: (id, token, confirmed) => ipcRenderer.invoke(ipcChannels.filesDelete, id, token, confirmed),
+    roots: id => ipcRenderer.invoke(ipcChannels.filesRoots, id),
+  },
   folders: {
     pick: () => ipcRenderer.invoke(ipcChannels.foldersPick),
     reveal: (coworkerId, path) =>
@@ -68,6 +79,7 @@ const api: DesktopApi = {
     decide: (input) => ipcRenderer.invoke(ipcChannels.approvalsDecide, input),
   },
   artifacts: {
+    status: (id) => ipcRenderer.invoke(ipcChannels.artifactsStatus, id),
     open: (id) => ipcRenderer.invoke(ipcChannels.artifactsOpen, id),
     download: (id) => ipcRenderer.invoke(ipcChannels.artifactsDownload, id),
     remove: (id) => ipcRenderer.invoke(ipcChannels.artifactsRemove, id),
@@ -143,6 +155,7 @@ const api: DesktopApi = {
     remove: (id) => ipcRenderer.invoke(ipcChannels.skillsRemove, id),
   },
   agents: {
+    snapshot: () => ipcRenderer.invoke(ipcChannels.agentsSnapshot),
     run: (request) => ipcRenderer.invoke(ipcChannels.agentsRun, request),
     abort: (coworkerId, runId) =>
       ipcRenderer.invoke(ipcChannels.agentsAbort, coworkerId, runId),

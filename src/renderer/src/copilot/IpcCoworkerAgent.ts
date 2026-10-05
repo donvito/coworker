@@ -37,6 +37,7 @@ function compactImageHistory(input: RunAgentInput): RunAgentInput {
 }
 
 export class IpcCoworkerAgent extends AbstractAgent {
+  private readonly observedSequences = new Map<string, number>();
   private activeRunId: string | null = null;
 
   /** True while a run started from this surface is still streaming events. */
@@ -45,8 +46,9 @@ export class IpcCoworkerAgent extends AbstractAgent {
   }
 
   /** Whether an AG-UI run is already being rendered by this agent instance. */
-  ownsRun(runId: string): boolean {
-    return this.activeRunId === runId;
+  ownsRun(runId: string, sequence?: number): boolean {
+    return this.activeRunId === runId ||
+      (sequence !== undefined && sequence <= (this.observedSequences.get(runId) ?? -1));
   }
 
   constructor(
@@ -72,6 +74,7 @@ export class IpcCoworkerAgent extends AbstractAgent {
         ) {
           return;
         }
+        if (message.sequence !== undefined) this.observedSequences.set(input.runId, message.sequence);
         subscriber.next(message.event);
         if (
           message.event.type === EventType.RUN_FINISHED ||
@@ -111,14 +114,7 @@ export class IpcCoworkerAgent extends AbstractAgent {
   }
 
   override clone(): IpcCoworkerAgent {
-    return new IpcCoworkerAgent(this.coworkerId, {
-      agentId: this.agentId,
-      description: this.description,
-      threadId: this.threadId,
-      initialMessages: this.messages,
-      initialState: this.state,
-      debug: this.debug,
-    });
+    return this; // One application-owned agent per conversation; view mounts do not own its run.
   }
 
   override async getCapabilities(): Promise<AgentCapabilities> {

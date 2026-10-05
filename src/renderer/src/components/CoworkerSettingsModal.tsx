@@ -56,6 +56,8 @@ export function CoworkerSettingsModal({
   const [sharedFolderPaths, setSharedFolderPaths] = useState(
     coworker.sharedFolders.map((folder) => folder.path),
   );
+  const [writablePaths, setWritablePaths] = useState(coworker.sharedFolders.filter(f => f.access === "read-write").map(f => f.path));
+  const [outputPath, setOutputPath] = useState(coworker.sharedFolders.find(f => f.defaultOutput)?.path ?? "");
   const savedFolderPaths = new Set(coworker.sharedFolders.map((folder) => folder.path));
 
   async function savePhoto(photo: string | null) {
@@ -138,7 +140,7 @@ export function CoworkerSettingsModal({
         tags,
         isPrimary,
         enabledSkillIds,
-        sharedFolderPaths,
+        sharedFolderGrants: sharedFolderPaths.map(path => ({ path, access: writablePaths.includes(path) ? "read-write" : "read", defaultOutput: outputPath === path && writablePaths.includes(path) })),
         ...modelPatch,
       });
       await onChanged();
@@ -291,8 +293,7 @@ export function CoworkerSettingsModal({
           <fieldset className="folder-picker">
             <legend>Folder access</legend>
             <small>
-              Read-only folders on this computer that {coworker.name} can browse and read.
-              Coworkers can never create, change, or delete anything in them.
+              Choose folders that {coworker.name} can browse. Enable write access to create work files there.
             </small>
             {sharedFolderPaths.length === 0 ? (
               <p className="folder-picker-empty">No folders granted yet.</p>
@@ -310,6 +311,11 @@ export function CoworkerSettingsModal({
                         <strong>{alias ?? folderDisplayName(path)}</strong>
                         <small title={path}>{path}</small>
                       </span>
+                      <label><input type="checkbox" checked={writablePaths.includes(path)} aria-label={`Allow writing to ${path}`} onChange={event => {
+                        setWritablePaths(current => event.target.checked ? [...current, path] : current.filter(p => p !== path));
+                        if (!event.target.checked && outputPath === path) setOutputPath("");
+                      }} />Allow writing</label>
+                      <label><input type="radio" name="outputFolder" checked={outputPath === path} disabled={!writablePaths.includes(path)} aria-label={`Use ${path} for output`} onChange={() => setOutputPath(path)} />Default output</label>
                       {saved ? (
                         <button
                           className="text-button"
@@ -340,6 +346,7 @@ export function CoworkerSettingsModal({
                 })}
               </ul>
             )}
+            <label><input type="radio" name="outputFolder" checked={!outputPath} onChange={() => setOutputPath("")} />Use internal workspace for output</label>
             <button
               className="secondary-button"
               disabled={working}

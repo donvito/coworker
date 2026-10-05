@@ -1,0 +1,271 @@
+// Real desktop acceptance test: always creates fresh app data and sibling file fixtures.
+import assert from 'node:assert/strict';
+import { mkdir, mkdtemp, readFile, writeFile, realpath, readdir, stat, unlink } from 'node:fs/promises';
+import { createServer } from 'node:http';
+import { createRequire } from 'node:module';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
+import { _electron } from 'playwright';
+import JSZip from 'jszip';
+const root = await realpath(await mkdtemp(join(tmpdir(),'coworker-files-smoke-')));
+const dataPath = join(root,'app-data');
+const inputs = join(root,'read-only-inputs');
+const outputs = join(root,'writable-output');
+const downloads = join(root,'downloads');
+await Promise.all([mkdir(inputs),mkdir(outputs),mkdir(downloads)]);
+await mkdir(join(inputs,'reports','empty'),{recursive:true});
+await writeFile(join(inputs,'reports','notes.txt'),'Fresh folder fixture.');
+await writeFile(join(inputs,'reports','binary.bin'),Buffer.from([0,1,2,255]));
+console.log(`Fresh test folder: ${root}`);
+let requests = 0;
+let outputRoot;
+let leaks = 0;
+let defaultOutputRequested = false;
+const server = createServer(async (req,res) => {
+  if(req.url.includes('/leak')) leaks++;
+  if(req.method === 'GET') { res.setHeader('content-type','application/json'); res.end(JSON.stringify({data:[{id:'fixture-model',object:'model',owned_by:'local'}]})); return; }
+  let body=''; for await(const chunk of req) body += chunk;
+  const request = JSON.parse(body); requests++;
+  res.setHeader('content-type','text/event-stream');
+  const chunk = (delta,finish_reason=null) => res.write(`data: ${JSON.stringify({id:'fixture-'+requests,object:'chat.completion.chunk',created:1,model:'fixture-model',choices:[{index:0,delta,finish_reason}]})}\n\n`);
+  const lastUserIndex = request.messages.findLastIndex(m => m.role === 'user');
+  const lastContent = JSON.stringify(request.messages[lastUserIndex]?.content ?? '');
+  const latestUser = lastContent.includes('The human approved skills.run') && lastContent.includes('report.json') ? 'JSON-SCENARIO approved' : lastContent;
+  const hasTool = latestUser.includes('approved') || request.messages.slice(lastUserIndex).some(m => m.role === 'tool');
+  if (latestUser.includes('DEFAULT-OUTPUT-SCENARIO') && !defaultOutputRequested) {
+    defaultOutputRequested = true;
+    chunk({role:'assistant',tool_calls:[{index:0,id:'default-output-call',type:'function',function:{name:'documents_export',arguments:JSON.stringify({name:'default-output-poem',content:'# A Small Light\n\nA short poem.',formats:['pdf']})}}]});
+    chunk({},'tool_calls');res.end('data: [DONE]\n\n');return;
+  }
+  if (latestUser.includes('FILE-STATUS-SCENARIO') && !hasTool) {
+    chunk({role:'assistant',tool_calls:[{index:0,id:'status-call',type:'function',function:{name:'files_write',arguments:JSON.stringify({root:outputRoot,path:'status-fixture.txt',content:'Disposable status fixture'})}}]});
+    chunk({},'tool_calls');res.end('data: [DONE]\n\n');return;
+  }
+  if (latestUser.includes('SANDBOX-SCENARIO') && !hasTool) {
+    chunk({role:'assistant',tool_calls:[{index:0,id:'probe-call',type:'function',function:{name:'skills_run',arguments:JSON.stringify({skill:'sandbox-probe',script:'scripts/probe.js',inputs:[],destination:{root:outputRoot,path:'sandbox.json'},options:{}})}}]});
+    chunk({},'tool_calls');res.end('data: [DONE]\n\n');return;
+  }
+  if (latestUser.includes('JSON-SCENARIO') && !hasTool) {
+    chunk({role:'assistant',tool_calls:[{index:0,id:'json-call',type:'function',function:{name:'skills_run',arguments:JSON.stringify({skill:'document-authoring',script:'scripts/text-formats.js',inputs:[],destination:{root:outputRoot,path:'report.json'},options:{format:'json',content:{verified:true}}})}}]});
+    chunk({},'tool_calls');res.end('data: [DONE]\n\n');return;
+  }
+  if (hasTool && latestUser.includes('JSON-SCENARIO')) await delay(1800);
+  chunk({role:'assistant',content:''});
+  const text = latestUser.includes('DEFAULT-OUTPUT-SCENARIO') ? 'DEFAULT-OUTPUT-DONE' : latestUser.includes('FILE-STATUS-SCENARIO') ? 'FILE-STATUS-DONE' : latestUser.includes('SANDBOX-SCENARIO') ? 'SANDBOX-DONE' : latestUser.includes('JSON-SCENARIO') ? 'JSON-DONE' : 'START-OF-REPLY ' + 'Working through the report. '.repeat(12) + ' END-OF-REPLY';
+  for(const part of text.match(/.{1,18}/g) ?? []) { if(res.destroyed) return; chunk({content:part}); await delay(120); }
+  chunk({},'stop'); res.end('data: [DONE]\n\n');
+});
+await new Promise(resolve => server.listen(0,'127.0.0.1',resolve));
+const require = createRequire(import.meta.url);
+const env = {...process.env,COWORKER_DATA_PATH:dataPath}; delete env.ELECTRON_RUN_AS_NODE;
+let app; let page;
+async function waitForApi(predicate, argument) {
+  const deadline = Date.now() + 20000;
+  while (Date.now() < deadline) {
+    if (await page.evaluate(predicate, argument)) return;
+    await delay(100);
+  }
+  throw new Error('Timed out waiting for app state');
+}
+try {
+  app = await _electron.launch({executablePath:require('electron'),args:[resolve('.')],cwd:resolve('.'),env});
+  page = await app.firstWindow();
+  page.setDefaultTimeout(15000);
+  page.on('pageerror',e => console.log('PAGE ERROR',e.message));
+  await page.waitForFunction(() => !!window.coworker);
+  const snapshot = await page.evaluate(() => window.coworker.app.bootstrap());
+  assert.equal(snapshot.dataPath,dataPath);
+  assert.ok(snapshot.skills.some(s => s.name === 'file-archiving'));
+  const endpoint = await page.evaluate(baseUrl => window.coworker.integrations.addModelEndpoint({name:'Local fixture',baseUrl,apiKey:'fixture-only',defaultModelName:'fixture-model'}),`http://127.0.0.1:${server.address().port}/v1`);
+  const workers = await page.evaluate(async ({provider,inputs,outputs}) => {
+    const common = {role:'Acceptance test',systemPrompt:'Respond to the user.',modelProvider:provider,modelName:'fixture-model',enabledTools:['files.list','files.read','files.write','documents.export']};
+    const a = await window.coworker.coworkers.create({...common,name:'Fresh Alpha',sharedFolderGrants:[{path:inputs,access:'read'},{path:outputs,access:'read-write',defaultOutput:true}]});
+    const b = await window.coworker.coworkers.create({...common,name:'Fresh Beta'});
+    return {a,b};
+  },{provider:endpoint.provider,inputs,outputs});
+  await page.reload();
+  await page.getByRole('button',{name:'Coworkers',exact:true}).click();
+  await page.getByRole('navigation',{name:'Coworker conversations'}).getByText('Fresh Alpha',{exact:true}).first().click();
+  await page.getByRole('textbox',{name:'Message Fresh Alpha'}).fill('Please write a report.');
+  await page.getByRole('button',{name:'Send message',exact:true}).click();
+  await page.getByText(/START-OF-REPLY/).first().waitFor();
+  await page.getByRole('navigation',{name:'Coworker conversations'}).getByText('Fresh Beta',{exact:true}).first().click();
+  await page.getByRole('textbox',{name:'Message Fresh Beta'}).waitFor();
+  await page.getByRole('navigation',{name:'Coworker conversations'}).getByText('Fresh Alpha',{exact:true}).first().click();
+  await page.getByText(/START-OF-REPLY/).first().waitFor();
+  await page.getByText(/END-OF-REPLY/).first().waitFor({timeout:20000});
+  const replies = page.locator('[data-message-role="assistant"]').filter({hasText:'END-OF-REPLY'});
+  assert.equal(await replies.count(),1);
+  assert.match(await replies.innerText(),/START-OF-REPLY/);
+  console.log('PASS switch during live reply: text retained, no duplicate completion');
+  const roots = await page.evaluate(id => window.coworker.files.roots(id),workers.a.id);
+  const readRoot = roots.find(r => r.path === inputs).id;
+  assert.equal(roots.find(r => r.defaultOutput).path,outputs);
+  outputRoot = roots.find(r => r.defaultOutput).id;
+  await page.getByRole('button',{name:'Files',exact:true}).click();
+  await page.getByRole('navigation',{name:'Folders'}).getByRole('button',{name:roots.find(r => r.id === readRoot).name,exact:true}).click();
+  await page.locator('.workspace-file-name').filter({hasText:'reports'}).click();
+  await page.locator('.workspace-file-name').filter({hasText:'notes.txt'}).click();
+  await page.getByText('Fresh folder fixture.',{exact:true}).waitFor();
+  await app.evaluate(({dialog},path) => { dialog.showSaveDialog = async () => ({canceled:false,filePath:path}); },join(downloads,'bundle.zip'));
+  await page.getByRole('checkbox',{name:'Select notes.txt'}).check();
+  await page.getByRole('checkbox',{name:'Select binary.bin'}).check();
+  await page.getByRole('checkbox',{name:'Select empty'}).check();
+  await page.getByRole('button',{name:/Download ZIP/}).click();
+  await page.getByText(`Saved to ${join(downloads,'bundle.zip')}`,{exact:true}).waitFor({timeout:20000});
+  const zip = await JSZip.loadAsync(await readFile(join(downloads,'bundle.zip')));
+  assert.equal(await zip.file('reports/notes.txt').async('string'),'Fresh folder fixture.');
+  assert.ok(zip.file('reports/binary.bin'));
+  assert.ok(zip.files['reports/empty/']);
+  assert.deepEqual(await readdir(outputs), []);
+  assert.equal((await page.evaluate(() => window.coworker.app.bootstrap())).artifacts.length,0);
+  console.log('PASS ZIP saved only to chosen Downloads destination; no output-folder copy or artifact');
+  await app.evaluate(({dialog},path) => { dialog.showSaveDialog = async () => ({canceled:false,filePath:path}); },join(downloads,'notes.txt'));
+  await page.locator('.workspace-file-row').filter({hasText:'notes.txt'}).getByRole('button',{name:'Download',exact:true}).click();
+  await page.getByText(`Saved to ${join(downloads,'notes.txt')}`,{exact:true}).waitFor();
+  assert.equal(await readFile(join(downloads,'notes.txt'),'utf8'),'Fresh folder fixture.');
+  await page.getByRole('navigation',{name:'Folders'}).getByRole('button',{name:'All files',exact:true}).click();
+  await page.getByRole('checkbox',{name:'Select notes.txt'}).waitFor();
+  await app.evaluate(({dialog},path) => { dialog.showSaveDialog = async () => ({canceled:false,filePath:path}); },join(downloads,'all-files.zip'));
+  assert.equal(await page.getByRole('dialog',{name:'Fresh Alpha files'}).getByRole('combobox').count(),0);
+  await page.getByRole('checkbox',{name:'Select notes.txt'}).check();
+  await page.getByRole('checkbox',{name:'Select binary.bin'}).check();
+  await page.getByRole('button',{name:/Download ZIP/}).click();
+  await page.getByText(`Saved to ${join(downloads,'all-files.zip')}`,{exact:true}).waitFor();
+  const allZip = await JSZip.loadAsync(await readFile(join(downloads,'all-files.zip')));
+  assert.equal(await allZip.file('reports/notes.txt').async('string'),'Fresh folder fixture.');
+  console.log('PASS tree navigation and recursive All files ZIP export');
+  await writeFile(join(outputs,'delete-fixture.txt'),'Disposable test file');
+  await page.getByRole('button',{name:'Refresh',exact:true}).click();
+  const deleteFile = page.getByRole('button',{name:'Delete delete-fixture.txt',exact:true});
+  await deleteFile.waitFor();
+  await page.locator('.workspace-file-name').filter({hasText:'notes.txt'}).click();
+  await page.getByText('Fresh folder fixture.',{exact:true}).waitFor();
+  await page.evaluate(() => { window.fileListBeforeDelete = document.querySelector('.workspace-file-list'); });
+  assert.equal(await page.getByRole('button',{name:'Delete notes.txt',exact:true}).isDisabled(),true);
+  await deleteFile.click();
+  const fileDialog = page.getByRole('alertdialog',{name:'Move file to Trash?',exact:true});
+  await fileDialog.getByText(join(outputs,'delete-fixture.txt'),{exact:true}).waitFor();
+  assert.equal(await fileDialog.getByRole('button',{name:'Cancel',exact:true}).evaluate(element => document.activeElement === element),true);
+  await fileDialog.getByRole('button',{name:'Cancel',exact:true}).click();
+  assert.equal(await readFile(join(outputs,'delete-fixture.txt'),'utf8'),'Disposable test file');
+  await deleteFile.click();
+  await fileDialog.getByRole('button',{name:'Move to Trash',exact:true}).click();
+  await page.getByText('Moved 1 file to Trash.',{exact:true}).waitFor();
+  assert.equal(await page.evaluate(() => window.fileListBeforeDelete === document.querySelector('.workspace-file-list')),true);
+  await page.getByText('Fresh folder fixture.',{exact:true}).waitFor();
+  await assert.rejects(stat(join(outputs,'delete-fixture.txt')), {code:'ENOENT'});
+  assert.equal(await page.getByRole('button',{name:'Delete delete-fixture.txt',exact:true}).count(),0);
+  assert.deepEqual(await readdir(outputs),[]);
+  console.log('PASS deletion confirmation: cancel preserves file, confirm moves to Trash, read-only disabled');
+
+  await mkdir(join(outputs,'delete-folder-fixture','nested'),{recursive:true});
+  await writeFile(join(outputs,'delete-folder-fixture','nested','child.txt'),'Disposable nested file');
+  await page.getByRole('navigation',{name:'Folders'}).getByRole('button',{name:roots.find(r => r.id === outputRoot).name,exact:true}).click();
+  const deleteFolder = page.getByRole('button',{name:'Delete delete-folder-fixture',exact:true});
+  await deleteFolder.waitFor();
+  await deleteFolder.click();
+  const folderDialog = page.getByRole('alertdialog',{name:'Delete folder permanently?',exact:true});
+  await folderDialog.getByText('All files and subfolders inside will be permanently deleted and cannot be recovered.',{exact:true}).waitFor();
+  await folderDialog.getByText(join(outputs,'delete-folder-fixture'),{exact:true}).waitFor();
+  await page.screenshot({path:join(root,'folder-delete-confirmation.png')});
+  await folderDialog.getByRole('button',{name:'Cancel',exact:true}).click();
+  assert.equal(await readFile(join(outputs,'delete-folder-fixture','nested','child.txt'),'utf8'),'Disposable nested file');
+  await page.evaluate(() => { window.fileListBeforeFolderDelete = document.querySelector('.workspace-file-list'); });
+  await deleteFolder.click();
+  await folderDialog.getByRole('button',{name:'Delete permanently',exact:true}).click();
+  await page.getByText('Permanently deleted 1 folder and all its contents.',{exact:true}).waitFor();
+  await assert.rejects(stat(join(outputs,'delete-folder-fixture')),{code:'ENOENT'});
+  assert.equal(await page.evaluate(() => window.fileListBeforeFolderDelete === document.querySelector('.workspace-file-list')),true);
+  await page.getByRole('navigation',{name:'Folders'}).getByRole('button',{name:'delete-folder-fixture',exact:true}).waitFor({state:'detached'});
+  console.log('PASS permanent folder deletion: explicit warning, cancel preserves descendants, confirm removes all contents in place');
+
+  await page.screenshot({path:join(root,'files-panel.png'),fullPage:true});
+  await page.getByRole('button',{name:'Close files'}).click();
+  // Exercise an approval continuation, then an uploaded package through the generic runner.
+  await page.evaluate(id => window.coworker.coworkers.update(id,{policies:{'skills.run':'approval'}}),workers.a.id);
+  await page.getByRole('textbox',{name:'Message Fresh Alpha'}).fill('JSON-SCENARIO');
+  await page.getByRole('button',{name:'Send message',exact:true}).click();
+  await waitForApi(async id => (await window.coworker.agents.snapshot()).some(event => event.coworkerId === id && event.event.type === 'TOOL_CALL_START'), workers.a.id);
+  await page.getByRole('navigation',{name:'Coworker conversations'}).getByText('Fresh Beta',{exact:true}).first().click();
+  await page.getByRole('textbox',{name:'Message Fresh Beta'}).waitFor();
+  await page.getByRole('navigation',{name:'Coworker conversations'}).getByText('Fresh Alpha',{exact:true}).first().click();
+  await waitForApi(async id => (await window.coworker.approvals.list('PENDING')).some(approval => approval.coworkerId === id), workers.a.id);
+  await page.evaluate(async id => {
+    const approval = (await window.coworker.approvals.list('PENDING')).find(approval => approval.coworkerId === id);
+    await window.coworker.approvals.decide({approvalId:approval.id,decision:'approve'});
+  },workers.a.id);
+  await page.getByText('JSON-DONE',{exact:true}).waitFor({timeout:20000});
+  assert.deepEqual(JSON.parse(await readFile(join(outputs,'report.json'),'utf8')),{verified:true});
+  assert.equal(await page.locator('[data-message-role="user"]').filter({hasText:'JSON-SCENARIO'}).count(),1);
+  console.log('PASS approval wait and same-run continuation after switching coworkers');
+  await page.evaluate(id => window.coworker.coworkers.update(id,{policies:{'skills.run':'automatic'}}),workers.a.id);
+  const probe = new JSZip();
+  probe.file('sandbox-probe/SKILL.md','---\nname: sandbox-probe\ndescription: Test script confinement for the explicit SANDBOX-SCENARIO request only. Do not use otherwise.\n---\nRun scripts/probe.js using skills.run.');
+  probe.file('sandbox-probe/scripts/probe.js', `async function run() { let blocked = false; try { await fetch('http://127.0.0.1:${server.address().port}/leak'); } catch { blocked = true; } return { files: [{name:'sandbox.json',mimeType:'application/json',data:btoa(JSON.stringify({node:typeof process,require:typeof require,networkBlocked:blocked}))}] }; }`);
+  await page.evaluate(async ({id,data}) => window.coworker.skills.installFromPackage('sandbox-probe.zip',data,id),{id:workers.a.id,data:await probe.generateAsync({type:'base64'})});
+  await page.getByRole('textbox',{name:'Message Fresh Alpha'}).fill('SANDBOX-SCENARIO');
+  await page.getByRole('button',{name:'Send message',exact:true}).click();
+  await page.getByText('SANDBOX-DONE',{exact:true}).waitFor({timeout:20000});
+  assert.deepEqual(JSON.parse(await readFile(join(outputs,'sandbox.json'),'utf8')),{node:'undefined',require:'undefined',networkBlocked:true});
+  assert.equal(leaks,0);
+  console.log('PASS model tool execution: JSON artifact and uploaded script without Node or network access');
+  await page.evaluate(id => window.coworker.coworkers.update(id,{policies:{'skills.run':'automatic','files.write':'automatic'}}),workers.a.id);
+  await page.getByRole('textbox',{name:'Message Fresh Alpha'}).fill('FILE-STATUS-SCENARIO');
+  await page.getByRole('button',{name:'Send message',exact:true}).click();
+  const statusCard = page.locator('.conversation-tool-card').filter({has:page.getByText('status-fixture.txt',{exact:true})});
+  await statusCard.getByRole('button',{name:'Open status-fixture.txt',exact:true}).waitFor();
+  const statusArtifact = (await page.evaluate(() => window.coworker.app.bootstrap())).artifacts.find(a => a.name === 'status-fixture.txt');
+  assert.ok(statusArtifact);
+  await unlink(join(outputs,'status-fixture.txt'));
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await statusCard.getByText('File missing',{exact:true}).waitFor();
+  assert.equal(await statusCard.getByRole('button',{name:'Open status-fixture.txt',exact:true}).count(),0);
+  await writeFile(join(outputs,'status-fixture.txt'),'Restored fixture');
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await statusCard.getByRole('button',{name:'Open status-fixture.txt',exact:true}).waitFor();
+  await page.getByRole('button',{name:'Files',exact:true}).click();
+  await page.getByRole('button',{name:'Delete status-fixture.txt',exact:true}).click();
+  await page.getByRole('alertdialog').getByRole('button',{name:'Move to Trash',exact:true}).click();
+  await page.getByRole('button',{name:'Close files'}).click();
+  await statusCard.getByText('Deleted',{exact:true}).waitFor();
+  assert.equal(await statusCard.getByRole('button',{name:'Download status-fixture.txt',exact:true}).count(),0);
+  assert.equal(await page.evaluate(id => window.coworker.artifacts.status(id),statusArtifact.id),'deleted');
+  console.log('PASS historical file card: missing/restored files refresh on focus; explorer deletion removes actions');
+  await page.getByText('FILE-STATUS-DONE',{exact:true}).waitFor();
+  await page.reload();
+  await page.getByRole('button',{name:'Coworkers',exact:true}).click();
+  await page.getByRole('navigation',{name:'Coworker conversations'}).getByText('Fresh Alpha',{exact:true}).first().click();
+  await page.getByText('FILE-STATUS-DONE',{exact:true}).waitFor();
+  // Reload restores persisted messages, without the transient tool cards.
+  assert.equal(await page.getByRole('button',{name:'Open status-fixture.txt',exact:true}).count(),0);
+  assert.equal(await page.evaluate(id => window.coworker.artifacts.status(id),statusArtifact.id),'deleted');
+  const history = await page.evaluate(id => window.coworker.messages.list(id),workers.a.id);
+  assert.equal(history.filter(m => m.role === 'assistant' && m.content.includes('END-OF-REPLY')).length,1);
+  await page.evaluate(({id,outputs}) => window.coworker.coworkers.update(id,{sharedFolderGrants:[{path:outputs,access:'read-write',defaultOutput:true}]}),{id:workers.b.id,outputs});
+  await page.getByRole('navigation',{name:'Coworker conversations'}).getByText('Fresh Beta',{exact:true}).first().click();
+  await page.getByRole('textbox',{name:'Message Fresh Beta'}).fill('DEFAULT-OUTPUT-SCENARIO');
+  await page.getByRole('button',{name:'Send message',exact:true}).click();
+  await page.getByText('DEFAULT-OUTPUT-DONE',{exact:true}).waitFor();
+  assert.equal((await readFile(join(outputs,'default-output-poem.pdf'))).subarray(0,5).toString(),'%PDF-');
+  await assert.rejects(stat(join(workers.b.workspacePath,'default-output-poem.pdf')),{code:'ENOENT'});
+  const defaultArtifact = (await page.evaluate(() => window.coworker.app.bootstrap())).artifacts.find(a => a.name === 'default-output-poem.pdf');
+  assert.equal(defaultArtifact.filePath,join(outputs,'default-output-poem.pdf'));
+  assert.equal(await page.evaluate(id => window.coworker.artifacts.status(id),defaultArtifact.id),'available');
+  console.log('PASS PDF export without an explicit root uses the configured output folder only');
+  await app.close(); app = null;
+  app = await _electron.launch({executablePath:require('electron'),args:[resolve('.')],cwd:resolve('.'),env});
+  page = await app.firstWindow(); await page.waitForFunction(() => !!window.coworker);
+  const restarted = await page.evaluate(() => window.coworker.app.bootstrap());
+  assert.equal(restarted.dataPath,dataPath);
+  assert.equal(restarted.coworkers.find(c => c.id === workers.a.id).sharedFolders.find(f => f.defaultOutput).path,outputs);
+  assert.ok(restarted.artifacts.some(a => a.name === 'report.json'));
+  assert.ok(!restarted.artifacts.some(a => a.name.endsWith('.zip')));
+  console.log('PASS restart: grants, default output, messages and artifacts persisted');
+  await writeFile(join(root,'result.json'),JSON.stringify({passed:true,dataPath,requests},null,2));
+} catch(error) {
+  console.error(error);
+  if(page && !page.isClosed()) { await page.screenshot({path:join(root,'failure.png'),fullPage:true}).catch(()=>{}); await writeFile(join(root,'failure-dom.txt'),await page.locator('body').innerText().catch(()=>'')); }
+  process.exitCode=1;
+} finally { if(app) await app.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }

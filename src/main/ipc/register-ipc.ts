@@ -1,6 +1,14 @@
+import { z } from "zod";
+import { stat } from "node:fs/promises";
+import { writeFile, rename, unlink } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { runSkillScript } from "@main/integrations/skill-script-runner";
+import { FileDeleteConfirmations } from "@main/integrations/file-delete-confirmations";
+import { fileRefSchema } from "@shared/files";
+import { fileRoots, listFiles, previewFile, resolveFile } from "@main/tools/file-access";
 import { createAdministration } from "@main/control/administration";
 import { copyFile } from "node:fs/promises";
-import { basename, extname, resolve } from "node:path";
+import { basename, dirname, extname, join, resolve } from "node:path";
 import {
   BrowserWindow,
   app,
@@ -30,13 +38,15 @@ import {
 } from "@shared/validation";
 import type { DesktopAppService } from "@main/app/app-service";
 import { createSupportBundle } from "@main/integrations/archives";
-import { resolveArtifactFile } from "@main/integrations/artifact-files";
+import { artifactFileStatus, resolveArtifactFile } from "@main/integrations/artifact-files";
 import type { ApplicationLogger } from "@main/runtime/application-logger";
 import type { CredentialStore } from "@main/security/credential-store";
 import type { LoginStartup } from "@main/app/login-startup";
 import type { AppUpdateChecker } from "@main/app/update-checker";
 
 const mutationChannels = new Set<string>([
+  ipcChannels.filesDelete,
+  ipcChannels.filesZip,
   ipcChannels.updateSettings,
   ipcChannels.coworkersCreate,
   ipcChannels.coworkersUpdate,
@@ -116,6 +126,7 @@ export function registerIpc(input: {
     handle(channel, (_event, ...args) => administration.invoke(channel, args));
   }
 
+  handle(ipcChannels.agentsSnapshot, () => input.service.liveEvents.snapshot());
   handle(ipcChannels.bootstrap, () => input.service.snapshot());
   handle(ipcChannels.getUpdateState, () => input.updates.getState());
   handle(ipcChannels.checkForUpdates, () => input.updates.check(true));
@@ -161,11 +172,79 @@ export function registerIpc(input: {
   handle(ipcChannels.browserClearProfile, (_event, id) =>
     input.service.clearCoworkerBrowserProfile(idSchema.parse(id)),
   );
+  const dataPath = () => input.service.snapshot().dataPath;
+  const fileOwner = (id: unknown) => input.service.database.getCoworker(idSchema.parse(id));
+  handle(ipcChannels.filesRoots, (_event, id) => fileRoots(fileOwner(id)));
+  handle(ipcChannels.filesList, (_event, id, ref) => listFiles(fileOwner(id), fileRefSchema.parse(ref), dataPath()));
+  handle(ipcChannels.filesPreview, (_event, id, ref) => previewFile(fileOwner(id), fileRefSchema.parse(ref), dataPath()));
+  handle(ipcChannels.filesOpen, async (_event, id, ref) => {
+    const path = await resolveFile(fileOwner(id), fileRefSchema.parse(ref), dataPath());
+    const error = await shell.openPath(path); if (error) throw new Error(error);
+  });
+  handle(ipcChannels.filesReveal, async (_event, id, ref) => shell.showItemInFolder(await resolveFile(fileOwner(id), fileRefSchema.parse(ref), dataPath())));
+  async function saveDialog(name: string) {
+    const options = { title: `Download ${name}`, defaultPath: basename(name), buttonLabel: 'Download' };
+    const window = input.getMainWindow();
+    return window ? dialog.showSaveDialog(window, options) : dialog.showSaveDialog(options);
+  }
+  handle(ipcChannels.filesDownload, async (_event, id, value) => {
+    const ref = fileRefSchema.parse(value);
+    const path = await resolveFile(fileOwner(id), ref, dataPath());
+    if (!(await stat(path)).isFile()) throw new Error('Use Download ZIP to download folders');
+    const result = await saveDialog(basename(path));
+    if (result.canceled || !result.filePath) return null;
+    const current = await resolveFile(fileOwner(id), ref, dataPath());
+    if (resolve(result.filePath) !== current) await copyFile(current, result.filePath);
+    return result.filePath;
+  });
+  handle(ipcChannels.filesZip, async (_event, id, value) => {
+    const owner = fileOwner(id);
+    const refs = z.array(fileRefSchema).min(1).max(100).parse(value);
+    const result = await saveDialog('bundle.zip');
+    if (result.canceled || !result.filePath) return null;
+    const destination = result.filePath;
+    await runSkillScript(input.service.database, dataPath(), owner.id,
+      { skill: 'file-archiving', script: 'scripts/zip.js', inputs: refs, destination: { root: 'workspace', path: 'bundle.zip' }, options: {} },
+      null, undefined, async files => {
+        if (files.length !== 1) throw new Error('ZIP export must produce one file');
+        const temporary = join(dirname(destination), `.coworker-download-${randomUUID()}.tmp`);
+        try {
+          await writeFile(temporary, Buffer.from(files[0]!.data, 'base64'), { flag: 'wx', mode: 0o600 });
+          await rename(temporary, destination);
+        } finally { await unlink(temporary).catch(() => undefined); }
+      });
+    return result.filePath;
+  });
+  const deleteConfirmations = new FileDeleteConfirmations();
+  const deletionOwners = new Set<string>();
+  const watchedSenders = new Set<number>();
+  handle(ipcChannels.filesPrepareDelete, async (event, id, value) => {
+    const owner = fileOwner(id);
+    const refs = z.array(fileRefSchema).min(1).max(100).parse(value);
+    const key = `${event.sender.id}:${owner.id}`;
+    deletionOwners.add(key);
+    if (!watchedSenders.has(event.sender.id)) {
+      const senderId = event.sender.id;
+      watchedSenders.add(senderId);
+      event.sender.once('destroyed', () => {
+        for (const owner of deletionOwners) if (owner.startsWith(`${senderId}:`)) {
+          deleteConfirmations.cancelOwner(owner); deletionOwners.delete(owner);
+        }
+        watchedSenders.delete(senderId);
+      });
+    }
+    return deleteConfirmations.prepare(key, confirm => input.service.deleteFiles(owner.id, refs, confirm, path => shell.trashItem(path)));
+  });
+  handle(ipcChannels.filesDelete, async (event, id, token, confirmed) => {
+    const owner = fileOwner(id);
+    return deleteConfirmations.finish(`${event.sender.id}:${owner.id}`, z.string().uuid().parse(token), z.boolean().parse(confirmed));
+  });
+
   handle(ipcChannels.foldersPick, async () => {
     const window = input.getMainWindow();
     const options = {
-      title: "Grant read-only folder access",
-      buttonLabel: "Grant read-only access",
+      title: "Choose folders to share",
+      buttonLabel: "Choose folders",
       properties: ["openDirectory", "multiSelections", "dontAddToRecent"],
     } satisfies Electron.OpenDialogOptions;
     const result = window
@@ -241,6 +320,9 @@ export function registerIpc(input: {
     ),
   );
 
+  handle(ipcChannels.artifactsStatus, (_event, id) =>
+    artifactFileStatus(input.service.database, idSchema.parse(id)),
+  );
   handle(ipcChannels.artifactsOpen, async (_event, id) => {
     const { artifact, path } = await resolveArtifactFile(
       input.service.database,
@@ -378,6 +460,7 @@ export function registerIpc(input: {
   });
 
   return () => {
+    deleteConfirmations.dispose();
     unsubscribe();
     unsubscribeUpdates();
     for (const channel of channels) ipcMain.removeHandler(channel);

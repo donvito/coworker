@@ -1,6 +1,10 @@
+import { scriptRequestSchema } from "@shared/files";
+import { fileRoots, resolveFile } from "./file-access";
+import { runSkillScript } from "@main/integrations/skill-script-runner";
+import { writeGrantedText, saveNewFile, outputRoot } from "./file-output";
 import { createHash } from "node:crypto";
-import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
-import { posix, relative } from "node:path";
+import { mkdir, readFile, readdir, stat } from "node:fs/promises";
+import { basename, posix, relative } from "node:path";
 import { z } from "zod";
 import type {
   Approval,
@@ -29,7 +33,7 @@ import { resolveMessagingIntegration, resolvedMessagingThread } from "@main/inte
 import { requestContextForTask } from "@shared/request-context";
 import { resolveSharedFolderPath } from "./shared-folders";
 import { resolveWorkspacePath } from "./workspace-path";
-import { editWorkspaceText, prepareWorkspaceTextMutation, readWorkspaceText, resolveWorkspaceOutputPath, writeWorkspaceText } from "./workspace-text";
+import { editWorkspaceText, prepareWorkspaceTextMutation, readWorkspaceText, writeWorkspaceText } from "./workspace-text";
 import { validateWorkspaceTextApprovalEdit, workspaceTextApproval } from "@shared/workspace-text-approval";
 import { searchWeb } from "@main/integrations/web-search";
 import { skillEnablesTool } from "@shared/skill-capabilities";
@@ -100,6 +104,8 @@ const browserActionSchema = z.discriminatedUnion("kind", [
 ]);
 
 const schemas = {
+  "skills.run": scriptRequestSchema,
+  "files.roots": z.object({}),
   "coworkers.list": z.object({}),
   "coworkers.send_message": z.object({
     coworker: z.string().trim().min(1).max(128),
@@ -129,9 +135,10 @@ const schemas = {
     action: browserActionSchema,
   }),
   "browser.close": z.object({}),
-  "files.list": z.object({ path: z.string().min(1).max(2_000).default(".") }),
-  "files.read": z.object({ path: z.string().min(1).max(2_000) }),
+  "files.list": z.object({ root: z.string().optional(), path: z.string().min(1).max(2_000).default(".") }),
+  "files.read": z.object({ root: z.string().optional(), path: z.string().min(1).max(2_000) }),
   "files.write": z.object({
+    root: z.string().optional(),
     path: z.string().min(1).max(2_000),
     content: z.string().max(5_000_000),
     expectedRevision: z.string().regex(/^[a-f0-9]{64}$/).optional(),
@@ -151,6 +158,7 @@ const schemas = {
     path: z.string().min(1).max(2_000),
   }),
   "invoice.create": z.object({
+    root: z.string().optional(),
     client: z.string().trim().min(1).max(240),
     recipientEmail: z.string().email().optional(),
     lineItems: z
@@ -169,6 +177,7 @@ const schemas = {
   }),
   "documents.export": z
     .object({
+      root: z.string().optional(),
       sourcePath: z.string().min(1).max(2_000).optional(),
       name: z.string().trim().min(1).max(240).optional(),
       content: z.string().max(5_000_000).optional(),
@@ -408,7 +417,7 @@ export class ToolGateway {
   async validateApprovalPayload(approval: Approval, payload: unknown): Promise<unknown> {
     const args = this.preserveMessagingApprovalTarget(approval, this.validateArguments(approval.actionType, payload));
     validateWorkspaceTextApprovalEdit(approval, args);
-    if (approval.actionType === "files.write" || approval.actionType === "files.edit") {
+    if ((approval.actionType === "files.write" || approval.actionType === "files.edit") && !(approval.actionType === "files.write" && (args as {root?: string}).root && (args as {root?: string}).root !== "workspace")) {
       const mutation = approval.actionType === "files.write" ? schemas["files.write"].parse(args) : schemas["files.edit"].parse(args);
       await prepareWorkspaceTextMutation(this.database.getCoworker(approval.coworkerId).workspacePath, mutation);
     }
@@ -445,7 +454,7 @@ export class ToolGateway {
     const coworkerSkills = this.database.listCoworkerSkills(input.coworker.id);
     const skillNames = new Set(coworkerSkills.map((skill) => skill.name));
     const enabledBySkill =
-      (input.toolName === "skills.read" && skillNames.size > 0) ||
+      (["skills.read", "skills.run"].includes(input.toolName) && skillNames.size > 0) ||
       skillEnablesTool(coworkerSkills, input.toolName);
     // Shared-folder tools are granted by the user configuring folders, not by
     // the generic tool toggles: the folder grant is the permission.
@@ -517,7 +526,7 @@ export class ToolGateway {
       return { kind: "completed", toolCall: this.database.getToolCall(toolCall.id), result };
     }
     let requiresContextApproval = false;
-    if (input.toolName === "files.write" || input.toolName === "files.edit") {
+    if ((input.toolName === "files.write" || input.toolName === "files.edit") && !(input.toolName === "files.write" && (validatedArguments as { root?: string }).root && (validatedArguments as { root?: string }).root !== "workspace")) {
       try {
         const mutation = input.toolName === "files.write" ? schemas["files.write"].parse(validatedArguments) : schemas["files.edit"].parse(validatedArguments);
         const prepared = await prepareWorkspaceTextMutation(input.coworker.workspacePath, mutation);
@@ -613,7 +622,10 @@ export class ToolGateway {
     rawArgs: unknown,
     approvedContextPath: string | null,
   ): Promise<unknown> {
+    coworker = this.database.getCoworker(coworker.id);
     switch (toolCall.toolName) {
+      case "files.roots": return { roots: fileRoots(coworker) };
+      case "skills.run": return runSkillScript(this.database, this.options.dataPath ?? "", coworker.id, schemas["skills.run"].parse(rawArgs), toolCall.taskId);
       case "skills.read": {
         const args = schemas["skills.read"].parse(rawArgs);
         const skill = this.database
@@ -761,7 +773,7 @@ export class ToolGateway {
       }
       case "files.list": {
         const args = schemas["files.list"].parse(rawArgs);
-        const path = await resolveWorkspacePath(coworker.workspacePath, args.path);
+        const path = await resolveFile(coworker, { root: args.root ?? "workspace", path: args.path }, this.options.dataPath ?? "");
         const entries = await readdir(path, { withFileTypes: true });
         return {
           path: args.path,
@@ -773,12 +785,20 @@ export class ToolGateway {
       }
       case "files.read": {
         const args = schemas["files.read"].parse(rawArgs);
+        if (args.root && args.root !== "workspace") {
+          const path = await resolveFile(coworker, { root: args.root, path: args.path }, this.options.dataPath ?? "");
+          const result = await readDocumentText(path);
+          return result.kind === "text" ? { ...result, revision: createHash("sha256").update(await readFile(path)).digest("hex") } : result;
+        }
+        if (/\.(pdf|docx|xlsx|pptx)$/i.test(args.path)) return readDocumentText(await resolveWorkspacePath(coworker.workspacePath, args.path));
         return readWorkspaceText(coworker.workspacePath, args.path);
       }
       case "files.write": {
         const args = schemas["files.write"].parse(rawArgs);
-        const saved = await writeWorkspaceText(coworker.workspacePath, args.path, args.content, args.expectedRevision, { approvedContextPath });
-        const result = { path: args.path, bytes: Buffer.byteLength(args.content), revision: saved.revision };
+        const saved = args.root && args.root !== "workspace"
+          ? await writeGrantedText(coworker, { root: args.root, path: args.path }, this.options.dataPath ?? "", args.content, args.expectedRevision)
+          : await writeWorkspaceText(coworker.workspacePath, args.path, args.content, args.expectedRevision, { approvedContextPath });
+        const result = { path: args.root && args.root !== "workspace" ? saved.filePath : args.path, bytes: Buffer.byteLength(args.content), revision: saved.revision };
         if (saved.managed) return result;
         const artifact = this.database.createArtifact({
           taskId: toolCall.taskId,
@@ -808,9 +828,9 @@ export class ToolGateway {
         const args = schemas["folders.list"].parse(rawArgs);
         if (!args.folder) {
           return {
-            readOnly: true,
+            readOnly: coworker.sharedFolders.every(f => f.access !== "read-write"),
             folders: coworker.sharedFolders.map((folder) => ({
-              folder: folder.alias,
+              folder: folder.alias, root: folder.id, access: folder.access ?? "read", defaultOutput: !!folder.defaultOutput,
               path: folder.path,
             })),
           };
@@ -892,16 +912,11 @@ export class ToolGateway {
           .join("\n");
         const extension = args.format === "markdown" ? "md" : args.format;
         const relativePath = `invoices/${invoiceNumber}.${extension}`;
-        const path = await resolveWorkspaceOutputPath(coworker.workspacePath, relativePath);
-        if (args.format === "pdf" || args.format === "docx") {
-          const bytes = await createDocument(args.format, markdown, invoiceNumber);
-          await writeFile(path, bytes, { mode: 0o600 });
-        } else {
-          await writeFile(path, args.format === "txt" ? plainText : markdown, {
-            encoding: "utf8",
-            mode: 0o600,
-          });
-        }
+        const root = outputRoot(coworker, args.root);
+        const bytes = args.format === "pdf" || args.format === "docx"
+          ? await createDocument(args.format, markdown, invoiceNumber)
+          : Buffer.from(args.format === "txt" ? plainText : markdown);
+        const path = await saveNewFile(this.database.getCoworker(coworker.id), { root, path: relativePath }, this.options.dataPath ?? "", bytes);
         const mimeType =
           args.format === "pdf"
             ? "application/pdf"
@@ -913,7 +928,7 @@ export class ToolGateway {
         const artifact = this.database.createArtifact({
           taskId: toolCall.taskId,
           coworkerId: coworker.id,
-          name: `${invoiceNumber}.${extension}`,
+          name: basename(path),
           mimeType,
           filePath: path,
         });
@@ -924,7 +939,7 @@ export class ToolGateway {
           currency: args.currency,
           dueAt: dueAt.toISOString(),
           format: args.format,
-          path: relativePath,
+          path: root === "workspace" ? relative(await resolveWorkspacePath(coworker.workspacePath, "."), path).replaceAll("\\", "/") : path,
           artifactId: artifact.id,
         };
       }
@@ -969,26 +984,24 @@ export class ToolGateway {
           };
         }
         const files = [];
+        const root = outputRoot(coworker, args.root);
 
         for (const format of args.formats) {
           const relativePath = posix.join(
             parsedSource.dir,
             `${parsedSource.name}.${format}`,
           );
-          const absolutePath = await resolveWorkspaceOutputPath(
-            coworker.workspacePath,
-            relativePath,
-          );
+          const destination = { root, path: relativePath };
           const bytes = await createDocument(
             format as DocumentFormat,
             content,
             parsedSource.name,
           );
-          await writeFile(absolutePath, bytes, { mode: 0o600 });
+          const absolutePath = await saveNewFile(this.database.getCoworker(coworker.id), destination, this.options.dataPath ?? "", bytes);
           const artifact = this.database.createArtifact({
             taskId: toolCall.taskId,
             coworkerId: coworker.id,
-            name: posix.basename(relativePath),
+            name: basename(absolutePath),
             mimeType:
               format === "pdf"
                 ? "application/pdf"
@@ -1003,7 +1016,7 @@ export class ToolGateway {
           });
           files.push({
             format,
-            path: relativePath,
+            path: root !== "workspace" ? absolutePath : relative(await resolveWorkspacePath(coworker.workspacePath, "."), absolutePath).replaceAll("\\", "/"),
             bytes: bytes.byteLength,
             artifactId: artifact.id,
           });

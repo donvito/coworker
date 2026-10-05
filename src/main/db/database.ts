@@ -1,3 +1,4 @@
+import { folderId } from "@main/tools/shared-folders";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
 import { basename, dirname, extname, join } from "node:path";
@@ -142,7 +143,7 @@ function coworkerFromRow(row: typeof coworkers.$inferSelect): Coworker {
     enabledTools: parseJson<string[]>(row.enabledToolsJson, []),
     enabledSkillIds: [],
     policies: parseJson<Coworker["policies"]>(row.policiesJson, {}),
-    sharedFolders: parseJson<Coworker["sharedFolders"]>(row.sharedFoldersJson, []),
+    sharedFolders: parseJson<Coworker["sharedFolders"]>(row.sharedFoldersJson, []).map(folder => ({ ...folder, id: folder.id ?? folderId(folder.path), access: folder.access ?? "read" })),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
