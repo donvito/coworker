@@ -58,7 +58,7 @@ export const toolCatalog = [
     name: "chat.attach_images",
     label: "Attach images to reply",
     description:
-      "Attach up to 6 images to your chat reply; the app shows them above the reply text. Use as an enabled skill's instructions direct. Accepts only url values from the images list of a tool result in this task (for example web.search called with includeImages), copied exactly; links to pages are not images.",
+      "Attach up to 6 images to your chat reply; the app shows them above the reply text. Use it the way an enabled skill instructs. Accepts only url values from the images list of a tool result in this task (for example web.search called with includeImages), copied exactly; links to pages are not images.",
     risk: "low",
     defaultPolicy: "automatic",
   },
