@@ -87,6 +87,9 @@ const api: DesktopApi = {
   imageAttachments: {
     read: (id) => ipcRenderer.invoke(ipcChannels.imageAttachmentsRead, id),
   },
+  messageImages: {
+    read: (setId, index) => ipcRenderer.invoke(ipcChannels.messageImagesRead, setId, index),
+  },
   schedules: {
     list: () => ipcRenderer.invoke(ipcChannels.schedulesList),
     create: (input) => ipcRenderer.invoke(ipcChannels.schedulesCreate, input),

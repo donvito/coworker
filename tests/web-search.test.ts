@@ -122,3 +122,168 @@ describe("web search skill provider selection", () => {
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("web search image references", () => {
+  const json = (body: unknown) =>
+    new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+
+  async function credentialsFor(provider: "tavily" | "exa" | "serpapi") {
+    const credentials = new MemoryCredentialStore();
+    await credentials.set(webSearchCredentialKey(provider), "test-key");
+    return credentials;
+  }
+
+  it("asks Firecrawl for images only on request and normalizes them", async () => {
+    const fetcher = vi.fn(async () =>
+      json({
+        success: true,
+        data: {
+          web: [{ url: "https://stays.example.com/rooms/1", title: "Beach villa", description: "Sleeps four." }],
+          images: [
+            {
+              title: "Beach villa pool",
+              imageUrl: "https://cdn.example.com/villa.jpg?im_w=720",
+              imageWidth: 720,
+              imageHeight: 480,
+              url: "https://stays.example.com/rooms/1",
+              position: 1,
+            },
+            { title: "Insecure", imageUrl: "http://cdn.example.com/plain.jpg", url: "https://stays.example.com/rooms/2" },
+            { title: "Inline", imageUrl: "data:image/png;base64,AAAA" },
+            { title: "Local", imageUrl: "https://192.168.1.4/camera.jpg" },
+            { title: "Repeat", imageUrl: "https://cdn.example.com/villa.jpg?im_w=720" },
+          ],
+        },
+      }),
+    ) as typeof fetch;
+
+    await expect(
+      searchWeb({
+        credentials: new MemoryCredentialStore(),
+        query: "beach villa",
+        limit: 4,
+        includeImages: true,
+        fetcher,
+      }),
+    ).resolves.toEqual({
+      provider: "firecrawl",
+      query: "beach villa",
+      results: [{ title: "Beach villa", url: "https://stays.example.com/rooms/1", snippet: "Sleeps four." }],
+      images: [
+        {
+          url: "https://cdn.example.com/villa.jpg?im_w=720",
+          title: "Beach villa pool",
+          sourceUrl: "https://stays.example.com/rooms/1",
+          width: 720,
+          height: 480,
+        },
+      ],
+    });
+    expect(JSON.parse(String(vi.mocked(fetcher).mock.calls[0]![1]?.body))).toEqual({
+      query: "beach villa",
+      limit: 4,
+      sources: ["web", "images"],
+    });
+  });
+
+  it("returns an empty image list when a provider has none, and no key when not requested", async () => {
+    const fetcher = vi.fn(async () =>
+      json({ success: true, data: { web: [{ url: "https://news.example.test/a", title: "A" }] } }),
+    ) as typeof fetch;
+    const credentials = new MemoryCredentialStore();
+
+    const withImages = await searchWeb({ credentials, query: "a", includeImages: true, fetcher });
+    expect(withImages.images).toEqual([]);
+
+    const without = await searchWeb({ credentials, query: "a", fetcher });
+    expect(without).not.toHaveProperty("images");
+  });
+
+  it("normalizes Tavily image lists in both shapes", async () => {
+    const fetcher = vi.fn(async () =>
+      json({
+        results: [{ title: "Venue", url: "https://venues.example.com/loft", content: "Holds sixty." }],
+        images: [
+          "https://cdn.example.com/loft-1.jpg",
+          { url: "https://cdn.example.com/loft-2.jpg", description: "Loft main hall" },
+          { url: "ftp://cdn.example.com/loft-3.jpg", description: "Unsupported scheme" },
+          7,
+        ],
+      }),
+    ) as typeof fetch;
+
+    const result = await searchWeb({
+      credentials: await credentialsFor("tavily"),
+      query: "venue",
+      includeImages: true,
+      fetcher,
+    });
+    expect(result.images).toEqual([
+      { url: "https://cdn.example.com/loft-1.jpg", title: "", sourceUrl: null },
+      { url: "https://cdn.example.com/loft-2.jpg", title: "Loft main hall", sourceUrl: null },
+    ]);
+    expect(JSON.parse(String(vi.mocked(fetcher).mock.calls[0]![1]?.body))).toMatchObject({
+      include_images: true,
+      include_image_descriptions: true,
+    });
+
+    const plain = vi.fn(async () => json({ results: [] })) as typeof fetch;
+    await searchWeb({ credentials: await credentialsFor("tavily"), query: "venue", fetcher: plain });
+    expect(JSON.parse(String(vi.mocked(plain).mock.calls[0]![1]?.body))).not.toHaveProperty("include_images");
+  });
+
+  it("uses each Exa result's representative image", async () => {
+    const fetcher = vi.fn(async () =>
+      json({
+        results: [
+          { title: "Desk A", url: "https://shop.example.com/a", text: "Oak.", image: "https://cdn.example.com/desk-a.jpg" },
+          { title: "Desk B", url: "https://shop.example.com/b", text: "Steel." },
+        ],
+      }),
+    ) as typeof fetch;
+
+    const result = await searchWeb({
+      credentials: await credentialsFor("exa"),
+      query: "standing desk",
+      includeImages: true,
+      fetcher,
+    });
+    expect(result.images).toEqual([
+      { url: "https://cdn.example.com/desk-a.jpg", title: "Desk A", sourceUrl: "https://shop.example.com/a" },
+    ]);
+  });
+
+  it("prefers SerpAPI inline originals and keeps organic thumbnails", async () => {
+    const fetcher = vi.fn(async () =>
+      json({
+        organic_results: [
+          {
+            title: "Kyoto restaurant",
+            link: "https://food.example.com/kyoto",
+            snippet: "Seasonal menu.",
+            thumbnail: "https://thumbs.example.com/kyoto.jpg",
+          },
+        ],
+        inline_images: [
+          {
+            title: "Dining room",
+            original: "https://cdn.example.com/dining.jpg",
+            thumbnail: "https://thumbs.example.com/dining-small.jpg",
+            source: "https://food.example.com/kyoto",
+          },
+        ],
+      }),
+    ) as typeof fetch;
+
+    const result = await searchWeb({
+      credentials: await credentialsFor("serpapi"),
+      query: "kyoto restaurant",
+      includeImages: true,
+      fetcher,
+    });
+    expect(result.images).toEqual([
+      { url: "https://cdn.example.com/dining.jpg", title: "Dining room", sourceUrl: "https://food.example.com/kyoto" },
+      { url: "https://thumbs.example.com/kyoto.jpg", title: "Kyoto restaurant", sourceUrl: "https://food.example.com/kyoto" },
+    ]);
+  });
+});

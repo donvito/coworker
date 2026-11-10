@@ -398,7 +398,7 @@ describe("Coworkers navigation", () => {
     const listConversation = vi.fn((_conversationId: string) => new Promise<never>(() => undefined));
     const snapshot: AppSnapshot = {
       coworkers, conversations: [], discussions: [], tasks, messages: [],
-      imageAttachments: [], approvals: [], schedules: [], artifacts: [], activity: [],
+      imageAttachments: [], messageImages: [], approvals: [], schedules: [], artifacts: [], activity: [],
       integrations: [], modelEndpoints: [], skills: [], settings,
       dataPath: "/tmp/coworker-data", version: "0.6.1",
     };
@@ -461,7 +461,7 @@ describe("Coworkers navigation", () => {
   it("opens global settings from a coworker's chat", async () => {
     const snapshot: AppSnapshot = {
       coworkers: [coworker("ava", "Ava")], conversations: [], discussions: [], tasks: [], messages: [],
-      imageAttachments: [], approvals: [], schedules: [], artifacts: [], activity: [],
+      imageAttachments: [], messageImages: [], approvals: [], schedules: [], artifacts: [], activity: [],
       integrations: [], modelEndpoints: [], skills: [], settings,
       dataPath: "/tmp/coworker-data", version: "0.6.1",
     };

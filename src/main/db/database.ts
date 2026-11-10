@@ -1741,6 +1741,16 @@ export class CoworkerDatabase {
     return rows.map(toolCallFromRow);
   }
 
+  listCompletedToolCalls(toolName: string): ToolCall[] {
+    return this.database
+      .select()
+      .from(toolCalls)
+      .where(and(eq(toolCalls.toolName, toolName), eq(toolCalls.status, "COMPLETED")))
+      .orderBy(asc(toolCalls.createdAt))
+      .all()
+      .map(toolCallFromRow);
+  }
+
   updateToolCall(
     id: string,
     status: ToolCall["status"],

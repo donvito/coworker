@@ -1,6 +1,7 @@
 import type { FileRef, FileRoot, FileEntry, FilePreview } from "./files";
 import type { BaseEvent, RunAgentInput } from "@ag-ui/core";
 import type { UpdateMemoryInput, WorkspaceTextDocument } from "./workspace-context";
+import type { MessageImageSet } from "./message-images";
 
 export const taskStatuses = [
   "QUEUED",
@@ -514,6 +515,8 @@ export interface AppSnapshot {
   tasks: Task[];
   messages: Message[];
   imageAttachments: TaskImageAttachmentSummary[];
+  /** Images coworkers attached to their replies, grouped by the task that attached them. */
+  messageImages: MessageImageSet[];
   approvals: Approval[];
   schedules: Schedule[];
   artifacts: Artifact[];
@@ -687,6 +690,10 @@ export interface DesktopApi {
   };
   imageAttachments: {
     read(id: string): Promise<ImageAttachmentData>;
+  };
+  messageImages: {
+    /** Downloads one image of a recorded set; the renderer never fetches remote content itself. */
+    read(setId: string, index: number): Promise<ImageAttachmentData>;
   };
   schedules: {
     list(): Promise<Schedule[]>;

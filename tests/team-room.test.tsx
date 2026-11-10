@@ -78,7 +78,7 @@ function artifact(id: string, coworkerId: string, name: string, createdAt: strin
 
 function snapshotWith(parts: Partial<AppSnapshot>): AppSnapshot {
   return {
-    coworkers: [], conversations: [], discussions: [], tasks: [], messages: [], imageAttachments: [], approvals: [],
+    coworkers: [], conversations: [], discussions: [], tasks: [], messages: [], imageAttachments: [], messageImages: [], approvals: [],
     schedules: [], artifacts: [], activity: [], integrations: [], modelEndpoints: [], skills: [],
     settings: {} as AppSettings, dataPath: "/tmp/coworker", version: "0.6.1", ...parts,
   };

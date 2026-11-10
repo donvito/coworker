@@ -24,6 +24,7 @@ import { formatModelSelectableSkills } from "@shared/pi-skill-prompt";
 import { toolNamesForSkills } from "@shared/skill-capabilities";
 import { formatWorkspaceContext } from "@shared/workspace-context";
 import { formatRequestContext } from "@shared/request-context";
+import { assistantMessageId } from "@shared/message-images";
 import {
   documentFormatClarification,
   hasExplicitDocumentFormat,
@@ -203,6 +204,23 @@ const parameterSchemas: Record<string, ReturnType<typeof Type.Object>> = {
         Type.Literal("firecrawl"),
         Type.Literal("serpapi"),
       ]),
+    ),
+    includeImages: Type.Optional(
+      Type.Boolean({
+        description:
+          "Also return an images list (url, title, sourceUrl, and size when known) found for the query. Defaults to false.",
+      }),
+    ),
+  }),
+  "chat.attach_images": Type.Object({
+    images: Type.Array(
+      Type.Object({
+        url: Type.String({
+          description: "An images[].url value exactly as a tool returned it in this task",
+        }),
+        alt: Type.String({ description: "Short caption saying what the image shows" }),
+      }),
+      { minItems: 1, maxItems: 6 },
     ),
   }),
   "browser.start_session": Type.Object({
@@ -976,7 +994,7 @@ function handleAgentEvent(event: Parameters<Agent["subscribe"]>[0] extends (
     // TEXT_MESSAGE_START is deferred until the first text delta so a
     // reasoning message emitted from thinking deltas is ordered before the
     // visible answer bubble.
-    activeRun.assistantMessageId = `${activeRun.runId}:assistant:${event.message.timestamp}`;
+    activeRun.assistantMessageId = assistantMessageId(activeRun.runId, event.message.timestamp);
     activeRun.assistantTextStarted = false;
     return;
   }

@@ -36,6 +36,12 @@ import { resolveWorkspacePath } from "./workspace-path";
 import { editWorkspaceText, prepareWorkspaceTextMutation, readWorkspaceText, writeWorkspaceText } from "./workspace-text";
 import { validateWorkspaceTextApprovalEdit, workspaceTextApproval } from "@shared/workspace-text-approval";
 import { searchWeb } from "@main/integrations/web-search";
+import {
+  attachImagesToolName,
+  imageReferencesFromToolResult,
+  maxMessageImages,
+  resolveMessageImages,
+} from "@shared/message-images";
 import { skillEnablesTool } from "@shared/skill-capabilities";
 import type { PeerMessaging } from "@main/app/peer-messaging";
 import {
@@ -124,6 +130,18 @@ const schemas = {
     query: z.string().trim().min(1).max(2_000),
     limit: z.number().int().min(1).max(10).default(5),
     provider: z.enum(["tavily", "exa", "firecrawl", "serpapi"]).optional(),
+    includeImages: z.boolean().optional(),
+  }),
+  [attachImagesToolName]: z.object({
+    images: z
+      .array(
+        z.object({
+          url: z.string().trim().min(1).max(2_000),
+          alt: z.string().trim().min(1).max(200),
+        }),
+      )
+      .min(1)
+      .max(maxMessageImages),
   }),
   "browser.start_session": z.object({
     goal: z.string().trim().min(1).max(1_000),
@@ -717,7 +735,30 @@ export class ToolGateway {
           query: args.query,
           limit: args.limit,
           preferredProvider: args.provider as WebSearchProvider | undefined,
+          includeImages: args.includeImages,
         });
+      }
+      case attachImagesToolName: {
+        const args = schemas[attachImagesToolName].parse(rawArgs);
+        // Only images a controlled tool already returned in this task may be
+        // shown, so page text or a model cannot make the app load a URL of
+        // its own construction.
+        const references = this.database
+          .listToolCalls(toolCall.taskId)
+          .filter((call) => call.status === "COMPLETED" && call.toolName !== attachImagesToolName)
+          .flatMap((call) => imageReferencesFromToolResult(call.result));
+        const { images, rejected } = resolveMessageImages(args.images, references);
+        if (images.length === 0) {
+          throw new Error(
+            `No image was attached. ${rejected[0]?.reason ?? "Use an images[].url value exactly as a tool returned it."}`,
+          );
+        }
+        return {
+          attached: images.length,
+          images,
+          ...(rejected.length > 0 ? { rejected } : {}),
+          note: "These images are displayed above your next chat reply. Do not repeat their URLs or use Markdown image syntax in the reply.",
+        };
       }
       case "browser.start_session": {
         const args = schemas["browser.start_session"].parse(rawArgs);

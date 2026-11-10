@@ -50,7 +50,15 @@ export const toolCatalog = [
     name: "web.search",
     label: "Search the web",
     description:
-      "Search the live web with a configured Firecrawl, Tavily, Exa, or SerpAPI key, or Firecrawl's free tier when no key is set.",
+      "Search the live web with a configured Firecrawl, Tavily, Exa, or SerpAPI key, or Firecrawl's free tier when no key is set. Set includeImages to also receive image references for the query.",
+    risk: "low",
+    defaultPolicy: "automatic",
+  },
+  {
+    name: "chat.attach_images",
+    label: "Attach images to reply",
+    description:
+      "Attach up to 6 images to your chat reply; the app shows them above the reply text. Accepts only image URLs that a tool returned in this task, such as the images list from web.search with includeImages, passed exactly as returned.",
     risk: "low",
     defaultPolicy: "automatic",
   },
