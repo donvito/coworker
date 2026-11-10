@@ -128,7 +128,7 @@ export function resolveMessageImages(
       rejected.push({
         url: item.url.slice(0, 300),
         reason: url
-          ? "Not an image returned by a tool in this task. Use an images[].url value exactly as returned."
+          ? "Not an image returned by a tool in this task. Copy a url value from a tool result's images list exactly; links to pages are not images."
           : "Not a public HTTPS image URL.",
       });
       continue;

@@ -274,7 +274,7 @@ describe("image attachment boundary", () => {
       call(coworker, task, "chat.attach_images", {
         images: [{ url: "https://cdn.example.com/villa.jpg", alt: "Before any search" }],
       }),
-    ).rejects.toThrow("No image was attached. Not an image returned by a tool in this task");
+    ).rejects.toThrow("No tool has returned images in this task. Request them first");
 
     await call(coworker, task, "web.search", { query: "beach villa", includeImages: true });
     for (const url of [

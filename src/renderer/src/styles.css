@@ -10482,12 +10482,8 @@ button.tag-chip[aria-pressed="true"] {
   margin-bottom: -6px;
 }
 
-.message-image-collage.count-4,
-.message-image-collage.count-5,
-.message-image-collage.count-6 {
-  flex-wrap: wrap;
-  padding-left: 30px;
-  row-gap: 0;
+.message-image-collage:is(.count-4, .count-5, .count-6) {
+  max-width: min(720px, 100%);
 }
 
 .message-image-card {
@@ -10593,53 +10589,61 @@ button.message-image-card:focus-visible {
 
 .message-image-collage.count-3 .message-image-card:nth-child(3) {
   z-index: 1;
-  --card-height: 150px;
+  --card-height: 154px;
   --card-tilt: -2deg;
-  --card-overlap: -26px;
-  --card-drop: 22px;
+  --card-overlap: -16px;
+  --card-drop: 26px;
 }
 
 .message-image-collage:is(.count-4, .count-5, .count-6) .message-image-card {
-  --card-overlap: -24px;
+  --card-overlap: -20px;
 }
 
 .message-image-collage:is(.count-4, .count-5, .count-6) .message-image-card:nth-child(1) {
-  --card-height: 138px;
+  --card-height: 150px;
   --card-tilt: -4deg;
   --card-drop: 10px;
+  --card-overlap: 0px;
 }
 
 .message-image-collage:is(.count-4, .count-5, .count-6) .message-image-card:nth-child(2) {
   z-index: 2;
-  --card-height: 112px;
+  --card-height: 116px;
   --card-tilt: 3deg;
+  --card-overlap: -30px;
 }
 
 .message-image-collage:is(.count-4, .count-5, .count-6) .message-image-card:nth-child(3) {
   z-index: 1;
-  --card-height: 126px;
+  --card-height: 134px;
   --card-tilt: -2deg;
-  --card-drop: 16px;
+  --card-drop: 24px;
+  --card-overlap: -14px;
 }
 
 .message-image-collage:is(.count-4, .count-5, .count-6) .message-image-card:nth-child(4) {
   z-index: 3;
-  --card-height: 108px;
+  --card-height: 112px;
   --card-tilt: 4deg;
-  --card-drop: 4px;
+  --card-drop: 2px;
 }
 
 .message-image-collage:is(.count-4, .count-5, .count-6) .message-image-card:nth-child(5) {
-  z-index: 4;
-  --card-height: 120px;
+  z-index: 2;
+  --card-height: 128px;
   --card-tilt: -3deg;
-  --card-drop: 12px;
+  --card-drop: 20px;
 }
 
 .message-image-collage:is(.count-4, .count-5, .count-6) .message-image-card:nth-child(6) {
-  z-index: 5;
+  z-index: 4;
   --card-height: 110px;
   --card-tilt: 2deg;
+  --card-drop: 6px;
+}
+
+.message-image-collage:is(.count-5, .count-6) .message-image-card {
+  height: calc(var(--card-height, 150px) * 0.88);
 }
 
 @media (max-width: 900px) {

@@ -747,11 +747,14 @@ export class ToolGateway {
           .listToolCalls(toolCall.taskId)
           .filter((call) => call.status === "COMPLETED" && call.toolName !== attachImagesToolName)
           .flatMap((call) => imageReferencesFromToolResult(call.result));
+        if (references.length === 0) {
+          throw new Error(
+            "No image was attached. No tool has returned images in this task. Request them first, for example web.search with includeImages set to true, then pass url values from that result's images list.",
+          );
+        }
         const { images, rejected } = resolveMessageImages(args.images, references);
         if (images.length === 0) {
-          throw new Error(
-            `No image was attached. ${rejected[0]?.reason ?? "Use an images[].url value exactly as a tool returned it."}`,
-          );
+          throw new Error(`No image was attached. ${rejected[0]?.reason ?? "Use a url value from a tool result's images list."}`);
         }
         return {
           attached: images.length,

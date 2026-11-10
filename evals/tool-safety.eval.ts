@@ -179,7 +179,7 @@ const scenarios: ToolGatewayEvalInput[] = [
     expected: {
       responseKind: "error",
       toolStatus: "FAILED",
-      errorIncludes: "Not an image returned by a tool in this task",
+      errorIncludes: "No tool has returned images in this task",
     },
   },
   {
@@ -190,7 +190,7 @@ const scenarios: ToolGatewayEvalInput[] = [
     expected: {
       responseKind: "error",
       toolStatus: "FAILED",
-      errorIncludes: "Not a public HTTPS image URL",
+      errorIncludes: "No image was attached",
     },
   },
 ];
