@@ -21,6 +21,14 @@ export interface PlaceableMessage {
   time: string;
 }
 
+/** Placement time for a reply that is still streaming: it is written after every set attached so far. */
+export const streamingReplyTime = "9999-12-31T23:59:59.999Z";
+
+/** Placement key for the reply a run is streaming, before it is stored. */
+export function streamingReplyId(runId: string): string {
+  return `streaming:${runId}`;
+}
+
 /**
  * Decides which reply shows each attached image set. Images belong above the
  * answer written after they were attached. While the task is still running

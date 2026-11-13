@@ -18,6 +18,8 @@ import {
 import {
   arrangeReplyImages,
   placeMessageImages,
+  streamingReplyId,
+  streamingReplyTime,
   type PlaceableMessage,
   type PlacedMessageImage,
 } from "../src/renderer/src/lib/message-image-placement";
@@ -271,6 +273,22 @@ describe("placing image sets above replies", () => {
 
     const finished = placeMessageImages({ sets: [set], messages: [preface], runningTaskIds: new Set() });
     expect([...finished.keys()]).toEqual(["preface"]);
+  });
+
+  it("gives a running task's images to the reply it is still streaming", () => {
+    const streaming = message({ id: streamingReplyId("run-1"), time: streamingReplyTime });
+    const placed = placeMessageImages({
+      sets: [set],
+      messages: [preface, streaming],
+      runningTaskIds: new Set(["task-1"]),
+    });
+    expect([...placed.keys()]).toEqual([streamingReplyId("run-1")]);
+    const { all, collage } = arrangeReplyImages(
+      placed.get(streamingReplyId("run-1")) ?? [],
+      "Two options: ![A](image:9) and more.",
+    );
+    expect(all.map((image) => image.alt)).toEqual(["A", "B"]);
+    expect(collage).toHaveLength(2);
   });
 
   it("merges several sets on one reply without repeats and within the limit", () => {
