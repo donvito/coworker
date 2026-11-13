@@ -57,7 +57,7 @@ See the [memory guide](memory.md) for examples, limits, and privacy details.
 - Document export to PDF, Word DOCX, Excel XLSX, and CSV from semantic Markdown
 - Email drafts (`.eml` outbox by default) and approval-gated sending via Resend
 - Web search with Tavily, Exa, Firecrawl, and SerpAPI credential fallback, working without a key on Firecrawl's free tier
-- Photos from web search results shown as a collage above a chat reply when the coworker judges they help (for example listings, venues, or products); click a photo to view it larger
+- Photos from web search results shown as a collage above a chat reply when the coworker judges they help (for example listings, venues, or products), or whenever you ask for pictures ("show me photos of…", "include photos"); click a photo to view it larger
 
 ## Skills
 

@@ -1,30 +1,43 @@
 ---
 name: search-result-images
-description: Show a few photos from web search results above a chat reply. Use when the user is looking for, comparing, or choosing something they would judge by how it looks and a web search can supply photos of it, such as places to stay (Airbnb, hotel, or rental listings), event venues, restaurants, travel destinations, homes for sale, physical products, vehicles, artworks, landmarks, plants, or animals, or when the user asks to see pictures of something found on the web. Do not use for facts, news, prices, finance, software, documentation, how-to, or other research where pictures add nothing; when the user wants text only; when the result is a file, an email, or a Telegram or Discord message; or to create, edit, or analyse images, including images the user attached.
+description: Show a few photos from web search results above a chat reply. Use whenever the user asks for images, pictures, or photos, or asks to see what something looks like, whatever the subject, including follow-ups about earlier results. Also use when the user is looking for, comparing, or choosing something they would judge by how it looks and a web search can supply photos of it, such as places to stay (Airbnb, hotel, or rental listings), event venues, restaurants, travel destinations, homes for sale, physical products, vehicles, artworks, landmarks, plants, or animals. Do not use, unless the user asked for pictures, for facts, news, prices, finance, software, documentation, how-to, or other research where pictures add nothing. Never use when the user wants text only; when the result is a file, an email, or a Telegram or Discord message; or to create, edit, or analyse images, including images the user attached.
 ---
 
 # Search result images
 
-Some answers are better with a look at the thing itself. This skill lets you put a small photo collage above your chat reply, using images that a web search returned. You decide whether photos help and which ones to show. Most searches should show none.
+Some answers are better with a look at the thing itself. This skill lets you put a small photo collage above your chat reply, using images that a web search returned. You decide whether photos help and which ones to show. Unless the user asks for pictures, most searches should show none.
 
 ## Decide first
 
-Show images only when both are true:
+Show images when either is true, and the search returned images that actually depict what your reply talks about:
 
-1. Seeing the subject would help the user judge, choose, or recognise it. Ask yourself whether a thoughtful person answering in a chat would paste photos here.
-2. The search returned photos that actually depict the specific things your reply talks about.
+1. The user asked for them. See "When the user asks for images" below.
+2. Seeing the subject would help the user judge, choose, or recognise it. Ask yourself whether a thoughtful person answering in a chat would paste photos here.
 
-Skip images, and answer in text as usual, when:
+Unless the user asked for pictures, skip images and answer in text as usual when:
 
 - The answer is information rather than a thing to look at: facts, explanations, news, numbers, schedules, code, policies, comparisons of specifications.
-- The user asked for text only, a quick fact, or told you earlier in the conversation to stop showing pictures.
-- The request arrived from Telegram or Discord, or the result is going into a file or an email. The collage exists only in the desktop chat.
-- The subject is sensitive: injuries or medical conditions, violence, adult content, or a private individual.
 - The returned images are logos, icons, maps, charts, screenshots, banners with text, or unrelated stock photos. No images is better than weak images. Do not apologise for showing none.
 
-An explicit request to see something ("show me what it looks like") is a reason to show images, if a search returns suitable ones.
+Always skip images, even when asked, when:
+
+- The user asked for text only, or told you earlier in the conversation to stop showing pictures.
+- The request arrived from Telegram or Discord, or the result is going into a file or an email. The collage exists only in the desktop chat. If the user asked for pictures, say in one sentence that pictures only appear in the desktop chat.
+- The subject is sensitive: injuries or medical conditions, violence, adult content, or a private individual. Describe it instead and, for medical subjects, link an authoritative source.
+- The user wants an image generated, edited, or analysed rather than found on the web. That is not this skill.
 
 See `references/examples.md` for worked decisions when a request is borderline.
+
+## When the user asks for images
+
+An explicit request is enough on its own, for any subject, including ones you would otherwise answer in text. Cues include "show me", "pictures of", "photos of", "images of", "what does it look like", "can I see", "with photos", and follow-ups such as "show me the second one".
+
+- Search even if you could answer from memory: call `web.search` with `includeImages: true` and a query aimed at how the subject looks, for example `"Shibuya Crossing at night"` rather than `"Shibuya Crossing facts"`.
+- Show what they asked for. If they asked for a logo, a diagram, a map, a chart, or a screenshot, that is a suitable image, not one to skip.
+- If they asked for a number of images, show that many, up to 6. Otherwise pick 2 to 4, or 1 to 2 for a single subject.
+- Answer the rest of the request as usual. A request for news with photos still gets the news, with sources.
+- If the search returns nothing suitable, say so in one sentence and link the most relevant pages instead. Do not attach weak images just because they were asked for.
+- For a follow-up about something you found earlier, search again with `includeImages: true` for that specific item.
 
 ## Get image candidates
 
@@ -41,7 +54,7 @@ If you already searched without images and then decide photos would help, search
 
 ## Choose
 
-- Pick 2 to 4 images for a set of options; 1 for a single subject; never more than 6.
+- Pick 2 to 4 images for a set of options; 1 for a single subject; never more than 6. When the user asked for a specific number, follow "When the user asks for images".
 - Every image must show something you name in the reply. Prefer one photo per recommended option over several of the same option.
 - Prefer real photographs of the subject: the room, the building, the dish, the product. Prefer larger images (around 400 pixels wide or more) and avoid near-duplicates.
 - Judge by `title` and `sourceUrl`; you cannot see the picture. If you cannot tell what an image shows, leave it out.
@@ -71,6 +84,6 @@ Then write the reply as you normally would, with the source links the web search
 
 ## When it does not work
 
-- No suitable images, or `images` is empty: answer in text. Do not search again only to find pictures unless the user asked to see them.
+- No suitable images, or `images` is empty: answer in text. Do not search again only to find pictures unless the user asked to see them. If they did, one more focused search is reasonable; if that also fails, say so briefly.
 - `chat.attach_images` is refused or fails: fix the cause once if it is clear (for example, an altered URL), otherwise carry on with the text answer. Never tell the user images are shown unless the tool reported them attached.
 - An image may still fail to load on the user's screen. The reply must make sense without it.

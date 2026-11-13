@@ -26,6 +26,21 @@ const scenarios = [
     shouldShowImages: true,
   },
   {
+    name: "shows photos when the user asks for pictures without saying search",
+    prompt: "Show me some photos of Shibuya Crossing at night.",
+    shouldShowImages: true,
+  },
+  {
+    name: "shows photos with a news answer when the user asks for them",
+    prompt: "What's the latest news on the Starship test flight? Include photos.",
+    shouldShowImages: true,
+  },
+  {
+    name: "shows a logo when the user asks to see it",
+    prompt: "Show me the current Node.js logo.",
+    shouldShowImages: true,
+  },
+  {
     name: "does not show photos for a policy question about a travel site",
     prompt: "Search the web for Airbnb's current refund policy for long stays and summarize it.",
     shouldShowImages: false,
@@ -99,6 +114,22 @@ const fixtureTopics: Array<{ match: RegExp; results: FixtureResult[] }> = [
     results: [
       { url: "https://fallingwater.org/history/", title: "Fallingwater · History of the house", description: "Frank Lloyd Wright designed Fallingwater in 1935 for the Kaufmann family. Its cantilevered terraces extend over the waterfall on Bear Run in Mill Run, Pennsylvania.", image: "Fallingwater seen from below the falls, cantilevered terraces over Bear Run" },
       { url: "https://en.wikipedia.org/wiki/Fallingwater", title: "Fallingwater - Wikipedia", description: "Fallingwater is a house designed by Frank Lloyd Wright in 1935 in the Laurel Highlands of southwest Pennsylvania.", image: "Living room interior of Fallingwater with stone floor and built-in seating" },
+    ],
+  },
+  {
+    match: /shibuya/i,
+    results: [
+      { url: "https://www.japan-guide.com/e/e3007.html", title: "Shibuya Crossing - Tokyo Travel - japan-guide.com", description: "One of the busiest pedestrian crossings in the world, in front of Shibuya Station. Best viewed from Shibuya Sky or the Starbucks above the crossing.", image: "Shibuya Crossing at night with crowds and neon billboards" },
+      { url: "https://www.gotokyo.org/en/spot/78/index.html", title: "Shibuya Scramble Crossing | GO TOKYO", description: "When the lights turn red, all traffic stops and pedestrians cross from every direction at once.", image: "Aerial view of the Shibuya scramble at night from Shibuya Sky" },
+      { url: "https://en.wikipedia.org/wiki/Shibuya_Crossing", title: "Shibuya Crossing - Wikipedia", description: "Shibuya Crossing is a popular scramble crossing in Shibuya, Tokyo, Japan.", image: "Long-exposure photo of Shibuya Crossing traffic light trails at night" },
+    ],
+  },
+  {
+    match: /starship|spacex/i,
+    results: [
+      { url: "https://www.spacex.com/launches/starship-flight-12", title: "Starship Flight 12 | SpaceX", description: "Starship lifted off from Starbase, Texas, completed hot staging, and the Super Heavy booster was caught by the launch tower. The ship splashed down in the Indian Ocean on target.", image: "Starship and Super Heavy lifting off from Starbase" },
+      { url: "https://www.reuters.com/science/spacex-starship-flight-12", title: "SpaceX catches Super Heavy booster again as Starship completes test flight - Reuters", description: "SpaceX's Starship completed its twelfth test flight on Tuesday, deploying test satellites before a controlled splashdown.", image: "Super Heavy booster caught by the launch tower arms" },
+      { url: "https://www.space.com/spacex-starship-flight-12-launch", title: "SpaceX Starship Flight 12 launch: live updates and photos", description: "Photos and video from Starship's twelfth flight, including reentry views from the ship's onboard cameras.", image: "Starship reentry plasma seen from an onboard camera" },
     ],
   },
   {

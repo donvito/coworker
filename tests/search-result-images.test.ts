@@ -126,7 +126,8 @@ describe("search-result-images skill package", () => {
     for (const included of ["web search", "places to stay", "venues", "restaurants", "products"]) {
       expect(description, included).toContain(included);
     }
-    expect(description).toContain("Do not use for");
+    expect(description).toContain("asks for images, pictures, or photos");
+    expect(description).toContain("unless the user asked for pictures");
     for (const excluded of ["facts", "news", "how-to", "text only", "file", "email", "Telegram", "create, edit, or analyse images"]) {
       expect(description, excluded).toContain(excluded);
     }
@@ -134,13 +135,15 @@ describe("search-result-images skill package", () => {
 
   it("keeps the judgment and workflow in the skill instructions", () => {
     const content = skill!.content;
-    expect(content).toContain("Most searches should show none");
+    expect(content).toContain("Unless the user asks for pictures, most searches should show none");
+    expect(content).toContain("## When the user asks for images");
     expect(content).toContain("includeImages: true");
     expect(content).toContain("chat.attach_images");
     expect(content).toContain("references/examples.md");
     expect(content).toContain("Do not paste image URLs or use Markdown image syntax");
     const examples = Buffer.from(skill!.resources[0]!.content).toString("utf8");
     expect(examples).toContain("## Show images");
+    expect(examples).toContain("## The user asked for images");
     expect(examples).toContain("## Do not show images");
   });
 
