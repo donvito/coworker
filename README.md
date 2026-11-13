@@ -12,7 +12,7 @@ AI agents for your work, running on your own computer.
 ![Telegram](https://img.shields.io/badge/Telegram-supported-26A5E4?logo=telegram&logoColor=white)
 ![Discord](https://img.shields.io/badge/Discord-supported-5865F2?logo=discord&logoColor=white)
 
-![Coworker chat](docs/images/coworker-chat.png)
+![Coworker chat with created files, folder permissions, and a default output folder](docs/images/coworker-chat.png)
 
 Coworker is a local-first desktop app for independent AI coworkers. There is **no subscription**. The app runs on **your computer**, talks to **local models** or keys you bring, learns new **skills**, keeps a **scheduler**, pauses on **approvals**, and can meet you on **Telegram** or **Discord**.
 
@@ -22,6 +22,7 @@ Coworker is a local-first desktop app for independent AI coworkers. There is **n
 
 - **No subscription** — free to download and use. Pay a model provider only if you choose one.
 - **Runs on your computer** — macOS, Windows, and Linux. Conversations, files, and app data are stored locally.
+- **Files and folders** — grant read-only or read-and-write folder access, choose a default output folder, and browse files in a tree view. Open, download, or bundle selected files as a ZIP.
 - **Local models** — point it at [Ollama](https://ollama.com) or [LM Studio](https://lmstudio.ai) and inference never leaves your machine.
 - **Bring your own keys** — Anthropic, OpenAI, Google, OpenRouter, or any OpenAI-compatible endpoint. Credentials stay in OS-backed storage.
 - **A team** — mark one coworker as primary to coordinate the others and post a daily team digest. Coworkers can hand work to each other, and Home shows what everyone is doing.
@@ -62,7 +63,7 @@ pnpm dev
 
 Unpackaged development builds use a separate **Coworker Development** data profile. Set `COWORKER_DATA_PATH` to an absolute directory to use another isolated profile; packaged builds continue using the normal production data directory.
 
-The app ships with two demo coworkers — **Ava** (accounting) and **Sarah** (sales) — that run on a built-in faux provider, so you can try the full flow without an API key.
+The app ships with two starter coworkers — **Ava** (accounting) and **Sarah** (sales). Configure a provider and model before asking them to work; coworkers without a configured model show a notice instead of replying.
 
 To connect a real model, open **Settings → Model Providers**, add credentials, and verify the provider. Ollama (`http://127.0.0.1:11434/v1`) and LM Studio (`http://127.0.0.1:1234/v1`) work without an API key.
 

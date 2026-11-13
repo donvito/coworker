@@ -1,19 +1,19 @@
 # Screenshots
 
-The [chat view](../README.md) is also the hero image on the main README.
+Captured from Coworker **v0.7.2** in a fresh profile with fictional sample conversations and files. The [chat view](../README.md) is also the hero image on the main README.
 
-**Team room** — the floor at a glance, a composer that puts any coworker to work, and a live activity log.
+**Home** — assign work to a coworker, follow team activity, review pending approvals, and open recent files. The right sidebar includes the time and date.
 
-![Team room](images/home.png)
+![Home with team activity, an approval waiting for review, and recent files](images/home.png)
 
-**Coworkers** — each one has an independent runtime, workspace, and single focused task queue.
+**Chat** — switch between coworkers in the left sidebar and open or download their created files from the conversation. The Files tab shows accessible folders, their permissions, and the default output folder; the folder list can be collapsed.
 
-![Coworkers](images/coworkers.png)
+![Coworker chat with PDF and CSV downloads and folder access in the right sidebar](images/coworker-chat.png)
 
-**Chat** — streaming Markdown replies, per-coworker model switching, and the files a coworker writes into its own workspace.
+**File explorer** — open **Files** beside **History** and **New** in the coworker header. The explorer starts in the configured default output folder. Expand folders in the tree or choose **All files**, filter the list, and select files to download as a ZIP. Deleting files or folders requires confirmation.
 
-![Coworker chat](images/coworker-chat.png)
+![File explorer with an expanded folder tree and two files selected for ZIP download](images/file-explorer.png)
 
-**Approvals** — consequential actions pause here, and decisions are written to SQLite before work resumes.
+**Approvals** — review the proposed action and its contents before approving, editing, or rejecting it. Decisions are saved before work resumes.
 
-![Approvals](images/approvals.png)
+![Approvals showing a sample client follow-up email awaiting review](images/approvals.png)
