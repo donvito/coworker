@@ -14,43 +14,27 @@ AI agents for your work, running on your own computer.
 
 ![Coworker chat with created files, folder permissions, and a default output folder](docs/images/coworker-chat.png)
 
-Coworker is a local-first desktop app for independent AI coworkers. There is **no subscription**. The app runs on **your computer**, talks to **local models** or keys you bring, learns new **skills**, keeps a **scheduler**, pauses on **approvals**, and can meet you on **Telegram** or **Discord**.
+[More screenshots](docs/screenshots.md) · [All features](docs/features.md)
 
-[More screenshots](docs/screenshots.md) · [What it can do](docs/features.md)
+![Ava recommending three keyboards, each with a product photo beside it](docs/images/search-images.png)
 
 ## Why Coworker
 
-- **No subscription** — free to download and use. Pay a model provider only if you choose one.
-- **Runs on your computer** — macOS, Windows, and Linux. Conversations, files, and app data are stored locally.
-- **Files and folders** — grant read-only or read-and-write folder access, choose a default output folder, and browse files in a tree view. Open, download, or bundle selected files as a ZIP.
-- **Local models** — point it at [Ollama](https://ollama.com) or [LM Studio](https://lmstudio.ai) and inference never leaves your machine.
-- **Bring your own keys** — Anthropic, OpenAI, Google, OpenRouter, or any OpenAI-compatible endpoint. Credentials stay in OS-backed storage.
-- **A team** — mark one coworker as primary to coordinate the others and post a daily team digest. Coworkers can hand work to each other, and Home shows what everyone is doing.
-- **Skills** — coworkers learn new capabilities from Agent Skills. Upload a `SKILL.md`, add an HTTPS URL, or paste a skill link into chat.
-- **Web search** — works right after install on Firecrawl's free tier. Add a Firecrawl, Tavily, Exa, or SerpAPI key for higher limits.
-- **Memory** — coworkers can propose useful facts and preferences to remember across conversations. Approve, edit, or reject each proposal in chat, Telegram, or Discord; manage saved Markdown in the desktop app or CLI.
-- **Scheduler** — persistent cron and one-time jobs, in plain language, with crash recovery.
-- **Approvals** — consequential actions pause until you approve or reject them, in the app or from Telegram or Discord.
-- **Telegram** — connect one bot per coworker, paired to a private chat. Replies, files, and approval buttons stay in sync with the desktop.
-- **Discord** — connect one bot per coworker, paired to a server channel (or a thread in it) by posting a pairing code. @mention the bot in that channel to start a thread; existing threads stay their own conversations. Replies, files, 👀 receipts, and approval buttons stay in sync. Telegram can stay connected to the same coworker at the same time.
+- **No subscription** — free to use. Pay a model provider only if you choose one.
+- **Runs on your computer** — macOS, Windows, and Linux. Your data stays local.
+- **Any model** — [Ollama](https://ollama.com), [LM Studio](https://lmstudio.ai), or your own keys for Anthropic, OpenAI, Google, OpenRouter, and OpenAI-compatible APIs.
+- **A team** — coworkers hand work to each other, and a primary coworker keeps everyone coordinated.
+- **Skills** — teach coworkers new abilities with Agent Skills.
+- **Web search** — free out of the box, with photos beside each result when you're comparing places or products.
+- **Files and folders** — give coworkers access to folders, then browse, download, or zip their files.
+- **Memory** — coworkers remember the preferences you approve.
+- **Scheduler** — recurring and one-time jobs, in plain language.
+- **Approvals** — important actions wait for your OK.
+- **Telegram and Discord** — chat with coworkers and approve their work from your phone.
 
 ## Download
 
-Prebuilt installers for **macOS**, **Windows**, and **Linux** are on every [GitHub release](https://github.com/donvito/coworker/releases/latest).
-
-The builds are not code-signed yet, so the OS warns on first launch. See [install notes](docs/releasing.md#after-you-download).
-
-## App updates
-
-Coworker checks for new stable releases in the background when it starts. When an update is available, a modal offers **Download** to open its GitHub release page or **Later** to dismiss it for the current app session. A download icon stays at the bottom of the sidebar so you can reopen the notice. Download and install the new version manually.
-
-Check at any time with **Coworker → Check for Updates** on macOS or **Help → Check for Updates** on Windows and Linux. Results appear in a modal, and startup checks stay quiet when you are offline.
-
-## Appearance
-
-Choose **Light**, **Dark**, or **System** mode with any of the five themes: **Graphite**, **Forest**, **Ocean**, **Plum**, and **Clay**. Open **Appearance** at the bottom of the workspace or coworker chat sidebar to switch without leaving your page or losing an unsent draft. Your choices are saved across restarts; System mode follows your device. These controls are also in **Settings → General → Appearance**.
-
-Upload a coworker photo from its settings, drag and zoom to crop it, and check the circular preview before applying. Photos save immediately after **Apply crop** or **Remove photo**. Updating only a photo keeps the coworker's work and browser session running.
+Get the installer for your OS from the [latest release](https://github.com/donvito/coworker/releases/latest). Builds aren't code-signed yet, so your OS warns on first launch. See the [install notes](docs/releasing.md#after-you-download).
 
 ## Development
 
@@ -61,42 +45,18 @@ pnpm install
 pnpm dev
 ```
 
-Unpackaged development builds use a separate **Coworker Development** data profile. Set `COWORKER_DATA_PATH` to an absolute directory to use another isolated profile; packaged builds continue using the normal production data directory.
-
-The app ships with two starter coworkers — **Ava** (accounting) and **Sarah** (sales). Configure a provider and model before asking them to work; coworkers without a configured model show a notice instead of replying.
-
-To connect a real model, open **Settings → Model Providers**, add credentials, and verify the provider. Ollama (`http://127.0.0.1:11434/v1`) and LM Studio (`http://127.0.0.1:1234/v1`) work without an API key.
-
-Scripts, tests, evals, and packaging: [Development](docs/development.md)
+Add a model in **Settings → Model Providers** before chatting. See [Development](docs/development.md) for profiles, scripts, tests, and packaging.
 
 ## Terminal and headless mode
 
-Run Coworker without a window or tray while workers, schedules, Telegram, and Discord stay active. The CLI shares the desktop's profile and credentials, and installed macOS/Windows apps can start automatically at user login.
+Run Coworker without a window while schedules, Telegram, and Discord keep working.
 
 ```sh
 coworker start
 coworker status
-coworker startup enable --headless
 ```
 
-See the [terminal and headless guide](docs/cli.md) for CLI installation, commands, login startup, and testing.
-
-## Memory
-
-Tell a coworker, “Remember that I prefer invoice totals in SGD.” Its saved facts live in a separate `MEMORY.md` in its workspace and load on every new turn, across conversations and scheduled work. You can ask it to correct or forget an entry, too.
-
-The memory skill also lets the model suggest durable preferences you share naturally. Every proposed change requires your approval. The chat card shows the item with **Approve**, **Edit**, and **Reject** controls. Telegram and Discord show the same text and support approval buttons or editing by reply. Nothing is saved while a proposal is pending.
-
-To edit saved memory directly, right-click the coworker in the chat sidebar, open its settings, edit **Saved memory (Markdown)**, and click **Save memory**. These user-operated edits save directly, as do the terminal commands:
-
-```sh
-coworker coworkers list
-coworker memory show COWORKER_ID
-coworker memory set COWORKER_ID --file notes.md
-coworker memory clear COWORKER_ID
-```
-
-Memory is limited to 8,000 characters per coworker. `set` replaces the whole file. Saved memory is included in context sent to your selected model, including a cloud provider if you use one. See the [memory guide](docs/memory.md) for editing, revision checks, and data handling.
+See the [terminal guide](docs/cli.md).
 
 ## Docs
 

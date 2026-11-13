@@ -57,7 +57,7 @@ See the [memory guide](memory.md) for examples, limits, and privacy details.
 - Document export to PDF, Word DOCX, Excel XLSX, and CSV from semantic Markdown
 - Email drafts (`.eml` outbox by default) and approval-gated sending via Resend
 - Web search with Tavily, Exa, Firecrawl, and SerpAPI credential fallback, working without a key on Firecrawl's free tier
-- Photos from web search results shown as a collage above a chat reply when the coworker judges they help (for example listings, venues, or products), or whenever you ask for pictures ("show me photos of…", "include photos"); click a photo to view it larger
+- Photos from web search results when the coworker judges they help (for example listings, venues, or products), or whenever you ask for pictures ("show me photos of…", "include photos"). Photos appear beside the result they belong to, or as a collage above the reply; click one to open a viewer with that result's photos
 
 ## Skills
 
@@ -96,6 +96,7 @@ On upgrade, existing bots stay paired and future messages start in fresh bot-spe
 ## Platform
 
 - Tray/background operation and launch-at-login controls
+- Update check at startup and from **Check for Updates** in the app menu (**Coworker** on macOS, **Help** on Windows and Linux); a notice links to the GitHub release to download it manually
 - electron-builder packaging for macOS, Windows, and Linux
 - OS-backed encrypted model and integration credentials
 - Redacted application diagnostics with downloadable ZIP support bundles

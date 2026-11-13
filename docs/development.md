@@ -2,6 +2,10 @@
 
 Requires **Node.js 22.12+** and **pnpm**. See the [main README](../README.md#development) for the quick start.
 
+Unpackaged development builds use a separate **Coworker Development** data profile. Set `COWORKER_DATA_PATH` to an absolute directory to use another isolated profile; packaged builds keep using the normal production data directory.
+
+The app ships with two starter coworkers, **Ava** (accounting) and **Sarah** (sales). Add a provider and model in **Settings → Model Providers** before asking them to work; coworkers without a model show a notice instead of replying. Ollama (`http://127.0.0.1:11434/v1`) and LM Studio (`http://127.0.0.1:1234/v1`) work without an API key.
+
 ## Scripts
 
 | Command | What it does |
