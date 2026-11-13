@@ -140,6 +140,31 @@ describe("message image collage", () => {
     expect(document.activeElement).toBe(card);
   });
 
+  it("keeps showing the open photo when an earlier one finishes loading", async () => {
+    let finish!: (value: ImageAttachmentData) => void;
+    stubReads((_setId, index) =>
+      index === 0 ? new Promise<ImageAttachmentData>((resolve) => (finish = resolve)) : loaded(),
+    );
+    render(<MessageImageCollage images={images(3)} />);
+    await waitFor(() => expect(screen.getAllByRole("button")).toHaveLength(2));
+
+    fireEvent.click(screen.getByRole("button", { name: "View larger: Listing 3" }));
+    const dialog = screen.getByRole("dialog", { name: "Image viewer" });
+    const shownTitle = () => dialog.querySelector(".image-lightbox-slide:not([aria-hidden]) .image-lightbox-title")?.textContent;
+    expect(shownTitle()).toBe("Listing 3");
+    expect(dialog.textContent).toContain("2 of 2");
+
+    finish({ data: pixel, mimeType: "image/png" });
+    await waitFor(() => expect(dialog.textContent).toContain("3 of 3"));
+    expect(shownTitle()).toBe("Listing 3");
+    expect(
+      screen.getByRole("button", { name: "Show image 3: Listing 3" }).getAttribute("aria-current"),
+    ).toBe("true");
+
+    fireEvent.click(screen.getByRole("button", { name: "Previous image" }));
+    expect(shownTitle()).toBe("Listing 2");
+  });
+
   it("shows captions as text and omits a source that is not HTTPS", async () => {
     stubReads(loaded);
     const [image] = images(1);

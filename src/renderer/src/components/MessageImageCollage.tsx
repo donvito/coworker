@@ -24,7 +24,7 @@ interface LightboxSlide {
 
 /** A slide on its way out of the carousel, and which way it leaves. */
 interface LeavingSlide {
-  index: number;
+  key: string;
   towards: 1 | -1;
 }
 
@@ -397,7 +397,10 @@ function ImageLightbox({
   cardRect: (key: string) => DOMRect | null;
   onClose: (lastKey: string) => void;
 }) {
-  const [index, setIndex] = useState(initialIndex);
+  // Slides join as photos finish loading, so the shown photo is tracked by key;
+  // its position is only remembered for when it drops out.
+  const [currentKey, setCurrentKey] = useState(() => slides[initialIndex]?.key ?? null);
+  const lastIndex = useRef(initialIndex);
   const [leaving, setLeaving] = useState<LeavingSlide | null>(null);
   const [stepped, setStepped] = useState(false);
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -407,8 +410,11 @@ function ImageLightbox({
   const running = useRef<Animation[]>([]);
   const closing = useRef(false);
   const count = slides.length;
-  const current = slides[Math.min(index, count - 1)];
-  const outgoing = leaving ? slides[leaving.index] : undefined;
+  const found = slides.findIndex((slide) => slide.key === currentKey);
+  const index = found >= 0 ? found : Math.min(lastIndex.current, count - 1);
+  lastIndex.current = index;
+  const current = slides[index];
+  const outgoing = leaving ? slides.find((slide) => slide.key === leaving.key) : undefined;
 
   useEffect(() => {
     closeRef.current?.focus();
@@ -483,9 +489,9 @@ function ImageLightbox({
     for (const animation of running.current) animation.cancel();
     running.current = [];
     const element = current ? slideRefs.current.get(current.key) : undefined;
-    setLeaving(element && canAnimate(element) ? { index, towards } : null);
+    setLeaving(element && current && canAnimate(element) ? { key: current.key, towards } : null);
     setStepped(true);
-    setIndex(nextIndex);
+    setCurrentKey(slides[nextIndex]?.key ?? null);
   }
 
   function step(offset: 1 | -1) {
