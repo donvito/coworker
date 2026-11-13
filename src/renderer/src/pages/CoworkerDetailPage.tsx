@@ -64,8 +64,8 @@ import { CoworkerSettingsModal } from "../components/CoworkerSettingsModal";
 import { WorkspaceTextApprovalCard } from "../components/WorkspaceTextApprovalCard";
 import { workspaceTextApproval } from "@shared/workspace-text-approval";
 import { ChatMarkdown } from "../components/ChatMarkdown";
-import { MessageImageCollage } from "../components/MessageImageCollage";
-import { placeMessageImages } from "../lib/message-image-placement";
+import { MessageImageCollage, MessageImageGallery } from "../components/MessageImageCollage";
+import { arrangeReplyImages, placeMessageImages } from "../lib/message-image-placement";
 import {
   attachImagesToolName,
   runIdFromAssistantMessageId,
@@ -1217,7 +1217,10 @@ function GroupConversationSurface({
                 </div>
               ) : null}
               {channelMessages.map((message) => {
-                const collageImages = channelCollageImages.get(message.id) ?? [];
+                const replyImages = arrangeReplyImages(
+                  channelCollageImages.get(message.id) ?? [],
+                  message.content,
+                );
                 const author = message.coworkerId
                   ? coworkers.find((item) => item.id === message.coworkerId)
                   : null;
@@ -1260,13 +1263,17 @@ function GroupConversationSurface({
                         {message.authorName}
                         <CopyTextButton text={message.content} />
                       </small>
-                      {collageImages.length > 0 ? <MessageImageCollage images={collageImages} /> : null}
-                      <div className="workroom-bubble">
-                        {uniqueAttachments.length > 0 ? (
-                          <PersistedMessageImages attachments={uniqueAttachments} />
+                      <MessageImageGallery images={replyImages.all}>
+                        {replyImages.collage.length > 0 ? (
+                          <MessageImageCollage images={replyImages.collage} />
                         ) : null}
-                        <ChatMarkdown>{message.content}</ChatMarkdown>
-                      </div>
+                        <div className="workroom-bubble">
+                          {uniqueAttachments.length > 0 ? (
+                            <PersistedMessageImages attachments={uniqueAttachments} />
+                          ) : null}
+                          <ChatMarkdown>{message.content}</ChatMarkdown>
+                        </div>
+                      </MessageImageGallery>
                     </div>
                   </div>
                 );
@@ -3233,7 +3240,6 @@ function CoworkerSurface({
                 previousMessageDay = dayKey;
                 const content = textFromMessageContent(message.content);
                 const inlineImages = imagesFromMessageContent(message.content);
-                const collageImages = collageImagesByMessage.get(message.id) ?? [];
                 const storedMessage = storedMessagesById.get(message.id);
                 const persistedImages =
                   inlineImages.length === 0 && storedMessage?.role === "user" && storedMessage.taskId
@@ -3251,6 +3257,10 @@ function CoworkerSurface({
                   replyTarget && storedMessage?.taskId
                     ? extractFollowUpReply(tasksById.get(storedMessage.taskId)?.input ?? "")
                     : null;
+                const replyImages = arrangeReplyImages(
+                  collageImagesByMessage.get(message.id) ?? [],
+                  `${shownContent}\n${originalReply ?? ""}`,
+                );
                 return (
                   <Fragment key={message.id}>
                     {renderApprovalEntries(dueApprovals)}
@@ -3263,7 +3273,10 @@ function CoworkerSurface({
                       className={`workroom-turn workroom-turn-${message.role}`}
                       data-message-role={message.role}
                     >
-                    {collageImages.length > 0 ? <MessageImageCollage images={collageImages} /> : null}
+                    <MessageImageGallery images={replyImages.all}>
+                    {replyImages.collage.length > 0 ? (
+                      <MessageImageCollage images={replyImages.collage} />
+                    ) : null}
                     {content || imageCount > 0 ? (
                       <div
                         className={`workroom-bubble${imageCount > 0 ? " workroom-bubble-with-images" : ""}`}
@@ -3310,6 +3323,7 @@ function CoworkerSurface({
                         ) : null}
                       </div>
                     ) : null}
+                    </MessageImageGallery>
                     {toolCalls.map((toolCall) => {
                       const toolMessage = agent.messages.find(
                         (candidate): candidate is ToolMessage =>

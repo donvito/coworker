@@ -14,6 +14,7 @@ const scenarios = [
     name: "shows photos for a place-to-stay search",
     prompt: "Find me an Airbnb in Lisbon for four people in May. Give me three options.",
     shouldShowImages: true,
+    placesPhotosInline: true,
   },
   {
     name: "shows photos for an event venue search",
@@ -227,7 +228,7 @@ describeEval(
           (call) => (call.result as { images?: unknown[] } | null)?.images ?? [],
         );
         expect(shown.length).toBeGreaterThanOrEqual(1);
-        expect(shown.length).toBeLessThanOrEqual(6);
+        expect(shown.length).toBeLessThanOrEqual(20);
       } else {
         expect(calls.some((call) => call.name === "chat.attach_images")).toBe(false);
       }
@@ -235,8 +236,13 @@ describeEval(
         .filter((message) => message.role === "assistant")
         .map((message) => message.content)
         .join("\n");
-      expect(reply).not.toMatch(/!\[[^\]]*\]\(/);
+      // Markdown images may only name attached photos by ref, never by address.
+      expect(reply).not.toMatch(/!\[[^\]]*\]\((?!\s*<?image:\d+>?\s*\))/);
       expect(reply).not.toContain(fixtureImageHost);
+      if ("placesPhotosInline" in scenario && scenario.placesPhotosInline) {
+        // Photos of listed options sit beside the options, not only above the reply.
+        expect(reply).toMatch(/!\[[^\]]*\]\(image:\d+\)/);
+      }
     });
   },
 );

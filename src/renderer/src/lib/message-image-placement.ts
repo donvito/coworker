@@ -1,4 +1,6 @@
 import {
+  inlineImageRefs,
+  maxCollageImages,
   maxMessageImages,
   type MessageImage,
   type MessageImageSet,
@@ -51,4 +53,22 @@ export function placeMessageImages(input: {
     placed.set(target.id, images);
   }
   return placed;
+}
+
+/**
+ * Splits a reply's photos into those its text places inline with
+ * `![caption](image:N)` and the rest, which go in the collage above it (up to
+ * its limit). The viewer steps through inline photos in reading order, then the rest.
+ */
+export function arrangeReplyImages(
+  images: PlacedMessageImage[],
+  markdown: string,
+): { all: PlacedMessageImage[]; collage: PlacedMessageImage[] } {
+  if (images.length === 0) return { all: images, collage: images };
+  const inline = inlineImageRefs(markdown).flatMap((ref) => {
+    const image = images.find((candidate) => candidate.ref === ref);
+    return image ? [image] : [];
+  });
+  const rest = images.filter((image) => !inline.includes(image));
+  return { all: [...inline, ...rest], collage: rest.slice(0, maxCollageImages) };
 }

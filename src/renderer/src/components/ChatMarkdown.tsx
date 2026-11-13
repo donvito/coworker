@@ -2,8 +2,11 @@ import ReactMarkdown from "react-markdown";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import type { Artifact } from "@shared/contracts";
+import { imageRefFromSource } from "@shared/message-images";
 import { ArtifactActions, artifactExtension, artifactKind } from "./ArtifactActions";
 import { Icon } from "./Icon";
+import { InlineMessageImages } from "./MessageImageCollage";
+import { inlineImageGroupFromProps, rehypeInlineImageGroups } from "../lib/inline-image-groups";
 import { formatRelativeTime } from "./Primitives";
 
 const browsableSchemes = ["http:", "https:", "mailto:"];
@@ -66,6 +69,8 @@ export function ChatMarkdown({
         // now disables because it also made the newlines react-markdown emits
         // between block elements render as blank lines.
         remarkPlugins={[remarkGfm, remarkBreaks]}
+        // Photos placed side by side with `![caption](image:N)` belong to one item.
+        rehypePlugins={[rehypeInlineImageGroups]}
         // Keep the raw href so invented `sandbox:` links can be matched to an
         // artifact; only http(s)/mailto ever reach an anchor below.
         urlTransform={(url) => url}
@@ -82,7 +87,18 @@ export function ChatMarkdown({
               </a>
             );
           },
-          img: ({ alt }) => <span className="chat-markdown-image-note">[Image: {alt || "image"}]</span>,
+          span: ({ node: _node, ...props }) => {
+            const group = inlineImageGroupFromProps(props as Record<string, unknown>);
+            if (group) return <InlineMessageImages captions={group.captions} imageRefs={group.refs} />;
+            return <span {...props} />;
+          },
+          img: ({ alt, src }) => {
+            // Only a ref to a photo attached to this reply shows a picture
+            // (grouped above); any other image address stays text and is never loaded.
+            const ref = imageRefFromSource(typeof src === "string" ? src : undefined);
+            if (ref) return <InlineMessageImages captions={[alt]} imageRefs={[ref]} />;
+            return <span className="chat-markdown-image-note">[Image: {alt || "image"}]</span>;
+          },
         }}
       >
         {children}

@@ -8,6 +8,7 @@ import { bundledSkills, bundledWebSearchSkillId, parseSkillMarkdown } from "@mai
 import { webSearchCredentialKey } from "@main/integrations/web-search";
 import { formatModelSelectableSkills } from "@shared/pi-skill-prompt";
 import { defaultEnabledBundledSkillNames, toolNamesForSkills } from "@shared/skill-capabilities";
+import { maxMessageImages } from "@shared/message-images";
 import { getToolCatalogEntry } from "@shared/tool-catalog";
 
 const temporaryPaths: string[] = [];
@@ -140,7 +141,9 @@ describe("search-result-images skill package", () => {
     expect(content).toContain("includeImages: true");
     expect(content).toContain("chat.attach_images");
     expect(content).toContain("references/examples.md");
-    expect(content).toContain("Do not paste image URLs or use Markdown image syntax");
+    expect(content).toContain("## Place each photo beside its item");
+    expect(content).toContain("![short caption](image:1)");
+    expect(content).toContain("Never paste image URLs into the reply");
     const examples = Buffer.from(skill!.resources[0]!.content).toString("utf8");
     expect(examples).toContain("## Show images");
     expect(examples).toContain("## The user asked for images");
@@ -207,7 +210,12 @@ describe("image attachment boundary", () => {
       result: {
         attached: 1,
         images: [
-          { url: "https://cdn.example.com/villa.jpg", alt: "Beach villa with pool", sourceUrl: null },
+          {
+            url: "https://cdn.example.com/villa.jpg",
+            alt: "Beach villa with pool",
+            sourceUrl: null,
+            ref: "image:1",
+          },
         ],
       },
     });
@@ -225,10 +233,24 @@ describe("image attachment boundary", () => {
         coworkerId: coworker.id,
         createdAt: audited!.completedAt,
         images: [
-          { url: "https://cdn.example.com/villa.jpg", alt: "Beach villa with pool", sourceUrl: null },
+          {
+            url: "https://cdn.example.com/villa.jpg",
+            alt: "Beach villa with pool",
+            sourceUrl: null,
+            ref: "image:1",
+          },
         ],
       },
     ]);
+
+    // A second attachment call in the same task keeps counting, so refs stay unique.
+    const more = await call(coworker, task, "chat.attach_images", {
+      images: [{ url: "https://cdn.example.com/loft.jpg", alt: "City loft" }],
+    });
+    expect(more).toMatchObject({
+      kind: "completed",
+      result: { images: [{ url: "https://cdn.example.com/loft.jpg", ref: "image:2" }] },
+    });
   });
 
   it("is unavailable without the skill and never bypasses a denied policy", async () => {
@@ -256,7 +278,7 @@ describe("image attachment boundary", () => {
     for (const args of [
       {},
       { images: [] },
-      { images: Array.from({ length: 7 }, () => image) },
+      { images: Array.from({ length: maxMessageImages + 1 }, () => image) },
       { images: [{ url: image.url }] },
       { images: [{ url: image.url, alt: "x".repeat(201) }] },
       { images: ["https://cdn.example.com/villa.jpg"] },

@@ -40,6 +40,7 @@ import {
   attachImagesToolName,
   imageReferencesFromToolResult,
   maxMessageImages,
+  messageImagesFromToolResult,
   resolveMessageImages,
 } from "@shared/message-images";
 import { skillEnablesTool } from "@shared/skill-capabilities";
@@ -743,16 +744,26 @@ export class ToolGateway {
         // Only images a controlled tool already returned in this task may be
         // shown, so page text or a model cannot make the app load a URL of
         // its own construction.
-        const references = this.database
+        const taskCalls = this.database
           .listToolCalls(toolCall.taskId)
-          .filter((call) => call.status === "COMPLETED" && call.toolName !== attachImagesToolName)
+          .filter((call) => call.status === "COMPLETED");
+        const references = taskCalls
+          .filter((call) => call.toolName !== attachImagesToolName)
           .flatMap((call) => imageReferencesFromToolResult(call.result));
+        // Refs keep counting across attachment calls so each stays unique in the task.
+        const previouslyAttached = taskCalls
+          .filter((call) => call.toolName === attachImagesToolName)
+          .reduce((total, call) => total + messageImagesFromToolResult(call.result).length, 0);
         if (references.length === 0) {
           throw new Error(
             "No image was attached. No tool has returned images in this task. Request them first, for example web.search with includeImages set to true, then pass url values from that result's images list.",
           );
         }
-        const { images, rejected } = resolveMessageImages(args.images, references);
+        const { images, rejected } = resolveMessageImages(
+          args.images,
+          references,
+          previouslyAttached,
+        );
         if (images.length === 0) {
           throw new Error(`No image was attached. ${rejected[0]?.reason ?? "Use a url value from a tool result's images list."}`);
         }
@@ -760,7 +771,7 @@ export class ToolGateway {
           attached: images.length,
           images,
           ...(rejected.length > 0 ? { rejected } : {}),
-          note: "These images are displayed above your next chat reply. Do not repeat their URLs or use Markdown image syntax in the reply.",
+          note: "To show a photo beside the item it belongs to, write ![short caption](ref) at that spot in your reply, using the image's ref, for example in a Photo column of a table. Write several refs of the same item side by side, separated only by spaces, to show them as that item's photos. Images you do not place this way are shown above the reply. Never write image URLs in the reply.",
         };
       }
       case "browser.start_session": {

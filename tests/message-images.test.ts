@@ -2,17 +2,25 @@ import { describe, expect, it } from "vitest";
 import type { ToolCall } from "@shared/contracts";
 import {
   assistantMessageId,
+  imageRefFromSource,
   imageReferencesFromToolResult,
+  inlineImageRefs,
   maxImageReferences,
   maxMessageImages,
   messageImageSetFromToolCall,
+  messageImagesFromToolResult,
   normalizeImageReferences,
   publicHttpsUrl,
   resolveMessageImages,
   runIdFromAssistantMessageId,
   type MessageImageSet,
 } from "@shared/message-images";
-import { placeMessageImages, type PlaceableMessage } from "../src/renderer/src/lib/message-image-placement";
+import {
+  arrangeReplyImages,
+  placeMessageImages,
+  type PlaceableMessage,
+  type PlacedMessageImage,
+} from "../src/renderer/src/lib/message-image-placement";
 
 describe("public image URLs", () => {
   it("accepts only public HTTPS addresses", () => {
@@ -115,8 +123,21 @@ describe("resolving attached images against returned references", () => {
         sourceUrl: "https://stays.example.com/rooms/1",
         width: 1200,
         height: 800,
+        ref: "image:1",
       },
     ]);
+  });
+
+  it("numbers refs after the images earlier calls in the task attached", () => {
+    const { images } = resolveMessageImages(
+      [
+        { url: "https://cdn.example.com/villa.jpg", alt: "Villa" },
+        { url: "https://cdn.example.com/loft.jpg", alt: "Loft" },
+      ],
+      references,
+      3,
+    );
+    expect(images.map((image) => image.ref)).toEqual(["image:4", "image:5"]);
   });
 
   it("rejects URLs no tool returned, including look-alikes and unsafe schemes", () => {
@@ -138,15 +159,20 @@ describe("resolving attached images against returned references", () => {
   });
 
   it("never attaches more than the per-reply limit", () => {
-    const many = normalizeImageReferences(
-      Array.from({ length: 10 }, (_, index) => ({ url: `https://cdn.example.com/${index}.jpg` })),
-    );
+    // Several searches, one per item, together return more than a reply can show.
+    const many = Array.from({ length: 3 }, (_, search) =>
+      normalizeImageReferences(
+        Array.from({ length: 10 }, (_, index) => ({
+          url: `https://cdn.example.com/${search}-${index}.jpg`,
+        })),
+      ),
+    ).flat();
     const { images, rejected } = resolveMessageImages(
       many.map((reference) => ({ url: reference.url, alt: "Photo" })),
       many,
     );
     expect(images).toHaveLength(maxMessageImages);
-    expect(rejected).toHaveLength(10 - maxMessageImages);
+    expect(rejected).toHaveLength(many.length - maxMessageImages);
   });
 });
 
@@ -254,7 +280,7 @@ describe("placing image sets above replies", () => {
       createdAt: "2026-01-01T10:00:12.000Z",
       images: [
         set.images[1]!,
-        ...Array.from({ length: 6 }, (_, index) => ({
+        ...Array.from({ length: maxMessageImages }, (_, index) => ({
           url: `https://cdn.example.com/extra-${index}.jpg`,
           alt: `Extra ${index}`,
           sourceUrl: null,
@@ -282,5 +308,54 @@ describe("placing image sets above replies", () => {
       runningTaskIds: new Set(),
     });
     expect(placed.size).toBe(0);
+  });
+});
+
+describe("photos placed inside a reply", () => {
+  it("reads refs only from Markdown images, in reading order, without repeats", () => {
+    const markdown = [
+      "| Photo | Listing |",
+      "| --- | --- |",
+      "| ![Loft](image:2) | City loft |",
+      "| ![Villa](<image:1>) | Villa, see image:3 |",
+      "![Again](image:2) ![Remote](https://cdn.example.com/a.jpg) ![Bad](image:0) [link](image:4)",
+    ].join("\n");
+    expect(inlineImageRefs(markdown)).toEqual(["image:2", "image:1"]);
+  });
+
+  it("accepts only the ref form as an inline image source", () => {
+    expect(imageRefFromSource("image:3")).toBe("image:3");
+    for (const source of [undefined, "", "image:0", "image:1x", "https://cdn.example.com/a.jpg", "IMAGE:1"]) {
+      expect(imageRefFromSource(source), String(source)).toBeNull();
+    }
+  });
+
+  it("keeps a recorded ref and drops a malformed one", () => {
+    expect(
+      messageImagesFromToolResult({
+        images: [
+          { url: "https://cdn.example.com/a.jpg", alt: "A", sourceUrl: null, ref: "image:1" },
+          { url: "https://cdn.example.com/b.jpg", alt: "B", sourceUrl: null, ref: "https://evil" },
+        ],
+      }),
+    ).toEqual([
+      { url: "https://cdn.example.com/a.jpg", alt: "A", sourceUrl: null, ref: "image:1" },
+      { url: "https://cdn.example.com/b.jpg", alt: "B", sourceUrl: null },
+    ]);
+  });
+
+  it("puts placed photos first for the viewer and leaves the rest for the collage", () => {
+    const photos: PlacedMessageImage[] = [1, 2, 3].map((number) => ({
+      setId: "set-1",
+      index: number - 1,
+      url: `https://cdn.example.com/${number}.jpg`,
+      alt: `Photo ${number}`,
+      sourceUrl: null,
+      ref: `image:${number}`,
+    }));
+    const { all, collage } = arrangeReplyImages(photos, "![](image:3) and ![](image:1) and ![](image:9)");
+    expect(all.map((image) => image.ref)).toEqual(["image:3", "image:1", "image:2"]);
+    expect(collage.map((image) => image.ref)).toEqual(["image:2"]);
+    expect(arrangeReplyImages(photos, "No photos placed").collage).toEqual(photos);
   });
 });

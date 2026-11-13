@@ -6,11 +6,11 @@ Use these to calibrate, not as a lookup table. The question is always whether se
 
 | Request | Why | What to pick |
 | --- | --- | --- |
-| "Find me an Airbnb in Lisbon for four people in May." | The user is choosing between places and will judge them by how they look. | One photo per listing you recommend, in the order you list them. |
-| "Suggest a venue for a 60-person team offsite near Austin." | Venues are chosen by space and feel. | One photo of each shortlisted venue; skip floor plans and logos. |
+| "Find me an Airbnb in Lisbon for four people in May." | The user is choosing between places and will judge them by how they look. | Look up each listing you recommend and place 2 to 4 of its photos beside it. |
+| "Suggest a venue for a 60-person team offsite near Austin." | Venues are chosen by space and feel. | Look up each shortlisted venue and place 2 to 3 photos of the space beside it; skip floor plans and logos. |
 | "What does a Shiba Inu look like next to an Akita?" | The user asked to see the difference. | One clear photo of each breed. |
-| "Which standing desk should I buy under $500?" | Products are compared partly on appearance. | One product photo per recommended desk; skip banners and size charts. |
-| "Show me the house Frank Lloyd Wright built over a waterfall." | An explicit request to see a single subject. | One photo, two at most. |
+| "Which standing desk should I buy under $500?" | Products are compared partly on appearance. | Look up each recommended desk and place 2 to 3 product photos beside it: different angles, not near-duplicates. Skip banners and size charts. |
+| "Show me the house Frank Lloyd Wright built over a waterfall." | An explicit request to see a single subject. | One photo, two at most, left in the collage above the reply. |
 
 ## The user asked for images
 
@@ -23,7 +23,7 @@ An explicit request is enough on its own, even for subjects you would otherwise 
 | "Show me the current Node.js logo." | The user wants a logo, so a logo is the right image. | The official logo, one image. |
 | "Find me three hotels near Gion, with pictures." | Pictures were requested for a set of options. | One photo per hotel you recommend. |
 | "Can I see the second one?" after a list of venues | A follow-up about an earlier result. | Search again with `includeImages: true` for that venue and show 1 to 3 photos of it. |
-| "Show me 5 pictures of Fallingwater." | A requested count, within the limit of 6. | Five distinct photos; fewer only if the search did not return five good ones. |
+| "Show me 5 pictures of Fallingwater." | A requested count, within the limit of 20. | Five distinct photos; fewer only if the search did not return five good ones. |
 
 Still skip images, even when asked, when:
 
@@ -53,3 +53,11 @@ Still skip images, even when asked, when:
 - "Tell me about the Golden Gate Bridge": the user asked for information. One photo is reasonable; a collage is not.
 - "Compare the iPhone and Pixel cameras": the answer is about specifications and sample quality. Skip images unless the user asks to see the phones.
 - The search returned four photos but three are from the same listing: show one from that listing and one from each other option you mention, or just the one if nothing else fits.
+
+## Several photos of each option
+
+- "Find three Airbnbs in BGC for a family of four": look up each of the three listings by name and show up to 4 of its photos beside it. If a lookup returns three images all titled with the listing's name and all from its `airbnb.com/rooms/...` page, those are three different photos of the listing: attach all three. If one listing's lookup returns only photos of the building's lobby or other units, show one exterior photo or none for that listing rather than misleading ones.
+- "Compare the Sony WH-1000XM5 and Bose QuietComfort Ultra": two products judged partly by look. Up to 3 photos of each: the headphones themselves from different angles. Skip box shots, banners, and photos of the other model.
+- "Recommend a nice mechanical keyboard": the lookup for the Logitech MX Mechanical Mini returns three images all titled "MX Mechanical Mini" from logitech.com, with file names `...keyboard-3qtr-graphite-us.png`, `...keyboard-top-side-view-graphite-us.png`, and `...feature-video-thumbnail.jpg`. Attach the first two side by side; skip the video thumbnail. Attaching only one would waste the second angle.
+- "Find a dentist near me": not chosen by looks. No lookups, no photos.
+- "Show me more photos of the second listing": one lookup for that listing alone, up to 6 photos, shown in the collage above the reply.

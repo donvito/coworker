@@ -17,6 +17,11 @@ export interface MessageImage {
   sourceUrl: string | null;
   width?: number;
   height?: number;
+  /**
+   * Short handle, unique within the task, that the reply can write as
+   * `![caption](image:1)` to show the photo at that spot instead of above it.
+   */
+  ref?: string;
 }
 
 /** The images one completed attachment call added to a task's reply. */
@@ -29,10 +34,40 @@ export interface MessageImageSet {
 }
 
 export const attachImagesToolName = "chat.attach_images";
-export const maxMessageImages = 6;
+/** Photos one reply can carry, enough for a few photos of each of several items. */
+export const maxMessageImages = 20;
+/** Unplaced photos shown in the collage above a reply; the rest open in its viewer. */
+export const maxCollageImages = 6;
 export const maxImageReferences = 12;
 
 const maxUrlLength = 2_000;
+const imageRefPattern = /^image:([1-9]\d{0,2})$/;
+
+export function messageImageRef(number: number): string {
+  return `image:${number}`;
+}
+
+function validImageRef(value: unknown): string | undefined {
+  return typeof value === "string" && imageRefPattern.test(value) ? value : undefined;
+}
+
+/**
+ * The image refs a reply places inline, in the order it writes them. Only the
+ * `![caption](image:N)` form counts, so a ref mentioned in prose is ignored.
+ */
+export function inlineImageRefs(markdown: string): string[] {
+  const refs: string[] = [];
+  for (const match of markdown.matchAll(/!\[[^\]\n]*\]\(\s*<?(image:[1-9]\d{0,2})>?\s*\)/g)) {
+    const ref = match[1];
+    if (ref && !refs.includes(ref)) refs.push(ref);
+  }
+  return refs;
+}
+
+/** Ref from an inline Markdown image source, or null for any other address. */
+export function imageRefFromSource(source: string | undefined): string | null {
+  return validImageRef(source?.trim()) ?? null;
+}
 const internalHostSuffixes = [".localhost", ".local", ".internal", ".lan", ".home", ".corp"];
 
 /**
@@ -116,6 +151,8 @@ export interface ResolvedMessageImages {
 export function resolveMessageImages(
   requested: Array<{ url: string; alt: string }>,
   references: ImageReference[],
+  /** Images earlier attachment calls in the task already numbered. */
+  previouslyAttached = 0,
 ): ResolvedMessageImages {
   const known = new Map(references.map((reference) => [reference.url, reference]));
   const images: MessageImage[] = [];
@@ -146,6 +183,7 @@ export function resolveMessageImages(
       ...(reference.width && reference.height
         ? { width: reference.width, height: reference.height }
         : {}),
+      ref: messageImageRef(previouslyAttached + images.length + 1),
     });
   }
   return { images, rejected };
@@ -164,11 +202,13 @@ export function messageImagesFromToolResult(result: unknown): MessageImage[] {
       if (!url) return [];
       const width = dimension(record.width);
       const height = dimension(record.height);
+      const ref = validImageRef(record.ref);
       return [{
         url,
         alt: shortText(record.alt, 200) || "Image",
         sourceUrl: publicHttpsUrl(record.sourceUrl),
         ...(width && height ? { width, height } : {}),
+        ...(ref ? { ref } : {}),
       }];
     })
     .slice(0, maxMessageImages);
