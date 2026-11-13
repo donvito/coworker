@@ -5179,6 +5179,13 @@ select:focus {
   box-shadow: 0 2px 10px color-mix(in srgb, var(--shadow-color) 4%, transparent);
 }
 
+/* Replies carry tables and photos, so they get more room than the user's own
+   messages, while staying narrow enough for comfortable line lengths. */
+.workroom-turn-assistant .workroom-bubble,
+.conversation-thread .workroom-turn-assistant .workroom-bubble {
+  max-width: min(800px, 94%);
+}
+
 .conversation-thread .workroom-turn-user .workroom-bubble {
   color: #f2f7f4;
   background: var(--forest);
@@ -5363,12 +5370,203 @@ select:focus {
 .chat-markdown td {
   padding: 4px 6px;
   text-align: left;
+  /* "anywhere" lets auto table layout squeeze a column until words split
+     mid-letter; break-word keeps whole words in the column's minimum width
+     and still breaks a word that is longer than the whole column. */
+  overflow-wrap: break-word;
   border: 1px solid var(--line);
 }
 
 .chat-markdown-image-note {
   color: var(--ink-soft);
   font-style: italic;
+}
+
+/* A photo the reply placed beside the item it shows, e.g. in a table row. */
+.chat-inline-image {
+  display: inline-block;
+  overflow: hidden;
+  width: 96px;
+  max-width: 100%;
+  aspect-ratio: 4 / 3;
+  flex: none;
+  padding: 0;
+  margin: 2px 8px 2px 0;
+  vertical-align: middle;
+  cursor: zoom-in;
+  background: var(--cloud);
+  border: 0;
+  border-radius: 10px;
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--shadow-color) 18%, transparent);
+  transition:
+    transform 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.chat-inline-image img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  user-select: none;
+}
+
+button.chat-inline-image:hover {
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--shadow-color) 26%, transparent);
+  transform: scale(1.04);
+}
+
+button.chat-inline-image:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+
+.chat-inline-image.loading {
+  cursor: progress;
+  background: linear-gradient(
+    100deg,
+    var(--cloud) 20%,
+    color-mix(in srgb, var(--white) 70%, var(--cloud)) 45%,
+    var(--cloud) 70%
+  );
+  background-size: 220% 100%;
+  animation: message-image-shimmer 1.4s ease-in-out infinite;
+}
+
+button.chat-inline-image {
+  position: relative;
+}
+
+.chat-inline-image-more {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  padding: 2px 7px;
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.4;
+  background: rgba(9, 14, 12, 0.66);
+  border-radius: 999px;
+  backdrop-filter: blur(4px);
+}
+
+/* Several photos of one item: a small loose collage, like the one above replies. */
+.chat-inline-image-group {
+  --group-card-width: 118px;
+  display: inline-flex;
+  max-width: 100%;
+  align-items: flex-end;
+  padding: 8px 10px 10px 4px;
+  margin: 2px 6px 2px 0;
+  vertical-align: middle;
+}
+
+.chat-inline-image-group .chat-inline-image {
+  position: relative;
+  width: var(--group-card-width);
+  min-width: 0;
+  flex: 0 1 auto;
+  margin: 0;
+  border-radius: 12px;
+  box-shadow:
+    0 8px 18px color-mix(in srgb, var(--shadow-color) 20%, transparent),
+    0 2px 6px color-mix(in srgb, var(--shadow-color) 12%, transparent);
+  transform: rotate(var(--card-tilt, 0deg)) translateY(var(--card-drop, 0));
+}
+
+.chat-inline-image-group .chat-inline-image + .chat-inline-image {
+  margin-left: calc(var(--group-card-width) * -0.22);
+}
+
+.chat-inline-image-group .chat-inline-image:nth-child(1) {
+  z-index: 2;
+  --card-tilt: -3deg;
+}
+
+.chat-inline-image-group .chat-inline-image:nth-child(2) {
+  z-index: 3;
+  --card-tilt: 2deg;
+  --card-drop: 6px;
+  border: 3px solid #ffffff;
+}
+
+.chat-inline-image-group .chat-inline-image:nth-child(3) {
+  z-index: 1;
+  --card-tilt: 4deg;
+  --card-drop: -4px;
+}
+
+.chat-inline-image-group .chat-inline-image:nth-child(4) {
+  z-index: 0;
+  --card-tilt: -2deg;
+  --card-drop: 3px;
+}
+
+.chat-inline-image-group button.chat-inline-image:hover,
+.chat-inline-image-group button.chat-inline-image:focus-visible {
+  z-index: 6;
+  transform: rotate(calc(var(--card-tilt, 0deg) / 3)) scale(1.06);
+}
+
+/* In a table the photos fan more tightly so the text columns keep their room. */
+.chat-markdown td .chat-inline-image-group {
+  --group-card-width: 76px;
+  padding: 6px 8px 8px 2px;
+  margin: 0;
+}
+
+.chat-markdown td .chat-inline-image-group .chat-inline-image + .chat-inline-image {
+  margin-left: calc(var(--group-card-width) * -0.5);
+}
+
+/* Text columns keep enough width for a short name per line. */
+.chat-markdown :is(th, td):not(:has(> :is(.chat-inline-image, .chat-inline-image-group):only-child)) {
+  min-width: 8em;
+}
+
+.chat-markdown td:has(> .chat-inline-image-group:only-child) {
+  width: 1%;
+  padding: 4px 8px;
+  white-space: nowrap;
+}
+
+/* A list item that starts with its photos: photos on the left, text beside them. */
+.chat-markdown li > :is(.chat-inline-image, .chat-inline-image-group):first-child,
+.chat-markdown li > p:first-child > :is(.chat-inline-image, .chat-inline-image-group):first-child {
+  float: left;
+  margin: 2px 14px 8px 0;
+}
+
+.chat-markdown li:has(> :is(.chat-inline-image, .chat-inline-image-group):first-child)::after,
+.chat-markdown li:has(> p:first-child > :is(.chat-inline-image, .chat-inline-image-group):first-child)::after {
+  display: table;
+  clear: both;
+  content: "";
+}
+
+.chat-markdown li:has(> :is(.chat-inline-image, .chat-inline-image-group):first-child) + li {
+  margin-top: 6px;
+}
+
+.chat-markdown td:has(> .chat-inline-image:only-child) {
+  width: 1%;
+  padding: 6px;
+}
+
+.chat-markdown td > .chat-inline-image:only-child {
+  margin: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-inline-image,
+  .chat-inline-image-group .chat-inline-image {
+    transition: none;
+  }
+
+  .chat-inline-image.loading {
+    animation: none;
+  }
 }
 
 /* A file the coworker created, shown inline in the message. Mirrors
@@ -10471,3 +10669,484 @@ button.tag-chip[aria-pressed="true"] {
 .folder-picker input[type="checkbox"], .folder-picker input[type="radio"] { width: 16px; height: 16px; margin-right: 6px; }
 .folder-picker-list label { display: flex; align-items: center; gap: 4px; font-size: 12px; }
 @media (max-width: 800px) { .workspace-file-row { flex-wrap: wrap; } .workspace-file-name { flex-basis: calc(100% - 50px); } }
+
+/* Photos a coworker attached to a reply: a loose stack of tilted cards above
+   the answer. Sizes, tilt, and overlap come from the card's position. */
+.message-image-collage {
+  display: flex;
+  max-width: min(600px, 96%);
+  align-items: flex-end;
+  padding: 16px 18px 12px 10px;
+  margin-bottom: -6px;
+}
+
+.message-image-collage:is(.count-4, .count-5, .count-6) {
+  max-width: min(720px, 100%);
+}
+
+.message-image-card {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  height: var(--card-height, 150px);
+  min-width: 0;
+  flex: 0 1 auto;
+  aspect-ratio: var(--card-ratio, 1.333);
+  padding: 0;
+  margin: 0 0 var(--card-drop, 0) var(--card-overlap, 0);
+  cursor: zoom-in;
+  background: var(--cloud);
+  border: 0;
+  border-radius: 16px;
+  box-shadow:
+    0 14px 30px color-mix(in srgb, var(--shadow-color) 20%, transparent),
+    0 3px 8px color-mix(in srgb, var(--shadow-color) 12%, transparent);
+  transform: rotate(var(--card-tilt, 0deg));
+  transition:
+    transform 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.message-image-card img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  user-select: none;
+}
+
+button.message-image-card:hover,
+button.message-image-card:focus-visible {
+  z-index: 6;
+  box-shadow:
+    0 18px 38px color-mix(in srgb, var(--shadow-color) 26%, transparent),
+    0 4px 10px color-mix(in srgb, var(--shadow-color) 14%, transparent);
+  transform: rotate(calc(var(--card-tilt, 0deg) / 3)) scale(1.035);
+}
+
+button.message-image-card:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 3px;
+}
+
+.message-image-card:nth-child(3n + 2) {
+  border: 3px solid #ffffff;
+}
+
+.message-image-card.loading {
+  cursor: progress;
+  background: linear-gradient(
+    100deg,
+    var(--cloud) 20%,
+    color-mix(in srgb, var(--white) 70%, var(--cloud)) 45%,
+    var(--cloud) 70%
+  );
+  background-size: 220% 100%;
+  animation: message-image-shimmer 1.4s ease-in-out infinite;
+}
+
+@keyframes message-image-shimmer {
+  from {
+    background-position: 120% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+
+.message-image-collage.count-1 .message-image-card {
+  --card-height: 220px;
+  --card-tilt: -2deg;
+}
+
+.message-image-collage.count-2 .message-image-card:nth-child(1) {
+  --card-height: 196px;
+  --card-tilt: -4deg;
+  --card-drop: 14px;
+}
+
+.message-image-collage.count-2 .message-image-card:nth-child(2) {
+  z-index: 2;
+  --card-height: 146px;
+  --card-tilt: 3deg;
+  --card-overlap: -38px;
+}
+
+.message-image-collage.count-3 .message-image-card:nth-child(1) {
+  --card-height: 178px;
+  --card-tilt: -4deg;
+  --card-drop: 12px;
+}
+
+.message-image-collage.count-3 .message-image-card:nth-child(2) {
+  z-index: 2;
+  --card-height: 132px;
+  --card-tilt: 3deg;
+  --card-overlap: -34px;
+}
+
+.message-image-collage.count-3 .message-image-card:nth-child(3) {
+  z-index: 1;
+  --card-height: 154px;
+  --card-tilt: -2deg;
+  --card-overlap: -16px;
+  --card-drop: 26px;
+}
+
+.message-image-collage:is(.count-4, .count-5, .count-6) .message-image-card {
+  --card-overlap: -20px;
+}
+
+.message-image-collage:is(.count-4, .count-5, .count-6) .message-image-card:nth-child(1) {
+  --card-height: 150px;
+  --card-tilt: -4deg;
+  --card-drop: 10px;
+  --card-overlap: 0px;
+}
+
+.message-image-collage:is(.count-4, .count-5, .count-6) .message-image-card:nth-child(2) {
+  z-index: 2;
+  --card-height: 116px;
+  --card-tilt: 3deg;
+  --card-overlap: -30px;
+}
+
+.message-image-collage:is(.count-4, .count-5, .count-6) .message-image-card:nth-child(3) {
+  z-index: 1;
+  --card-height: 134px;
+  --card-tilt: -2deg;
+  --card-drop: 24px;
+  --card-overlap: -14px;
+}
+
+.message-image-collage:is(.count-4, .count-5, .count-6) .message-image-card:nth-child(4) {
+  z-index: 3;
+  --card-height: 112px;
+  --card-tilt: 4deg;
+  --card-drop: 2px;
+}
+
+.message-image-collage:is(.count-4, .count-5, .count-6) .message-image-card:nth-child(5) {
+  z-index: 2;
+  --card-height: 128px;
+  --card-tilt: -3deg;
+  --card-drop: 20px;
+}
+
+.message-image-collage:is(.count-4, .count-5, .count-6) .message-image-card:nth-child(6) {
+  z-index: 4;
+  --card-height: 110px;
+  --card-tilt: 2deg;
+  --card-drop: 6px;
+}
+
+.message-image-collage:is(.count-5, .count-6) .message-image-card {
+  height: calc(var(--card-height, 150px) * 0.88);
+}
+
+@media (max-width: 900px) {
+  .message-image-collage .message-image-card {
+    height: calc(var(--card-height, 150px) * 0.78);
+  }
+}
+
+.image-lightbox-backdrop {
+  position: fixed;
+  z-index: 240;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 28px 24px;
+  cursor: zoom-out;
+  -webkit-app-region: no-drag;
+  background: rgba(9, 14, 12, 0.84);
+  backdrop-filter: blur(10px);
+  animation: image-lightbox-fade 260ms ease-out;
+}
+
+/* Hidden only until the photo is decoded and measured for the zoom. */
+.image-lightbox-backdrop[data-phase="opening"] .image-lightbox-photo {
+  opacity: 0;
+}
+
+.image-lightbox-backdrop[data-phase="closing"] {
+  pointer-events: none;
+}
+
+.image-lightbox-backdrop[data-phase="closing"]
+  :is(.image-lightbox-header, .image-lightbox-nav, .image-lightbox-close, .image-lightbox-dots) {
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.image-lightbox {
+  display: grid;
+  width: min(1240px, 100%);
+  height: 100%;
+  align-items: center;
+  grid-template-columns: 48px minmax(0, 1fr) 48px;
+  grid-template-rows: minmax(0, 1fr) auto;
+  column-gap: 20px;
+  row-gap: 14px;
+}
+
+.image-lightbox.single {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.image-lightbox-viewport {
+  display: grid;
+  height: 100%;
+  min-width: 0;
+  grid-row: 1;
+}
+
+/* Clip only while sliding, so the opening zoom can start from the card. */
+.image-lightbox-viewport.sliding {
+  overflow-x: clip;
+}
+
+.image-lightbox-backdrop[data-phase="closing"] .image-lightbox-viewport {
+  overflow: visible;
+}
+
+.image-lightbox-slide {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  grid-area: 1 / 1;
+  place-items: center;
+  will-change: transform;
+}
+
+.image-lightbox-figure {
+  display: grid;
+  min-width: 0;
+  margin: 0;
+  cursor: default;
+  gap: 14px;
+  justify-items: center;
+  justify-self: center;
+}
+
+.image-lightbox-header {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+  /* Match the photo's width instead of stretching to the title's length. */
+  contain: inline-size;
+  color: #eef3f0;
+}
+
+.image-lightbox-header.intro {
+  animation: image-lightbox-chrome-in 320ms 80ms ease-out backwards;
+}
+
+.image-lightbox-title {
+  display: -webkit-box;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.image-lightbox-meta {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 14px;
+  color: #c3cdc8;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.image-lightbox-meta a {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  color: inherit;
+  text-decoration: none;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 999px;
+  transition:
+    color 140ms ease,
+    background 140ms ease;
+}
+
+.image-lightbox-meta a:hover {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.image-lightbox-meta a:focus-visible {
+  outline: 2px solid #ffffff;
+  outline-offset: 2px;
+}
+
+.image-lightbox-count {
+  font-variant-numeric: tabular-nums;
+}
+
+.image-lightbox-photo {
+  display: block;
+  min-width: min(420px, 100%);
+  max-width: 100%;
+  max-height: calc(100vh - 190px);
+  object-fit: contain;
+  border-radius: 14px;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.5);
+  user-select: none;
+}
+
+.image-lightbox-nav,
+.image-lightbox-close {
+  display: grid;
+  place-items: center;
+  padding: 0;
+  color: #eef3f0;
+  cursor: pointer;
+  border: 0;
+  border-radius: 50%;
+  transition:
+    background 140ms ease,
+    transform 140ms ease;
+}
+
+.image-lightbox-nav {
+  grid-row: 1;
+  width: 48px;
+  height: 48px;
+  background: rgba(255, 255, 255, 0.12);
+  animation: image-lightbox-chrome-in 320ms 80ms ease-out backwards;
+}
+
+.image-lightbox-nav:hover {
+  background: rgba(255, 255, 255, 0.24);
+}
+
+.image-lightbox-nav.previous:hover {
+  transform: translateX(-2px);
+}
+
+.image-lightbox-nav.next:hover {
+  transform: translateX(2px);
+}
+
+.image-lightbox-nav:active {
+  transform: scale(0.94);
+}
+
+.image-lightbox-dots {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  grid-column: 2;
+  grid-row: 2;
+  animation: image-lightbox-chrome-in 320ms 80ms ease-out backwards;
+}
+
+.image-lightbox-dots button {
+  width: 8px;
+  height: 8px;
+  padding: 0;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.32);
+  border: 0;
+  border-radius: 999px;
+  transition:
+    width 260ms cubic-bezier(0.22, 1, 0.36, 1),
+    background 160ms ease;
+}
+
+.image-lightbox-dots button:hover {
+  background: rgba(255, 255, 255, 0.6);
+}
+
+.image-lightbox-dots button[aria-current="true"] {
+  width: 22px;
+  background: #ffffff;
+}
+
+.image-lightbox-dots button:focus-visible {
+  outline: 2px solid #ffffff;
+  outline-offset: 3px;
+}
+
+.image-lightbox-nav svg {
+  width: 22px;
+  height: 22px;
+}
+
+.image-lightbox-close {
+  position: absolute;
+  z-index: 1;
+  top: 18px;
+  right: 18px;
+  width: 36px;
+  height: 36px;
+  background: rgba(255, 255, 255, 0.12);
+  animation: image-lightbox-chrome-in 320ms 80ms ease-out backwards;
+}
+
+.image-lightbox-close:hover {
+  background: rgba(255, 255, 255, 0.24);
+}
+
+.image-lightbox-nav:focus-visible,
+.image-lightbox-close:focus-visible {
+  outline: 2px solid #ffffff;
+  outline-offset: 2px;
+}
+
+.image-lightbox-meta svg,
+.image-lightbox-close svg {
+  width: 14px;
+  height: 14px;
+}
+
+@keyframes image-lightbox-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes image-lightbox-chrome-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+@media (max-width: 720px) {
+  .image-lightbox {
+    grid-template-columns: 40px minmax(0, 1fr) 40px;
+    gap: 10px;
+  }
+
+  .image-lightbox-nav {
+    width: 40px;
+    height: 40px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .image-lightbox-backdrop,
+  .image-lightbox-header,
+  .image-lightbox-photo,
+  .image-lightbox-nav,
+  .image-lightbox-close,
+  .image-lightbox-dots,
+  .image-lightbox-dots button {
+    animation: none !important;
+    transition: none !important;
+  }
+}

@@ -155,6 +155,7 @@ export default function App() {
           imageAttachments={snapshot.imageAttachments.filter(
             (attachment) => attachment.coworkerId === selectedCoworker.id,
           )}
+          messageImages={snapshot.messageImages}
           schedules={snapshot.schedules.filter(
             (schedule) => schedule.coworkerId === selectedCoworker.id,
           )}

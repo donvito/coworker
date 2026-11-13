@@ -64,6 +64,18 @@ import { CoworkerSettingsModal } from "../components/CoworkerSettingsModal";
 import { WorkspaceTextApprovalCard } from "../components/WorkspaceTextApprovalCard";
 import { workspaceTextApproval } from "@shared/workspace-text-approval";
 import { ChatMarkdown } from "../components/ChatMarkdown";
+import { MessageImageCollage, MessageImageGallery } from "../components/MessageImageCollage";
+import {
+  arrangeReplyImages,
+  placeMessageImages,
+  streamingReplyId,
+  streamingReplyTime,
+} from "../lib/message-image-placement";
+import {
+  attachImagesToolName,
+  runIdFromAssistantMessageId,
+  type MessageImageSet,
+} from "@shared/message-images";
 import { ModalPortal } from "../components/ModalPortal";
 import { QuickModelSwitcher } from "../components/QuickModelSwitcher";
 import { ScheduleEditorModal } from "../components/ScheduleEditorModal";
@@ -105,6 +117,14 @@ const invoiceSchema = z.object({
   currency: z.string().optional(),
   format: z.enum(["pdf", "docx", "markdown", "txt"]).optional(),
 });
+
+const attachImagesSchema = z.object({
+  images: z.array(z.object({ alt: z.string().optional() })).optional(),
+});
+
+function isActiveTask(task: Task): boolean {
+  return task.status === "QUEUED" || task.status === "RUNNING" || task.status === "WAITING_FOR_APPROVAL";
+}
 
 const skillReadSchema = z.object({
   name: z.string(),
@@ -472,6 +492,7 @@ export function CoworkerDetailPage({
   artifacts,
   messages,
   imageAttachments,
+  messageImages = [],
   schedules,
   skills,
   settings,
@@ -494,6 +515,7 @@ export function CoworkerDetailPage({
   artifacts: Artifact[];
   messages: StoredMessage[];
   imageAttachments: TaskImageAttachmentSummary[];
+  messageImages?: MessageImageSet[];
   schedules: Schedule[];
   skills: Skill[];
   settings: AppSettings;
@@ -698,6 +720,7 @@ export function CoworkerDetailPage({
             (discussion) => discussion.conversationId === displayConversation.id,
           )}
           imageAttachments={imageAttachments}
+          messageImages={messageImages}
           messages={conversationMessages}
           modelEndpoints={modelEndpoints}
           onBack={onBack}
@@ -728,6 +751,7 @@ export function CoworkerDetailPage({
             allMessages={messages}
             storedMessages={conversationMessages}
             imageAttachments={imageAttachments}
+          messageImages={messageImages}
             schedules={schedules}
             skills={skills}
             showReasoning={settings.showReasoning}
@@ -820,6 +844,7 @@ function GroupConversationSurface({
   tasks,
   approvals,
   imageAttachments,
+  messageImages = [],
   modelEndpoints = [],
   onBack,
   onOpenSettings,
@@ -838,6 +863,7 @@ function GroupConversationSurface({
   tasks: Task[];
   approvals: Approval[];
   imageAttachments: TaskImageAttachmentSummary[];
+  messageImages?: MessageImageSet[];
   modelEndpoints?: ModelEndpoint[];
   onBack: () => void;
   onOpenSettings: () => void;
@@ -857,6 +883,26 @@ function GroupConversationSurface({
   const [highlightedSuggestion, setHighlightedSuggestion] = useState(0);
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
   const [liveResponses, setLiveResponses] = useState<Record<string, LiveResponse>>({});
+  const channelCollageImages = placeMessageImages({
+    sets: messageImages,
+    messages: [
+      ...channelMessages.map((message) => ({
+        id: message.id,
+        taskId: message.taskId,
+        role: message.role,
+        hasText: message.content.trim().length > 0,
+        time: message.createdAt,
+      })),
+      ...Object.entries(liveResponses).map(([runId, response]) => ({
+        id: streamingReplyId(runId),
+        taskId: response.taskId,
+        role: "assistant",
+        hasText: response.content.trim().length > 0,
+        time: streamingReplyTime,
+      })),
+    ],
+    runningTaskIds: new Set(tasks.filter(isActiveTask).map((task) => task.id)),
+  });
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -1185,6 +1231,10 @@ function GroupConversationSurface({
                 </div>
               ) : null}
               {channelMessages.map((message) => {
+                const replyImages = arrangeReplyImages(
+                  channelCollageImages.get(message.id) ?? [],
+                  message.content,
+                );
                 const author = message.coworkerId
                   ? coworkers.find((item) => item.id === message.coworkerId)
                   : null;
@@ -1227,18 +1277,27 @@ function GroupConversationSurface({
                         {message.authorName}
                         <CopyTextButton text={message.content} />
                       </small>
-                      <div className="workroom-bubble">
-                        {uniqueAttachments.length > 0 ? (
-                          <PersistedMessageImages attachments={uniqueAttachments} />
+                      <MessageImageGallery images={replyImages.all}>
+                        {replyImages.collage.length > 0 ? (
+                          <MessageImageCollage images={replyImages.collage} />
                         ) : null}
-                        <ChatMarkdown>{message.content}</ChatMarkdown>
-                      </div>
+                        <div className="workroom-bubble">
+                          {uniqueAttachments.length > 0 ? (
+                            <PersistedMessageImages attachments={uniqueAttachments} />
+                          ) : null}
+                          <ChatMarkdown>{message.content}</ChatMarkdown>
+                        </div>
+                      </MessageImageGallery>
                     </div>
                   </div>
                 );
               })}
               {Object.entries(liveResponses).map(([runId, response]) => {
                 const member = coworkers.find((item) => item.id === response.coworkerId);
+                const liveImages = arrangeReplyImages(
+                  channelCollageImages.get(streamingReplyId(runId)) ?? [],
+                  response.content,
+                );
                 if (isDiscussionPass(response.content)) {
                   return (
                     <div className="discussion-pass-note" key={runId}>
@@ -1258,19 +1317,24 @@ function GroupConversationSurface({
                       <small className="channel-message-author">
                         {member?.name ?? "Coworker"}
                       </small>
-                      <div className="workroom-bubble">
-                        {response.content ? (
-                          <ChatMarkdown>{response.content}</ChatMarkdown>
-                        ) : response.status === "failed" ? (
-                          <span>{response.error}</span>
-                        ) : (
-                          <span className="workroom-running">
-                            <span />
-                            <span />
-                            <span />
-                          </span>
-                        )}
-                      </div>
+                      <MessageImageGallery images={liveImages.all}>
+                        {liveImages.collage.length > 0 ? (
+                          <MessageImageCollage images={liveImages.collage} />
+                        ) : null}
+                        <div className="workroom-bubble">
+                          {response.content ? (
+                            <ChatMarkdown>{response.content}</ChatMarkdown>
+                          ) : response.status === "failed" ? (
+                            <span>{response.error}</span>
+                          ) : (
+                            <span className="workroom-running">
+                              <span />
+                              <span />
+                              <span />
+                            </span>
+                          )}
+                        </div>
+                      </MessageImageGallery>
                     </div>
                   </div>
                 );
@@ -1804,6 +1868,7 @@ function CoworkerSurface({
   allMessages,
   storedMessages,
   imageAttachments,
+  messageImages = [],
   schedules,
   skills,
   showReasoning,
@@ -1830,6 +1895,7 @@ function CoworkerSurface({
   allMessages: StoredMessage[];
   storedMessages: StoredMessage[];
   imageAttachments: TaskImageAttachmentSummary[];
+  messageImages?: MessageImageSet[];
   schedules: Schedule[];
   skills: Skill[];
   showReasoning: boolean;
@@ -1935,6 +2001,42 @@ function CoworkerSurface({
     () => new Map(storedMessages.map((message) => [message.id, message])),
     [storedMessages],
   );
+  const messageTimeFor = (messageId: string): string => {
+    let time = messageTimes.get(messageId) ?? liveMessageTimes.current.get(messageId);
+    if (!time) {
+      time = new Date().toISOString();
+      liveMessageTimes.current.set(messageId, time);
+    }
+    return time;
+  };
+  const taskIdsByRunId = new Map(coworkerTasks.map((task) => [task.runId, task.id]));
+  const collageImagesByMessage = placeMessageImages({
+    sets: messageImages.filter((set) => coworkerTasks.some((task) => task.id === set.taskId)),
+    messages: [
+      ...agent.messages
+        .filter((message) => message.role === "assistant")
+        .map((message) => ({
+          id: message.id,
+          taskId:
+            storedMessagesById.get(message.id)?.taskId ??
+            taskIdsByRunId.get(runIdFromAssistantMessageId(message.id) ?? "") ??
+            null,
+          role: message.role,
+          hasText: textFromMessageContent(message.content).trim().length > 0,
+          time: messageTimeFor(message.id),
+        })),
+      ...Object.entries(externalLiveResponses)
+        .filter(([, response]) => !agent.messages.some((message) => message.id === response.messageId))
+        .map(([runId, response]) => ({
+          id: streamingReplyId(runId),
+          taskId: response.taskId,
+          role: "assistant",
+          hasText: response.content.trim().length > 0,
+          time: streamingReplyTime,
+        })),
+    ],
+    runningTaskIds: new Set(coworkerTasks.filter(isActiveTask).map((task) => task.id)),
+  });
   const recoveredToolCallIds = findRecoveredToolCallIds(
     agent.messages,
     (result) => artifactTargetsFromResult(result).length > 0,
@@ -2182,6 +2284,24 @@ function CoworkerSurface({
         </span>
       </div>
     ),
+  });
+  useRenderTool({
+    name: attachImagesToolName,
+    parameters: attachImagesSchema,
+    render: ({ status, parameters }) => {
+      const count = parameters.images?.length ?? 0;
+      return (
+        <div className="tool-card conversation-tool-card">
+          <span className="tool-card-icon">
+            <Icon name={status === "complete" ? "check" : "search"} />
+          </span>
+          <span>
+            <small>{status === "complete" ? "Images attached to reply" : "Attaching images"}</small>
+            <strong>{count === 1 ? "1 image" : `${count} images`}</strong>
+          </span>
+        </div>
+      );
+    },
   });
   useRenderTool({
     name: "invoice.create",
@@ -3147,23 +3267,19 @@ function CoworkerSurface({
                   );
                 }
                 if (message.role !== "user" && message.role !== "assistant") return null;
-                let timestamp = messageTimes.get(message.id) ?? liveMessageTimes.current.get(message.id);
-                if (!timestamp) {
-                  timestamp = new Date().toISOString();
-                  liveMessageTimes.current.set(message.id, timestamp);
-                }
+                const timestamp = messageTimeFor(message.id);
                 const dueApprovals = takeApprovalsUntil(timestamp);
                 const dayKey = messageDayKey(timestamp);
                 const showDayDivider = dayKey !== previousMessageDay;
                 previousMessageDay = dayKey;
                 const content = textFromMessageContent(message.content);
-                const messageImages = imagesFromMessageContent(message.content);
+                const inlineImages = imagesFromMessageContent(message.content);
                 const storedMessage = storedMessagesById.get(message.id);
                 const persistedImages =
-                  messageImages.length === 0 && storedMessage?.role === "user" && storedMessage.taskId
+                  inlineImages.length === 0 && storedMessage?.role === "user" && storedMessage.taskId
                     ? (imageAttachmentsByTask.get(storedMessage.taskId) ?? [])
                     : [];
-                const imageCount = messageImages.length + persistedImages.length;
+                const imageCount = inlineImages.length + persistedImages.length;
                 const toolCalls = message.role === "assistant" ? (message.toolCalls ?? []) : [];
                 // A request another coworker sent: name them instead of "You".
                 const peerAuthor =
@@ -3175,6 +3291,10 @@ function CoworkerSurface({
                   replyTarget && storedMessage?.taskId
                     ? extractFollowUpReply(tasksById.get(storedMessage.taskId)?.input ?? "")
                     : null;
+                const replyImages = arrangeReplyImages(
+                  collageImagesByMessage.get(message.id) ?? [],
+                  `${shownContent}\n${originalReply ?? ""}`,
+                );
                 return (
                   <Fragment key={message.id}>
                     {renderApprovalEntries(dueApprovals)}
@@ -3187,15 +3307,19 @@ function CoworkerSurface({
                       className={`workroom-turn workroom-turn-${message.role}`}
                       data-message-role={message.role}
                     >
+                    <MessageImageGallery images={replyImages.all}>
+                    {replyImages.collage.length > 0 ? (
+                      <MessageImageCollage images={replyImages.collage} />
+                    ) : null}
                     {content || imageCount > 0 ? (
                       <div
                         className={`workroom-bubble${imageCount > 0 ? " workroom-bubble-with-images" : ""}`}
                       >
-                        {messageImages.length > 0 ? (
+                        {inlineImages.length > 0 ? (
                           <div
-                            className={`workroom-message-images count-${Math.min(messageImages.length, 4)}`}
+                            className={`workroom-message-images count-${Math.min(inlineImages.length, 4)}`}
                           >
-                            {messageImages.map((image, index) => (
+                            {inlineImages.map((image, index) => (
                               <img
                                 alt={imagePartName(image, index)}
                                 key={`${message.id}:image:${index}`}
@@ -3233,6 +3357,7 @@ function CoworkerSurface({
                         ) : null}
                       </div>
                     ) : null}
+                    </MessageImageGallery>
                     {toolCalls.map((toolCall) => {
                       const toolMessage = agent.messages.find(
                         (candidate): candidate is ToolMessage =>
@@ -3308,12 +3433,21 @@ function CoworkerSurface({
                   belongs before the answer it authorized, which is where timestamp
                   interleaving puts it once the run's messages persist. */}
               {renderApprovalEntries(takeApprovalsUntil("9999"))}
-              {Object.entries(externalLiveResponses).map(([runId, response]) => (
+              {Object.entries(externalLiveResponses).map(([runId, response]) => {
+                const liveImages = arrangeReplyImages(
+                  collageImagesByMessage.get(streamingReplyId(runId)) ?? [],
+                  response.content,
+                );
+                return (
                 <div
                   className="workroom-turn workroom-turn-assistant"
                   data-message-role="assistant"
                   key={runId}
                 >
+                  <MessageImageGallery images={liveImages.all}>
+                  {liveImages.collage.length > 0 ? (
+                    <MessageImageCollage images={liveImages.collage} />
+                  ) : null}
                   <div className="workroom-bubble">
                     {response.activity && <div className="muted">{Object.entries(response.activity).map(([id, activity]) => <div key={id}>{activity.done ? "✓" : "…"} {activity.name}</div>)}</div>}
                     {response.content && !agent.messages.some(message => message.id === response.messageId) ? (
@@ -3330,11 +3464,13 @@ function CoworkerSurface({
                       </span>
                     )}
                   </div>
+                  </MessageImageGallery>
                   <small className="workroom-message-meta">
                     {coworker.name} · live
                   </small>
                 </div>
-              ))}
+                );
+              })}
               {approvalError ? (
                 <div className="workroom-run-error" role="alert">
                   <Icon name="shield" />

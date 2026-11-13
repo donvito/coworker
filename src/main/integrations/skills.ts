@@ -279,6 +279,7 @@ export const bundledSkills = [
   loadBundledSkill("coworker-memory", "bundled:coworker-memory"),
   loadBundledSkill("coworker-administration", "bundled:coworker-administration"),
   bundledWebSearchSkill,
+  loadBundledSkill("search-result-images", "bundled:search-result-images"),
   bundledDocumentAuthoringSkill,
   bundledTeamChannelSkill,
   bundledFolderAccessSkill,

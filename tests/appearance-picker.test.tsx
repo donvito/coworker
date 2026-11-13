@@ -25,7 +25,7 @@ function mockAppearanceApi() {
   let settings = { ...initialSettings };
   const bootstrap = vi.fn(async (): Promise<AppSnapshot> => ({
     coworkers: [], conversations: [], discussions: [], tasks: [], messages: [],
-    imageAttachments: [], approvals: [], schedules: [], artifacts: [], activity: [],
+    imageAttachments: [], messageImages: [], approvals: [], schedules: [], artifacts: [], activity: [],
     integrations: [], modelEndpoints: [], skills: [], settings,
     dataPath: "/tmp/coworker-data", version: "0.5.0",
   }));

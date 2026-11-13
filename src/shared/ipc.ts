@@ -50,6 +50,7 @@ export const ipcChannels = {
   artifactsDownload: "coworker:artifacts:download",
   artifactsRemove: "coworker:artifacts:remove",
   imageAttachmentsRead: "coworker:image-attachments:read",
+  messageImagesRead: "coworker:message-images:read",
   schedulesList: "coworker:schedules:list",
   schedulesCreate: "coworker:schedules:create",
   schedulesUpdate: "coworker:schedules:update",

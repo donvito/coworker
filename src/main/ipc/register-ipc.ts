@@ -19,6 +19,7 @@ import {
   type IpcMainInvokeEvent,
 } from "electron";
 import { ipcChannels } from "@shared/ipc";
+import { maxMessageImages } from "@shared/message-images";
 import type { AgentRunRequest } from "@shared/contracts";
 import {
   agentRunRequestSchema,
@@ -360,6 +361,12 @@ export function registerIpc(input: {
   );
   handle(ipcChannels.imageAttachmentsRead, (_event, id) =>
     input.service.readImageAttachment(idSchema.parse(id)),
+  );
+  handle(ipcChannels.messageImagesRead, (_event, setId, index) =>
+    input.service.readMessageImage(
+      idSchema.parse(setId),
+      z.number().int().min(0).max(maxMessageImages - 1).parse(index),
+    ),
   );
 
   handle(ipcChannels.activityList, (_event, limit) =>

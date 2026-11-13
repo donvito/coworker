@@ -76,6 +76,7 @@ import { ProviderErrorLogger } from "@main/runtime/provider-error-logger";
 import type { ApplicationLogger } from "@main/runtime/application-logger";
 import {
   bundledSkills,
+  bundledWebSearchSkillId,
   installSkillFromUrl,
   parseSkillMarkdown,
   parseSkillPackage,
@@ -83,6 +84,12 @@ import {
 } from "@main/integrations/skills";
 import { createDataBackup } from "@main/integrations/archives";
 import { webSearchCredentialKey } from "@main/integrations/web-search";
+import { RemoteImageLoader } from "@main/integrations/remote-images";
+import {
+  attachImagesToolName,
+  messageImageSetFromToolCall,
+  type MessageImageSet,
+} from "@shared/message-images";
 import {
   TelegramBotApi,
   parseTelegramConfig,
@@ -135,6 +142,8 @@ export interface DesktopAppServiceOptions {
     WebSocketImpl?: DiscordWebSocketConstructor;
     typingKeepAliveMs?: number;
   };
+  /** Test hooks for downloading images attached to replies. */
+  remoteImages?: ConstructorParameters<typeof RemoteImageLoader>[0];
 }
 
 function safeDirectoryName(name: string): string {
@@ -184,6 +193,7 @@ export class DesktopAppService {
   readonly peers: PeerMessaging;
   readonly providerErrors: ProviderErrorLogger;
   readonly liveEvents = new RunEventJournal();
+  private readonly remoteImages: RemoteImageLoader;
   private readonly listeners = new Set<(event: DesktopEvent) => void>();
   private initialized = false;
   private readonly integrationMutations = new Map<string, Promise<unknown>>();
@@ -197,6 +207,7 @@ export class DesktopAppService {
       join(options.dataPath, "logs", "provider-errors.jsonl"),
     );
     this.browser = new BrowserAutomationService(options.dataPath);
+    this.remoteImages = new RemoteImageLoader(options.remoteImages);
     this.peers = new PeerMessaging({
       database: this.database,
       enqueue: (coworkerId) => this.runtime.enqueueTask(coworkerId),
@@ -380,6 +391,7 @@ export class DesktopAppService {
         size: attachment.size,
         createdAt: attachment.createdAt,
       })),
+      messageImages: this.listMessageImages(),
       approvals: this.database.listApprovals(),
       schedules: this.database.listSchedules(),
       artifacts: this.database.listArtifacts(),
@@ -2149,6 +2161,19 @@ export class DesktopAppService {
     this.emit({ type: "entity.changed", entity: "activity" });
   }
 
+  private listMessageImages(): MessageImageSet[] {
+    return this.database
+      .listCompletedToolCalls(attachImagesToolName)
+      .flatMap((toolCall) => messageImageSetFromToolCall(toolCall) ?? []);
+  }
+
+  /** Serves only images a completed attachment call recorded, never a caller-supplied URL. */
+  async readMessageImage(setId: string, index: number) {
+    const image = messageImageSetFromToolCall(this.database.getToolCall(setId))?.images[index];
+    if (!image) throw new Error("That image is not attached to a reply");
+    return this.remoteImages.load(image.url);
+  }
+
   async readImageAttachment(id: string) {
     const attachment = this.database.getTaskImageAttachment(id);
     const coworker = this.database.getCoworker(attachment.coworkerId);
@@ -2284,6 +2309,15 @@ export class DesktopAppService {
     if (this.database.getMetadata(archiveMigration) !== "true") {
       for (const coworker of this.database.listCoworkers()) this.database.setCoworkerSkills(coworker.id, [...coworker.enabledSkillIds, "bundled:file-archiving"]);
       this.database.setMetadata(archiveMigration, "true");
+    }
+    // Images come from web search, so only coworkers that can search gain the skill.
+    const searchImagesMigration = "search-result-images-enabled-v1";
+    if (this.database.getMetadata(searchImagesMigration) !== "true") {
+      for (const coworker of this.database.listCoworkers()) {
+        if (!coworker.enabledSkillIds.includes(bundledWebSearchSkillId)) continue;
+        this.database.setCoworkerSkills(coworker.id, [...coworker.enabledSkillIds, "bundled:search-result-images"]);
+      }
+      this.database.setMetadata(searchImagesMigration, "true");
     }
     const migrationKey = "bundled-skills-enabled-v5";
     if (this.database.getMetadata(migrationKey) === "true") return;
