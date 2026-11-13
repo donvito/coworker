@@ -6,6 +6,10 @@ Captured from Coworker **v0.7.2** in a fresh profile with fictional sample conve
 
 ![Home with team activity, an approval waiting for review, and recent files](images/home.png)
 
+**Photos in search results** — when you ask to find or compare things you'd judge by how they look, such as places to stay, venues, or products, the coworker attaches photos from the web search and places them beside each result. Click a photo to open it in a viewer with that result's other photos.
+
+![Ava recommending three keyboards, each with a product photo beside it](images/search-images.png)
+
 **Chat** — switch between coworkers in the left sidebar and open or download their created files from the conversation. The Files tab shows accessible folders, their permissions, and the default output folder; the folder list can be collapsed.
 
 ![Coworker chat with PDF and CSV downloads and folder access in the right sidebar](images/coworker-chat.png)
@@ -13,10 +17,6 @@ Captured from Coworker **v0.7.2** in a fresh profile with fictional sample conve
 **File explorer** — open **Files** beside **History** and **New** in the coworker header. The explorer starts in the configured default output folder. Expand folders in the tree or choose **All files**, filter the list, and select files to download as a ZIP. Deleting files or folders requires confirmation.
 
 ![File explorer with an expanded folder tree and two files selected for ZIP download](images/file-explorer.png)
-
-**Photos in search results** — when you ask to find or compare things you'd judge by how they look, such as places to stay, venues, or products, the coworker attaches photos from the web search and places them beside each result. Click a photo to open it in a viewer with that result's other photos.
-
-![Ava recommending three keyboards, each with a product photo beside it](images/search-images.png)
 
 **Approvals** — review the proposed action and its contents before approving, editing, or rejecting it. Decisions are saved before work resumes.
 
