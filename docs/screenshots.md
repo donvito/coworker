@@ -14,6 +14,10 @@ Captured from Coworker **v0.7.2** in a fresh profile with fictional sample conve
 
 ![File explorer with an expanded folder tree and two files selected for ZIP download](images/file-explorer.png)
 
+**Photos in search results** — when you ask to find or compare things you'd judge by how they look, such as places to stay, venues, or products, the coworker attaches photos from the web search and places them beside each result. Click a photo to open it in a viewer with that result's other photos.
+
+![Ava recommending three keyboards, each with a product photo beside it](images/search-images.png)
+
 **Approvals** — review the proposed action and its contents before approving, editing, or rejecting it. Decisions are saved before work resumes.
 
 ![Approvals showing a sample client follow-up email awaiting review](images/approvals.png)

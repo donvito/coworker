@@ -27,12 +27,14 @@ Coworker is a local-first desktop app for independent AI coworkers. There is **n
 - **Bring your own keys** — Anthropic, OpenAI, Google, OpenRouter, or any OpenAI-compatible endpoint. Credentials stay in OS-backed storage.
 - **A team** — mark one coworker as primary to coordinate the others and post a daily team digest. Coworkers can hand work to each other, and Home shows what everyone is doing.
 - **Skills** — coworkers learn new capabilities from Agent Skills. Upload a `SKILL.md`, add an HTTPS URL, or paste a skill link into chat.
-- **Web search** — works right after install on Firecrawl's free tier. Add a Firecrawl, Tavily, Exa, or SerpAPI key for higher limits.
+- **Web search** — works right after install on Firecrawl's free tier. Add a Firecrawl, Tavily, Exa, or SerpAPI key for higher limits. When you're choosing places to stay, venues, or products, replies show photos beside each result.
 - **Memory** — coworkers can propose useful facts and preferences to remember across conversations. Approve, edit, or reject each proposal in chat, Telegram, or Discord; manage saved Markdown in the desktop app or CLI.
 - **Scheduler** — persistent cron and one-time jobs, in plain language, with crash recovery.
 - **Approvals** — consequential actions pause until you approve or reject them, in the app or from Telegram or Discord.
 - **Telegram** — connect one bot per coworker, paired to a private chat. Replies, files, and approval buttons stay in sync with the desktop.
 - **Discord** — connect one bot per coworker, paired to a server channel (or a thread in it) by posting a pairing code. @mention the bot in that channel to start a thread; existing threads stay their own conversations. Replies, files, 👀 receipts, and approval buttons stay in sync. Telegram can stay connected to the same coworker at the same time.
+
+![Ava recommending three keyboards, each with a product photo beside it](docs/images/search-images.png)
 
 ## Download
 
