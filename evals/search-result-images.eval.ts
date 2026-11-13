@@ -62,22 +62,90 @@ const runnable = scenarios
       }) satisfies CoworkerEvalInput & { shouldShowImages: boolean },
   );
 
+interface FixtureResult {
+  url: string;
+  title: string;
+  description: string;
+  /** A photo the provider found on this page. */
+  image: string;
+}
+
+/**
+ * Realistic results for each scenario's subject. Placeholder results
+ * ("option 1" on example.com) make a careful model rightly refuse to show
+ * photos it cannot identify, which would grade the fixture, not the skill.
+ * Every subject returns photos when asked, so skipping them is a decision.
+ */
+const fixtureTopics: Array<{ match: RegExp; results: FixtureResult[] }> = [
+  {
+    match: /lisbon/i,
+    results: [
+      { url: "https://www.airbnb.com/rooms/48213907", title: "Bright Alfama apartment with river view · 2 bedrooms · sleeps 4", description: "Renovated 2-bedroom flat in Alfama with a balcony over the Tagus, 5 minutes from Sé Cathedral. Sleeps 4. €165 per night in May.", image: "Living room with balcony and Tagus river view, Alfama apartment" },
+      { url: "https://www.airbnb.com/rooms/51877214", title: "Príncipe Real townhouse loft with terrace · sleeps 4", description: "Two-level loft with a private terrace in Príncipe Real, near the garden and Bairro Alto. Sleeps 4. €190 per night.", image: "Rooftop terrace of a Príncipe Real townhouse loft" },
+      { url: "https://www.airbnb.com/rooms/39940126", title: "Chiado family apartment near Rossio · 2 bathrooms · sleeps 5", description: "Classic Pombaline apartment with high ceilings in Chiado, 3 minutes from the metro. Sleeps 5. €175 per night.", image: "Bedroom with high ceilings and tall windows, Chiado apartment" },
+      { url: "https://www.airbnb.com/rooms/60311845", title: "Belém garden flat near the river · sleeps 4", description: "Ground-floor flat with a small garden, walking distance to Belém Tower. Sleeps 4. €140 per night.", image: "Garden patio of a Belém flat" },
+    ],
+  },
+  {
+    match: /austin|offsite|venue/i,
+    results: [
+      { url: "https://www.lakeaustinretreat.com/corporate-events", title: "Lake Travis Retreat Lodge · corporate offsites for 20–80", description: "Hill Country lodge on Lake Travis, 35 minutes from downtown Austin. Meeting barn for 80, lakeside lawn, catering on site.", image: "Meeting barn set up for a 60-person workshop, Lake Travis Retreat Lodge" },
+      { url: "https://www.southcongressevents.com/spaces/the-loft", title: "The Loft at South Congress · event space for 75", description: "Industrial loft venue on South Congress with AV, breakout rooms, and a rooftop deck. Seated capacity 75.", image: "Industrial loft event space with long tables, South Congress" },
+      { url: "https://www.dripspringsranch.com/groups", title: "Driftwood Ranch · team retreats in Dripping Springs", description: "Ranch venue with an indoor hall for 100 and cabins for overnight groups, 40 minutes west of Austin.", image: "Ranch event hall with string lights, Dripping Springs" },
+    ],
+  },
+  {
+    match: /fallingwater|frank lloyd wright/i,
+    results: [
+      { url: "https://fallingwater.org/history/", title: "Fallingwater · History of the house", description: "Frank Lloyd Wright designed Fallingwater in 1935 for the Kaufmann family. Its cantilevered terraces extend over the waterfall on Bear Run in Mill Run, Pennsylvania.", image: "Fallingwater seen from below the falls, cantilevered terraces over Bear Run" },
+      { url: "https://en.wikipedia.org/wiki/Fallingwater", title: "Fallingwater - Wikipedia", description: "Fallingwater is a house designed by Frank Lloyd Wright in 1935 in the Laurel Highlands of southwest Pennsylvania.", image: "Living room interior of Fallingwater with stone floor and built-in seating" },
+    ],
+  },
+  {
+    match: /kyoto|gion/i,
+    results: [
+      { url: "https://www.booking.com/hotel/jp/gion-hatanaka.html", title: "Gion Hatanaka · ryokan steps from Yasaka Shrine", description: "Traditional ryokan in Gion with kaiseki dinners and tatami rooms, 2 minutes from Yasaka Shrine.", image: "Tatami guest room at Gion Hatanaka ryokan" },
+      { url: "https://www.booking.com/hotel/jp/the-gate-kyoto.html", title: "The Gate Hotel Kyoto Takasegawa · 6 minutes to Gion", description: "Modern hotel on the Takase River with a rooftop terrace overlooking Higashiyama.", image: "Rooftop terrace view over Higashiyama, The Gate Hotel Kyoto" },
+      { url: "https://www.booking.com/hotel/jp/hotel-the-celestine-kyoto-gion.html", title: "Hotel The Celestine Kyoto Gion", description: "Contemporary hotel with a Japanese garden and public bath, a short walk to Gion and Kiyomizu-dera.", image: "Japanese garden courtyard, Hotel The Celestine Kyoto Gion" },
+    ],
+  },
+  {
+    match: /refund|cancellation|policy/i,
+    results: [
+      { url: "https://www.airbnb.com/help/article/475", title: "Cancellation policies for long-term stays - Airbnb Help Centre", description: "Stays of 28 nights or more use the long-term cancellation policy: the first 30 days are non-refundable if cancelled after booking, and the guest must give 30 days' notice to shorten the stay.", image: "Airbnb logo on a pink background" },
+      { url: "https://www.airbnb.com/help/article/1320", title: "Airbnb Rebooking and Refund Policy", description: "If a host cancels or a significant issue disrupts the stay, Airbnb will help rebook or provide a full or partial refund.", image: "Screenshot of the Airbnb refund request screen" },
+    ],
+  },
+  {
+    match: /cors|express/i,
+    results: [
+      { url: "https://expressjs.com/en/resources/middleware/cors.html", title: "Express cors middleware", description: "Install with npm install cors, then app.use(cors()) to enable all CORS requests, or pass an options object with origin, methods, and credentials.", image: "Express.js logo" },
+      { url: "https://developer.mozilla.org/en-US/docs/Web/HTTP/CORS", title: "Cross-Origin Resource Sharing (CORS) - MDN", description: "CORS is an HTTP-header based mechanism that lets a server indicate which origins other than its own a browser should permit loading resources from.", image: "Diagram of a CORS preflight request and response" },
+    ],
+  },
+  {
+    match: /node/i,
+    results: [
+      { url: "https://nodejs.org/en/about/previous-releases", title: "Node.js Releases", description: "Node.js 24 is the current Active LTS release line. Production applications should use Active LTS or Maintenance LTS releases.", image: "Node.js logo" },
+      { url: "https://github.com/nodejs/release#release-schedule", title: "nodejs/release: Node.js release schedule", description: "Release schedule chart for the Node.js LTS lines with start, active, and end-of-life dates.", image: "Chart of the Node.js release schedule" },
+    ],
+  },
+];
+
+const fixtureImageHost = "https://images.searchcdn.net";
+
 /** A search provider stand-in, so the eval grades the model's choices rather than live results. */
 function searchProviderResponse(body: { query?: string; limit?: number; sources?: string[] }): Response {
-  const query = body.query ?? "search";
-  const count = Math.min(body.limit ?? 5, 4);
-  const slug = encodeURIComponent(query.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 40));
-  const web = Array.from({ length: count }, (_, index) => ({
-    url: `https://results.example.com/${slug}/${index + 1}`,
-    title: `${query}: option ${index + 1}`,
-    description: `Details about option ${index + 1} for ${query}.`,
-  }));
-  const images = Array.from({ length: count }, (_, index) => ({
-    title: `Photo of option ${index + 1} for ${query}`,
-    imageUrl: `https://photos.example.com/${slug}/${index + 1}.jpg`,
+  const query = body.query ?? "";
+  const topic = fixtureTopics.find((candidate) => candidate.match.test(query)) ?? fixtureTopics[0]!;
+  const results = topic.results.slice(0, body.limit ?? 5);
+  const web = results.map(({ url, title, description }) => ({ url, title, description }));
+  const images = results.map((result, index) => ({
+    title: result.image,
+    imageUrl: `${fixtureImageHost}/${new URL(result.url).hostname}/${index + 1}.jpg`,
     imageWidth: 1200,
     imageHeight: 800,
-    url: web[index]!.url,
+    url: result.url,
   }));
   return new Response(
     JSON.stringify({
@@ -137,7 +205,7 @@ describeEval(
         .map((message) => message.content)
         .join("\n");
       expect(reply).not.toMatch(/!\[[^\]]*\]\(/);
-      expect(reply).not.toContain("photos.example.com");
+      expect(reply).not.toContain(fixtureImageHost);
     });
   },
 );
